@@ -8,6 +8,18 @@ This edition uses only the Codex CLI sign-in on the current computer. The CLI ow
 
 Rundix is an independent project and is not an official OpenAI product.
 
+## Screenshots
+
+The actual Rundix webview, captured in a browser with synthetic demonstration content. These are UI examples, not a live model run or a capture of a user's conversation. Native VS Code editor tabs are outside the captured webview area.
+
+Chat, highlighted code and the message composer:
+
+![Rundix chat with a TypeScript example in the dark theme](standalone/docs/screenshots/chat-dark.jpg)
+
+Access modes and reasoning effort:
+
+![Rundix access-mode menu and reasoning controls](standalone/docs/screenshots/access-modes.jpg)
+
 ## Develop
 
 The extension source is in [`standalone/`](standalone/README.md).

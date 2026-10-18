@@ -11,7 +11,7 @@ function audit(file) {
   const count = zip.readUInt16LE(end + 10);
   let offset = zip.readUInt32LE(end + 16);
   const names = new Set();
-  const allowed = /^(?:extension\.vsixmanifest|\[Content_Types\]\.xml|extension\/(?:extension\.cjs|LICENSE(?:\.txt)?|package(?:\.nls(?:\.ru)?)?\.json|readme\.md|THIRD_PARTY_NOTICES\.txt|runtime\/(?!.*-source\.cjs$)[\w-]+\.cjs|runtime\/cli-manifest\.json|ui\/[\w-]+\.(?:js|css)|resources\/(?:rundix-(?:dark|light)\.svg|extension-icon\.png)|resources\/icons\/(?:[\w-]+\.svg|NOTICE\.md|sources\.json)))$/i;
+  const allowed = /^(?:extension\.vsixmanifest|\[Content_Types\]\.xml|extension\/(?:extension\.cjs|LICENSE(?:\.txt)?|package(?:\.nls(?:\.ru)?)?\.json|(?:readme|changelog)\.md|THIRD_PARTY_NOTICES\.txt|runtime\/(?!.*-source\.cjs$)[\w-]+\.cjs|runtime\/cli-manifest\.json|ui\/[\w-]+\.(?:js|css)|resources\/(?:rundix-(?:dark|light)\.svg|extension-icon\.png)|resources\/icons\/(?:[\w-]+\.svg|NOTICE\.md|sources\.json)))$/i;
   const checks = [
     ['JWT', /\beyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}/],
     ['private key', /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
@@ -45,7 +45,7 @@ function audit(file) {
     }
     offset += 46 + nameLength + extraLength + commentLength;
   }
-  for (const required of ['extension/extension.cjs', 'extension/package.json', 'extension/readme.md',
+  for (const required of ['extension/extension.cjs', 'extension/package.json', 'extension/readme.md', 'extension/changelog.md',
     'extension/runtime/new-session-settings.cjs',
     'extension/runtime/queued-edits.cjs', 'extension/ui/queued-editor.js',
     'extension/runtime/queued-attachments.cjs',

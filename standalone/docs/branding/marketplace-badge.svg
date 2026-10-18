@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="60" viewBox="0 0 300 60" role="img" aria-labelledby="title desc">
+  <title id="title">Install Rundix from Microsoft Marketplace</title>
+  <desc id="desc">Project-created installation badge with a generic storefront symbol. Not a Microsoft certification or official logo.</desc>
+  <rect width="300" height="60" rx="10" fill="#0078d4"/>
+  <g fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 27h28l-3-10H23zM22 28v16h24V28M28 44V33h12v11"/>
+    <path d="M20 27v3a3.5 3.5 0 0 0 7 0v-3m0 0v3a3.5 3.5 0 0 0 7 0v-3m0 0v3a3.5 3.5 0 0 0 7 0v-3m0 0v3a3.5 3.5 0 0 0 7 0v-3"/>
+  </g>
+  <g fill="white" font-family="Arial, Helvetica, sans-serif">
+    <text x="65" y="23" font-size="10" letter-spacing="1.1">INSTALL RUNDIX FROM</text>
+    <text x="65" y="43" font-size="18" font-weight="bold">Microsoft Marketplace</text>
+  </g>
+</svg>

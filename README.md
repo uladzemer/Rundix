@@ -1,12 +1,14 @@
-# Rundix — Codex CLI for VS Code
-
-<img src="standalone/resources/extension-icon.png" alt="Rundix — curly braces enclosing R" width="96" height="96">
+<div align="center">
+  <img src="standalone/resources/extension-icon.png" alt="Rundix — curly braces enclosing R" width="96" height="96">
+  <h1>Rundix — Codex CLI for VS Code</h1>
+  <p><strong>Your coding agent, in your editor.</strong><br>Native chat tabs · Images and project context · Follow-up queue · English / Русский</p>
+  <a href="https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix"><img src="standalone/docs/branding/marketplace-badge.png" alt="Install Rundix from Microsoft Marketplace" width="300" height="60"></a>
+  <p><a href="#screenshots">Demo &amp; screenshots</a> · <a href="standalone/CHANGELOG.md">What's new</a> · <a href="#русский">Русский</a> · <a href="https://github.com/uladzemer/Rundix/issues">Feedback</a></p>
+</div>
 
 **An AI coding assistant powered by the official Codex CLI, inside Visual Studio Code.**
 
 Keep conversations in native editor tabs, add images and project files, and queue follow-ups while your coding agent works. Choose models, reasoning effort and access modes from the chat.
-
-**[Install from Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix)** · [See screenshots](#screenshots) · [Русский](#русский) · [Report an issue](https://github.com/uladzemer/Rundix/issues)
 
 Rundix uses your existing Codex CLI sign-in by default. The CLI manages credentials; Rundix does not read or copy authentication files. Compatible companion extensions can provide an explicitly selected alternative through the [connection API](standalone/docs/connection-api.md).
 
@@ -33,7 +35,14 @@ Already signed in to Codex CLI? Start chatting. Otherwise, open `/account` → *
 
 ## Screenshots
 
-The Rundix chat UI with synthetic demo content. Native VS Code tabs are outside these screenshots.
+### A quick tour
+
+![Rundix feature tour: code chat, access modes and Russian questions in the light theme](standalone/docs/screenshots/demo.gif)
+
+Real Rundix UI with synthetic demo content; no model request or personal conversation. The tour cycles through three scenes. Native VS Code tabs are outside the captures.
+
+<details>
+<summary>View still screenshots</summary>
 
 Chat, highlighted code and the message composer:
 
@@ -43,13 +52,24 @@ Access modes and reasoning effort:
 
 ![Rundix access-mode menu and reasoning controls](standalone/docs/screenshots/access-modes.jpg)
 
+Questions in Russian, in the light theme:
+
+![Rundix question panel with Russian options in the light theme](standalone/docs/screenshots/questions-light.jpg)
+
+</details>
+
+## What's new
+
+The latest interface and installation guidance are documented in the [changelog](standalone/CHANGELOG.md). Install and update Rundix through **Microsoft Marketplace**; GitHub hosts the source and documentation.
+
 ## Support the project
 
 If Rundix is useful to you, **[give it a star on GitHub](https://github.com/uladzemer/Rundix)** using the **Star** button at the top of this page. It helps other developers discover the project and lets you find it again later.
 
 Found a bug or have a feature idea? [Open an issue](https://github.com/uladzemer/Rundix/issues) with the expected behavior and steps to reproduce. Please leave out credentials, private conversations and personal paths.
 
-## Develop
+<details>
+<summary>Development and local checks</summary>
 
 The extension source is in [`standalone/`](standalone/README.md).
 
@@ -64,6 +84,8 @@ The package is written to `standalone/rundix-<version>.vsix`. Browser checks nee
 
 The extension ID is `local-rundix-tools.rundix`. Its commands, settings and storage are separate from other editions.
 
+</details>
+
 ## Русский
 
 Rundix — AI-помощник для программирования на базе официального Codex CLI в Visual Studio Code. Чаты открываются во вкладках редактора; доступны Markdown и подсветка кода, изображения, файлы и контекст проекта, очередь уточнений, история, группы, закладки и ветки разговоров.
@@ -77,3 +99,5 @@ Rundix — AI-помощник для программирования на ба
 Подробности: [`standalone/README.md`](standalone/README.md). Лицензия кода и собственных значков — [MIT](LICENSE); лицензии включённых библиотек собраны в `standalone/THIRD_PARTY_NOTICES.txt`.
 
 Если Rundix вам полезен, поставьте **Star** вверху страницы репозитория. Об ошибках и идеях можно рассказать в [Issues](https://github.com/uladzemer/Rundix/issues), без ключей и личных переписок.
+
+Изменения версий — в [истории изменений](standalone/CHANGELOG.md). Установка и обновления доступны через **Microsoft Marketplace**; в GitHub хранятся исходники и документация.

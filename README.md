@@ -4,7 +4,7 @@
 
 A VS Code interface for the official Codex CLI. Conversations live in native editor tabs, with Markdown responses, images, queued follow-ups, project context, questions and usage information.
 
-This edition uses only the Codex CLI sign-in on the current computer. The CLI owns authentication and credential storage; Rundix does not read, copy or manage credential files. If sign-in is missing, the account menu can start the official browser sign-in through the CLI.
+By default, Rundix uses the Codex CLI sign-in on the current computer. The CLI owns local credential storage; Rundix does not read or copy authentication files. If sign-in is missing, the account menu can start the official browser sign-in. Starting with 0.2.0, an optional installed companion can provide an additional connection through the [versioned connection API](standalone/docs/connection-api.md); selecting it is explicit and its authentication is managed by that companion.
 
 Rundix is an independent project and is not an official OpenAI product.
 
@@ -45,6 +45,6 @@ Rundix — интерфейс для официального Codex CLI в VS Co
 
 Установите [Rundix из Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix), затем выполните **Rundix: Новая вкладка** в VS Code.
 
-Используется только текущая авторизация Codex CLI на компьютере. Учётными данными и их хранением управляет CLI. Расширение не читает и не копирует файлы авторизации. Если вход отсутствует, меню аккаунта позволяет открыть официальный вход через браузер.
+По умолчанию используется текущая авторизация Codex CLI на компьютере. Учётными данными и их хранением управляет CLI. Расширение не читает и не копирует файлы авторизации. Если вход отсутствует, меню аккаунта позволяет открыть официальный вход через браузер. С версии 0.2.0 дополнительный установленный модуль может предоставить другой способ подключения через версионируемый API; он включается явно, а его авторизацией управляет модуль.
 
 Подробности: [`standalone/README.md`](standalone/README.md). Лицензия кода и собственных значков — [MIT](LICENSE); лицензии включённых библиотек собраны в `standalone/THIRD_PARTY_NOTICES.txt`.

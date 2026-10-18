@@ -1,6 +1,6 @@
 # Rundix — local CLI edition
 
-This repository contains only the standalone extension. Authentication belongs to the official Codex CLI on the user's computer. Never add account pools, token extraction, credential-file imports, private authentication endpoints or automatic account switching to this edition.
+This repository contains the common Rundix extension. Local sign-in belongs to the official Codex CLI on the user's computer. Optional installed companion extensions can supply a connection through the versioned API described in `standalone/docs/connection-api.md`. Never add a companion's account pool, token extraction, credential-file imports, private authentication endpoints or rotation implementation to this public repository. Generic lifecycle hooks are allowed; absence of a selected companion must fail closed.
 
 Read `git status`, relevant source and `REVIEW.md` before changing behavior. Preserve unrelated edits. Keep the host in `standalone/extension.cjs`, protocol/state/files in `standalone/runtime/`, and rendering/input in `standalone/ui/`. New independent logic belongs in a focused module. Runtime uses CommonJS; UI uses the current browser script setup.
 

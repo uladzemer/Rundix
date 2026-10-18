@@ -181,7 +181,14 @@ if(!chromePath)throw Error('Set CHROME_PATH to an installed Chrome or Chromium e
  await page.screenshot({path:path.join(__dirname,'../.verification/local-account.png')});
  await page.setViewport({width:340,height:750});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
  await page.screenshot({path:path.join(__dirname,'../.verification/local-account-narrow.png')});
- await page.evaluate(()=>{window.fixture.account=null;window.update();});
+ await page.evaluate(()=>{window.fixture.connection={id:'demo',label:'Demo connection',external:true,configurable:true};window.update();});
+ assert.equal(await page.$eval('.account-email',node=>node.textContent),'Demo connection');
+ await page.screenshot({path:path.join(__dirname,'../.verification/connection-account-narrow.png')});
+ assert.equal(await page.$$eval('.account-menu .menu-row',rows=>rows.some(node=>node.textContent.includes('Войти через браузер'))),false);
+ await page.$$eval('.account-menu .menu-row',rows=>rows.find(node=>node.textContent.includes('Настройки подключения')).click());
+ assert.ok(await page.evaluate(()=>window.calls.some(call=>call.action==='connectionSettings')));
+ await page.keyboard.press('Escape');
+ await page.evaluate(()=>{window.fixture.connection=null;window.fixture.account=null;window.update();window.dispatchEvent(new MessageEvent('message',{data:{type:'open',action:'account'}}));});
  const accountCalls=await page.evaluate(()=>window.calls.filter(call=>call.action==='account').length);
  await page.$$eval('.account-menu .menu-row',rows=>rows.find(n=>n.textContent.includes('Войти через браузер')).click());
  assert.equal(await page.evaluate(()=>window.calls.filter(call=>call.action==='account').length),accountCalls+1);

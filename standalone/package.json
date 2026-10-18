@@ -3,7 +3,7 @@
   "displayName": "Rundix",
   "icon": "resources/extension-icon.png",
   "publisher": "local-rundix-tools",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "%extension.description%",
   "license": "MIT",
   "engines": {
@@ -361,7 +361,7 @@
     }
   },
   "scripts": {
-    "test": "node test/queued-session-transfer.cjs && node test/queued-attachments.cjs && node test/queued-edits.cjs && node test/new-session-settings.cjs && node test/notification-sounds.cjs && node test/completion-notifications.cjs && node test/task-preflight.cjs && node test/async-questions.cjs && node test/message-images.cjs && node test/quota-warning.cjs && node test/speed.cjs && node test/pasted-image.cjs && node test/transport.cjs && node test/cli-installer.cjs && node test/cli-updates.cjs && node test/model-catalog.cjs && node test/foundation.cjs && node test/store.cjs && node test/account.cjs && node test/rich-checks.cjs",
+    "test": "node test/connection-history.cjs && node test/connections.cjs && node test/queued-session-transfer.cjs && node test/queued-attachments.cjs && node test/queued-edits.cjs && node test/new-session-settings.cjs && node test/notification-sounds.cjs && node test/completion-notifications.cjs && node test/task-preflight.cjs && node test/async-questions.cjs && node test/message-images.cjs && node test/quota-warning.cjs && node test/speed.cjs && node test/pasted-image.cjs && node test/transport.cjs && node test/cli-installer.cjs && node test/cli-updates.cjs && node test/model-catalog.cjs && node test/foundation.cjs && node test/store.cjs && node test/account.cjs && node test/rich-checks.cjs",
     "test:live": "node test/live.cjs",
     "test:context": "node test/context.cjs",
     "test:host": "powershell -NoProfile -File test/host.ps1",
@@ -379,5 +379,13 @@
     "prettier": "^3.9.10",
     "puppeteer-core": "^25.14.0",
     "tar": "^7.5.22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/uladzemer/Rundix.git",
+    "directory": "standalone"
+  },
+  "bugs": {
+    "url": "https://github.com/uladzemer/Rundix/issues"
   }
 }

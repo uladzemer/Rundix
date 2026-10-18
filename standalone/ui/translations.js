@@ -1,4 +1,11 @@
 (function(root){const strings={
+  "Локальный Codex CLI": "Local Codex CLI",
+  "Настройки подключения недоступны": "Connection settings unavailable",
+  "Модуль подключения недоступен": "Connection extension unavailable",
+  "Подключение": "Connection",
+  "Выберите или настройте подключение": "Choose or configure a connection",
+  "Авторизация управляется расширением подключения.": "Authentication is managed by the connection extension.",
+  "Настройки подключения": "Connection settings",
   "Используется текущий вход официального Codex CLI на этом компьютере.": "Uses the current official Codex CLI sign-in on this computer.",
   "Подключение": "Connection",
   "Автоматически выбирать доступ": "Automatically select access",

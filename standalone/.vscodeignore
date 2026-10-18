@@ -42,3 +42,5 @@
 !resources/icons/*.svg
 !resources/icons/NOTICE.md
 !resources/icons/sources.json
+!runtime/connections.cjs
+!runtime/connection-history.cjs

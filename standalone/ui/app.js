@@ -51,7 +51,7 @@ function showImagePreview(src){
   if(!imageViewer.open)imageViewer.showModal();
 }
 function accountSignature() {
-  return JSON.stringify([state.account, state.limits, state.loginPending, state.authBusy]);
+  return JSON.stringify([state.account, state.connection, state.limits, state.loginPending, state.authBusy]);
 }
 let fileResults = [],
   fileListView = null,
@@ -1158,14 +1158,15 @@ function open(kind, refresh = true, changeItems = null) {
     card.append(icon('rundix'));
     const details = el('div', undefined, 'account-identity-details');
     details.append(el('small', WorkbenchI18n.t('Активный аккаунт')),
-      el('strong', state.loginPending ? WorkbenchI18n.t('Ожидаем вход в браузере') : state.account?.email || state.account?.type || WorkbenchI18n.t('Вход не выполнен'), 'account-email'));
+      el('strong', state.connection?.external ? state.connection.label : state.loginPending ? WorkbenchI18n.t('Ожидаем вход в браузере') : state.account?.email || state.account?.type || WorkbenchI18n.t('Вход не выполнен'), 'account-email'));
     if (state.account) new WorkbenchAccountUsageView({el}).render(details, state.limits, {loading: state.limits?.loading});
     card.append(details);
-    target.append(card, el('p', WorkbenchI18n.t('Используется текущий вход официального Codex CLI на этом компьютере.')));
-    if (state.loginPending) {
+    target.append(card, el('p', WorkbenchI18n.t(state.connection?.external ? 'Авторизация управляется расширением подключения.' : 'Используется текущий вход официального Codex CLI на этом компьютере.')));
+    if (state.connection?.configurable) row(target, WorkbenchI18n.t('Настройки подключения'), state.connection.label, () => send('connectionSettings'), {disabled:state.busy || state.authBusy});
+    if (!state.connection?.external && state.loginPending) {
       target.append(el('p', WorkbenchI18n.t('Завершите вход в открытом браузере.')));
       row(target, WorkbenchI18n.t('Отменить вход'), '', () => send('accountCancel'));
-    } else if (!state.account) {
+    } else if (!state.connection?.external && !state.account) {
       row(target, WorkbenchI18n.t('Войти через браузер'), WorkbenchI18n.t('Официальная авторизация Codex'), () => send('account'), {disabled: state.busy || state.authBusy});
     }
     row(target, WorkbenchI18n.t('Обновить статус'), WorkbenchI18n.t('Проверить аккаунт и доступные модели'), () => send('accountRefresh'));

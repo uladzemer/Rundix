@@ -2,7 +2,7 @@
 
 **English** · [Русский](#русский)
 
-An independent VS Code interface for the official Codex CLI through App Server. This edition uses the CLI's current local sign-in. Rundix never reads or copies credential files and never asks App Server to return raw authentication tokens.
+An independent VS Code interface for the official Codex CLI through App Server. Rundix uses the CLI's current local sign-in by default. It never reads or copies credential files. Optional installed companion extensions can supply another connection through API v1; selecting a companion is explicit and its authentication is managed by that extension.
 
 ## Features
 
@@ -28,7 +28,11 @@ The extension inherits the CLI's environment, including `CODEX_HOME` when explic
 
 ## Settings and development identity
 
-Settings appear under **Rundix**, with the `rundix` prefix: language, chat width, context style, motion, CLI path, update channel and history scope. The development extension ID is `local-rundix-tools.rundix`; this is a separate installation and storage namespace. A Marketplace publisher has not been configured.
+Settings appear under **Rundix**, with the `rundix` prefix: language, chat width, context style, motion, CLI path, update channel and history scope. The extension ID is `local-rundix-tools.rundix`; it is a separate installation and storage namespace. Rundix is available in the Visual Studio Marketplace.
+
+## Optional connection extensions
+
+Rundix 0.2.0 adds connection API v1 for installed companion extensions. Registering a companion does not change sign-in. Open `/account` → **Connection settings** to configure/select one. If a selected companion is unavailable, sending fails with the draft preserved; there is no automatic fallback to a different account. The public package does not include a private service client, account pool or rotation implementation. Companions must check API compatibility and can be distributed separately.
 
 From the repository root, run `npm.cmd run setup`, `npm.cmd test`, `npm.cmd run test:browser` and `npm.cmd run package`. For Extension Host authentication checks, run `powershell -NoProfile -File test/host.ps1 -TestFile local-auth-host.cjs` from this directory. That test uses a synthetic App Server and does not inspect or alter the user's real sign-in.
 
@@ -38,7 +42,7 @@ Project code, the `{R}` mark and the action SVGs are MIT licensed. Included libr
 
 ## Русский
 
-Rundix — самостоятельный интерфейс VS Code для официального Codex CLI. Расширение использует текущий локальный вход CLI: авторизация, обновление учётных данных и системное хранилище входа остаются ответственностью CLI. Rundix не читает и не копирует файлы авторизации и не запрашивает сырые токены.
+Rundix — самостоятельный интерфейс VS Code для официального Codex CLI. По умолчанию используется текущий локальный вход CLI: авторизация, обновление учётных данных и системное хранилище входа остаются ответственностью CLI. Rundix не читает и не копирует файлы авторизации. С версии 0.2.0 отдельно установленный совместимый модуль может добавить способ подключения через API v1. Выбор выполняется явно через `/account` → **Настройки подключения**; при недоступном выбранном модуле черновик сохраняется и другой аккаунт автоматически не используется.
 
 Создайте вкладку командой **Rundix: Новая вкладка**. Если вход уже выполнен в CLI, он используется автоматически. Если входа нет, откройте `/account` → **Войти через браузер** либо выполните `codex login` в терминале. После внешней смены входа нажмите **Обновить статус**. Выберите модель и отправьте запрос.
 

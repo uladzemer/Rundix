@@ -1,0 +1,35 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const {Connections} = require('../runtime/connections.cjs');
+const {SessionStore} = require('../runtime/store.cjs');
+(async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rundix-connections-'));
+  try {
+    const store = new SessionStore(root);
+    let activated;
+    const registry = new Connections({store, activateOwner: async owner => { activated = owner; }});
+    assert.equal((await registry.resolve()).provider, null);
+    const provider = {id: 'demo', label: 'Demo connection', authenticate() {}, configure() {}};
+    const subscription = registry.register('example.connection', provider);
+    assert.equal(registry.selection().id, 'local', 'Registration must not change sign-in');
+    assert.throws(() => registry.register('example.connection', provider));
+    registry.select('demo');
+    const selected = await registry.resolve();
+    assert.equal(selected.provider, provider);
+    assert.deepEqual(registry.projectAccount({type:'chatgpt',email:'private@example.test',planType:'pro'}), {type:'chatgpt'});
+    subscription.dispose();
+    await assert.rejects(registry.resolve(), /unavailable/);
+    assert.equal(activated, 'example.connection');
+    assert.equal(registry.selection().id, 'demo', 'Missing provider must not fall back');
+    assert.throws(() => registry.assertCurrent(selected), /changed/);
+    registry.select('local');
+    assert.equal((await registry.resolve()).provider, null);
+    fs.writeFileSync(store.file('connection', 'active'), '{broken');
+    assert.throws(() => registry.selection(), /unreadable/);
+    registry.select('local');
+    assert.equal(registry.selection().id, 'local');
+    console.log('PASS: optional providers, explicit selection, missing/stale owner rejection, account privacy and damaged-settings recovery.');
+  } finally { fs.rmSync(root, {recursive:true,force:true}); }
+})().catch(error => { console.error(error); process.exitCode=1; });

@@ -22,6 +22,7 @@ const { fileAttachment, stageQueuedAttachments } = require('./runtime/queued-att
 const { transferQueuedSession, acquireQueuedSession } = require('./runtime/queued-session-transfer.cjs');
 const { SessionStore } = require("./runtime/store.cjs");
 const { startLogin, identity } = require("./runtime/account.cjs");
+const { Connections } = require('./runtime/connections.cjs');
 const { ProjectFiles } = require("./runtime/files.cjs");
 const modes = require("./ui/modes.js");
 const speed = require('./ui/speed.js');
@@ -86,6 +87,26 @@ function activate(context) {
   const store = new SessionStore(
     path.join(context.globalStorageUri.fsPath, "sessions-v1"),
   );
+  const connections = new Connections({store, activateOwner: async owner => {
+    const extension = vscode.extensions.getExtension(owner);
+    if (!extension) throw Error('The selected connection extension is not installed.');
+    await extension.activate();
+  }});
+  let activeConnection = null, connectionStarting = false;
+  const providerClients = new WeakMap();
+  function providerClient(client, connection) {
+    if (!providerClients.has(client)) {
+      const assertOwner = () => {
+        connections.assertCurrent(connection);
+        if (server !== client) throw Error('The connection client has closed.');
+      };
+      providerClients.set(client, {
+        async request(...args) { assertOwner(); const result = await client.request(...args); assertOwner(); return result; },
+        respond(...args) { assertOwner(); return client.respond(...args); },
+      });
+    }
+    return providerClients.get(client);
+  }
   let accountStatusRequest = null;
   const turnLeases = new Map();
   for (const key of context.workspaceState
@@ -213,7 +234,8 @@ function activate(context) {
           models: catalog,
           cli: {...cliInfo, channel:cliChannel(),autoUpdate:vscode.workspace.getConfiguration('rundix').get('cliAutoUpdate',true),custom:!!vscode.workspace.getConfiguration('rundix').get('cliPath','')},
           modelsUpdatedAt: catalogUpdatedAt,
-          account,
+          account: connections.projectAccount(account),
+          connection: connections.display(),
           authBusy,
           chatWidth:vscode.workspace.getConfiguration('rundix').get('chatWidth','wide'),
           contextDisplay:vscode.workspace.getConfiguration('rundix').get('contextDisplay','percent'),
@@ -346,8 +368,13 @@ function activate(context) {
     return cliCheckRequest;
   }
   async function connect() {
-    if (connecting) return connecting;
+    if (connecting) {
+      if (activeConnection) connections.assertCurrent(activeConnection);
+      return connecting;
+    }
+    connectionStarting = true;
     connecting = (async () => {
+      activeConnection = await connections.resolve();
       server = new AppServer({
         executable: await resolveCli(),
         cwd: cwd(),
@@ -449,6 +476,17 @@ function activate(context) {
         treeEvents.fire();
       });
       server.on("request", (request) => {
+        const provider = activeConnection?.provider;
+        if (provider?.requestMethods?.includes(request.method)) {
+          const owner = activeConnection, client = server;
+          void Promise.resolve().then(() => {
+            connections.assertCurrent(owner);
+            return provider.handleRequest(providerClient(client, owner), request);
+          }).catch(() => {
+            if (server === client) client.respond(request.id, null, {code:-32000,message:'Connection authorization is unavailable. Retry after reconnecting.'});
+          });
+          return;
+        }
         const owner=[...sessions.values()].find(s=>s.id===request.params?.threadId);
         if(preflight.preparing(owner?.preflight) && request.method!=='item/tool/requestUserInput'){
           server.respond(request.id,null,{code:-32600,message:'Task preparation does not grant tool approvals.'});
@@ -500,6 +538,8 @@ function activate(context) {
       });
       server.on("protocolError", (message) => output.appendLine(message));
       await server.start();
+      if (activeConnection.provider) await activeConnection.provider.authenticate(providerClient(server, activeConnection));
+      connections.assertCurrent(activeConnection);
       await refreshAccount();
       await refreshCatalog();
       if(cliPrepared && server.executable===cliPrepared.executable){cliUpdates.accept(cliPrepared.channel,cliPrepared);cliPrepared=null;}
@@ -509,7 +549,7 @@ function activate(context) {
       connecting = null;
       server?.dispose();
       throw error;
-    });
+    }).finally(() => { connectionStarting = false; });
     return connecting;
   }
   async function refreshAccount() {
@@ -538,7 +578,7 @@ function activate(context) {
     return changed;
   }
   async function withLocalSignIn(operation) {
-    if (authBusy || [...sessions.values()].some(session => session.busy || session.compacting))
+    if (authBusy || connectionStarting || accountStatusRequest || [...sessions.values()].some(session => session.busy || session.compacting || session.sendingTask))
       throw Error(locale.t('Дождитесь завершения задач перед сменой аккаунта.'));
     const release = store.acquire('account-credentials');
     try {
@@ -548,6 +588,7 @@ function activate(context) {
     } finally { authBusy = false; release(); broadcast(); }
   }
   function refreshAccountStatus() {
+    if (authBusy) return Promise.reject(Error('Wait for the connection change to finish.'));
     if (accountStatusRequest) return accountStatusRequest;
     accountStatusRequest = (async () => {
       await connect();
@@ -558,6 +599,32 @@ function activate(context) {
   }
   function stopAccountServer() {
     server?.removeAllListeners(); server?.dispose(); server = null; connecting = null;
+  }
+  async function resetConnection() {
+    for (const session of sessions.values()) { await save(session); session.loaded = false; }
+    stopAccountServer(); activeConnection = null;
+    account = null; catalog = []; catalogUpdatedAt = 0;
+    accountRequestEpoch++; limitsEpoch++; limitsRequest = null;
+    limits = {buckets:[],loading:false,updatedAt:null,error:false};
+    broadcast();
+    return connect();
+  }
+  async function configureConnection(id) {
+    return withLocalSignIn(async () => {
+      if (id === 'local') connections.select('local');
+      else {
+        const entry = connections.providers.get(id);
+        if (!entry) throw Error('The connection extension is unavailable.');
+        const outcome = await entry.provider.configure();
+        if (outcome === 'cancel') return;
+        connections.select(outcome === 'local' ? 'local' : id);
+      }
+      await resetConnection();
+    });
+  }
+  async function chooseConnection() {
+    const choice = await vscode.window.showQuickPick(connections.choices().map(item => ({label:item.label,id:item.id})), {title:'Rundix · '+locale.t('Подключение'),placeHolder:locale.t('Выберите или настройте подключение')});
+    if (choice) await configureConnection(choice.id);
   }
   async function refreshLimits() {
     if (limitsRequest) return limitsRequest;
@@ -1066,6 +1133,8 @@ function activate(context) {
     await applyPendingMode(s);
     const accountRevisionBeforeConnect=accountReadRevision;
     await connect();
+    connections.assertCurrent(activeConnection);
+    if (activeConnection.provider) await activeConnection.provider.authenticate(providerClient(server, activeConnection));
     // A cold connection already read the account and loaded its model catalog.
     const initializedHere=accountReadRevision!==accountRevisionBeforeConnect;
     const accountChanged=initializedHere ? false : await refreshAccount();
@@ -1074,6 +1143,25 @@ function activate(context) {
       initializedHere && limits.updatedAt && !limits.error ? (limitsRequest || Promise.resolve()) : refreshLimits(),
       accountChanged || Date.now()-catalogUpdatedAt>60000 ? refreshCatalog() : Promise.resolve(),
     ]);
+    if (activeConnection.provider?.prepareTurn) {
+      const connection = activeConnection;
+      const assertCanChange = () => {
+        connections.assertCurrent(connection);
+        if ([...sessions.values()].some(session => session.busy || session.compacting)) throw Error('Finish active tasks before changing the connection.');
+        store.assertNoActiveTurns();
+      };
+      const decision = await connection.provider.prepareTurn({
+        limits: {...limits},
+        assertCanChange,
+        reconnect: async () => {
+          assertCanChange();
+          await resetConnection();
+        },
+        readLimits: async () => { await refreshLimits(); return {...limits}; },
+      });
+      connections.assertCurrent(connection);
+      if (decision?.waitUntil) return {waitUntil:decision.waitUntil,connection};
+    }
     const exhausted = require('./ui/limits.js').exhaustion(limits);
     if(exhausted){
       const date=exhausted.resetAt?new Intl.DateTimeFormat(undefined,{dateStyle:'short',timeStyle:'short'}).format(exhausted.resetAt):null;
@@ -1473,7 +1561,17 @@ function activate(context) {
         if(!s.busy)await drainFollowUps(s);
         return;
       }
-      await send(s, msg.text);
+      let sendResult = await send(s, msg.text);
+      while (sendResult?.waitUntil) {
+        connections.assertCurrent(sendResult.connection);
+        const waitingConnection = sendResult.connection;
+        const proceed = await waitingConnection.provider.waitForReset(sendResult.waitUntil, () => {
+          try { connections.assertCurrent(waitingConnection); return !!s.panel; } catch { return false; }
+        });
+        if (!proceed) throw Error('Waiting cancelled. Your draft is preserved.');
+        connections.assertCurrent(sendResult.connection);
+        sendResult = await send(s, msg.text);
+      }
       s.draft = "";
       await save(s);
       await s.panel?.webview.postMessage({ type: "sent", key: s.key });
@@ -2074,6 +2172,8 @@ function activate(context) {
       if (!["http:", "https:"].includes(url.protocol))
         throw Error(locale.t("Неподдерживаемый адрес."));
       await vscode.env.openExternal(vscode.Uri.parse(url.href));
+    } else if (msg.action === 'connectionSettings') {
+      await chooseConnection();
     } else if (msg.action === 'accountRefresh') {
       await refreshAccountStatus();
       publish(s);
@@ -2084,6 +2184,7 @@ function activate(context) {
         broadcast();
       }
     } else if (msg.action === "account") {
+      if (connections.selection().id !== 'local') return chooseConnection();
       if ([...sessions.values()].some((session) => session.busy))
         throw Error(
           locale.t("Дождитесь завершения задач перед сменой аккаунта."),
@@ -2487,6 +2588,19 @@ function activate(context) {
     if(Date.now()-catalogUpdatedAt>=300000)void refreshCatalog().catch(()=>{});
   },60000);
   return {
+    connections: {
+      version: 1,
+      registerProvider(owner, provider) { const subscription = connections.register(owner, provider); broadcast(); return subscription; },
+      configure: configureConnection,
+      useLocal: () => configureConnection('local'),
+      importHistory(owner, snapshot) {
+        if (![...connections.providers.values()].some(entry => entry.owner === owner)) throw Error('History source extension is not registered.');
+        return withLocalSignIn(async () => {
+          const result=require('./runtime/connection-history.cjs').copyHistory(store,snapshot);
+          treeEvents.fire();broadcast();return result;
+        });
+      },
+    },
     create,
     connect,
     sessions,

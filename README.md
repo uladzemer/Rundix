@@ -1,5 +1,7 @@
 # Rundix
 
+![Rundix — curly braces enclosing R](standalone/resources/extension-icon.png)
+
 A VS Code interface for the official Codex CLI. Conversations live in native editor tabs, with Markdown responses, images, queued follow-ups, project context, questions and usage information.
 
 This edition uses only the Codex CLI sign-in on the current computer. The CLI owns authentication and credential storage; Rundix does not read, copy or manage credential files. If sign-in is missing, the account menu can start the official browser sign-in through the CLI.

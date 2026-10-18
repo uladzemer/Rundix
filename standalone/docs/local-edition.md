@@ -1,5 +1,7 @@
 # Local edition boundary and validation
 
+The current source version is recorded in [package.json](../package.json), with version notes in [CHANGELOG.md](../CHANGELOG.md). The 0.1.0 and 0.1.1 references below describe the initial edition and past validation, not the current source version. Individual source files keep their last-change commits when they do not need changes in a later version.
+
 The local edition started with a fresh repository history and a separate extension identity: `local-rundix-tools.rundix`, initial version `0.1.0`, command/configuration prefix `rundix`. It does not migrate the personal edition's sessions or settings automatically. Version 0.2.0 adds a generic optional connection API; see [connection-api.md](connection-api.md). Provider implementations remain outside the public package, and local CLI sign-in is still the default.
 
 Authentication stays with the official CLI. The host requests public account information with `account/read` and `{refreshToken:false}`, reads official usage snapshots and can start/cancel the official browser sign-in. It does not read or copy credential files. Account pools, saved-profile management, file imports, account rotation, cloud authentication and the broker/admin/server project are absent. CLI/model endpoints and explicitly configured optional notifications remain.

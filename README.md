@@ -1,6 +1,7 @@
 <div align="center">
   <img src="standalone/resources/extension-icon.png" alt="Rundix — curly braces enclosing R" width="96" height="96">
   <h1>Rundix — Codex CLI for VS Code</h1>
+  <p>Source version: <a href="standalone/package.json"><strong>0.2.2</strong></a> · <a href="standalone/CHANGELOG.md">Version history</a></p>
   <p><strong>Your coding agent, in your editor.</strong><br>Native chat tabs · Images and project context · Follow-up queue · English / Русский</p>
   <a href="https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix"><img src="standalone/docs/branding/marketplace-badge.png" alt="Install Rundix from Microsoft Marketplace" width="300" height="60"></a>
   <p><a href="#screenshots">Demo &amp; screenshots</a> · <a href="standalone/CHANGELOG.md">What's new</a> · <a href="#русский">Русский</a> · <a href="https://github.com/uladzemer/Rundix/issues">Feedback</a></p>

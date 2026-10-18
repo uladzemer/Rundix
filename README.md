@@ -8,6 +8,10 @@ This edition uses only the Codex CLI sign-in on the current computer. The CLI ow
 
 Rundix is an independent project and is not an official OpenAI product.
 
+## Install
+
+Install [Rundix from the Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix), then run **Rundix: New tab** in VS Code. You can also download a VSIX from [GitHub Releases](https://github.com/uladzemer/Rundix/releases).
+
 ## Screenshots
 
 The actual Rundix webview, captured in a browser with synthetic demonstration content. These are UI examples, not a live model run or a capture of a user's conversation. Native VS Code editor tabs are outside the captured webview area.
@@ -33,11 +37,13 @@ npm.cmd run package
 
 The package is written to `standalone/rundix-<version>.vsix`. Browser checks need Chrome; set `CHROME_PATH` if it is not installed in a standard location. Extension Host checks run in an isolated VS Code profile. Synthetic checks do not send model requests.
 
-The development extension ID is `local-rundix-tools.rundix`. Its commands, settings and storage are separate from other editions. No Marketplace release or verified publisher namespace is configured yet.
+The extension ID is `local-rundix-tools.rundix`. Its commands, settings and storage are separate from other editions.
 
 ## Русский
 
 Rundix — интерфейс для официального Codex CLI в VS Code: отдельные вкладки чатов, Markdown, изображения, очередь уточнений, контекст проекта, вопросы и лимиты.
+
+Установите [Rundix из Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix), затем выполните **Rundix: Новая вкладка** в VS Code.
 
 Используется только текущая авторизация Codex CLI на компьютере. Учётными данными и их хранением управляет CLI. Расширение не читает и не копирует файлы авторизации. Если вход отсутствует, меню аккаунта позволяет открыть официальный вход через браузер.
 

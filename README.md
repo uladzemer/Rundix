@@ -1,20 +1,39 @@
-# Rundix
+# Rundix — Codex CLI for VS Code
 
-![Rundix — curly braces enclosing R](standalone/resources/extension-icon.png)
+<img src="standalone/resources/extension-icon.png" alt="Rundix — curly braces enclosing R" width="96" height="96">
 
-A VS Code interface for the official Codex CLI. Conversations live in native editor tabs, with Markdown responses, images, queued follow-ups, project context, questions and usage information.
+**An AI coding assistant powered by the official Codex CLI, inside Visual Studio Code.**
 
-By default, Rundix uses the Codex CLI sign-in on the current computer. The CLI owns local credential storage; Rundix does not read or copy authentication files. If sign-in is missing, the account menu can start the official browser sign-in. Starting with 0.2.0, an optional installed companion can provide an additional connection through the [versioned connection API](standalone/docs/connection-api.md); selecting it is explicit and its authentication is managed by that companion.
+Keep conversations in native editor tabs, add images and project files, and queue follow-ups while your coding agent works. Choose models, reasoning effort and access modes from the chat.
+
+**[Install from Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix)** · [See screenshots](#screenshots) · [Русский](#русский) · [Report an issue](https://github.com/uladzemer/Rundix/issues)
+
+Rundix uses your existing Codex CLI sign-in by default. The CLI manages credentials; Rundix does not read or copy authentication files. Compatible companion extensions can provide an explicitly selected alternative through the [connection API](standalone/docs/connection-api.md).
 
 Rundix is an independent project and is not an official OpenAI product.
+
+## Why Rundix?
+
+| What you need | What Rundix offers |
+| --- | --- |
+| Keep several tasks organized | Native VS Code chat tabs, session history, groups, bookmarks and conversation branches |
+| Give the agent useful context | Image paste, file attachments, selected code and optional IDE context |
+| Add the next step without losing it | Editable follow-up queue, task reordering, steering and sending a queued task to a new tab |
+| Read and review results | Streaming Markdown, highlighted code and file changes |
+| Control how a task runs | Model and reasoning selection, access modes and supported Fast tiers |
+| Work in your preferred interface | English and Russian, VS Code theme colors, chat width and motion settings |
+
+Available models, Fast tiers and usage limits depend on your account and CLI version.
 
 ## Install
 
 Install [Rundix from the Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix), then run **Rundix: New tab** in VS Code. You can also download a VSIX from [GitHub Releases](https://github.com/uladzemer/Rundix/releases).
 
+Already signed in to Codex CLI? Start chatting. Otherwise, open `/account` → **Sign in through browser**, or run `codex login` in your terminal.
+
 ## Screenshots
 
-The actual Rundix webview, captured in a browser with synthetic demonstration content. These are UI examples, not a live model run or a capture of a user's conversation. Native VS Code editor tabs are outside the captured webview area.
+The Rundix chat UI with synthetic demo content. Native VS Code tabs are outside these screenshots.
 
 Chat, highlighted code and the message composer:
 
@@ -23,6 +42,12 @@ Chat, highlighted code and the message composer:
 Access modes and reasoning effort:
 
 ![Rundix access-mode menu and reasoning controls](standalone/docs/screenshots/access-modes.jpg)
+
+## Support the project
+
+If Rundix is useful to you, **[give it a star on GitHub](https://github.com/uladzemer/Rundix)** using the **Star** button at the top of this page. It helps other developers discover the project and lets you find it again later.
+
+Found a bug or have a feature idea? [Open an issue](https://github.com/uladzemer/Rundix/issues) with the expected behavior and steps to reproduce. Please leave out credentials, private conversations and personal paths.
 
 ## Develop
 
@@ -41,10 +66,14 @@ The extension ID is `local-rundix-tools.rundix`. Its commands, settings and stor
 
 ## Русский
 
-Rundix — интерфейс для официального Codex CLI в VS Code: отдельные вкладки чатов, Markdown, изображения, очередь уточнений, контекст проекта, вопросы и лимиты.
+Rundix — AI-помощник для программирования на базе официального Codex CLI в Visual Studio Code. Чаты открываются во вкладках редактора; доступны Markdown и подсветка кода, изображения, файлы и контекст проекта, очередь уточнений, история, группы, закладки и ветки разговоров.
 
 Установите [Rundix из Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix), затем выполните **Rundix: Новая вкладка** в VS Code.
+
+Выбирайте модель, глубину рассуждения и режим доступа прямо в чате. Доступность моделей, Fast и лимитов зависит от аккаунта и версии CLI. Интерфейс поддерживает русский и английский языки и цвета вашей темы VS Code.
 
 По умолчанию используется текущая авторизация Codex CLI на компьютере. Учётными данными и их хранением управляет CLI. Расширение не читает и не копирует файлы авторизации. Если вход отсутствует, меню аккаунта позволяет открыть официальный вход через браузер. С версии 0.2.0 дополнительный установленный модуль может предоставить другой способ подключения через версионируемый API; он включается явно, а его авторизацией управляет модуль.
 
 Подробности: [`standalone/README.md`](standalone/README.md). Лицензия кода и собственных значков — [MIT](LICENSE); лицензии включённых библиотек собраны в `standalone/THIRD_PARTY_NOTICES.txt`.
+
+Если Rundix вам полезен, поставьте **Star** вверху страницы репозитория. Об ошибках и идеях можно рассказать в [Issues](https://github.com/uladzemer/Rundix/issues), без ключей и личных переписок.

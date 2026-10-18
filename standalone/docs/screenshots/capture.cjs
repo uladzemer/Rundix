@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const {pathToFileURL} = require('node:url');
-const {spawn, spawnSync} = require('node:child_process');
+const {spawn} = require('node:child_process');
 const puppeteer = require('puppeteer-core');
 
 async function capture() {
@@ -44,10 +44,7 @@ async function capture() {
     await page.waitForSelector('.composer');
     await page.screenshot({path:path.join(__dirname,'questions-light.jpg'),type:'jpeg',quality:90});
     if (errors.length) throw Error('Synthetic demo has browser errors.');
-    const result = spawnSync(process.env.PYTHON || 'python', [path.join(__dirname,'tour.py')], {stdio:'inherit'});
-    if (result.error) throw result.error;
-    if (result.status !== 0) throw Error('Install Pillow for the documentation GIF.');
-    console.log('Captured three synthetic scenes and demo.gif; no inference performed.');
+    console.log('Captured three panel scenes and the installation badge; no inference performed.');
   } finally {
     try { await browser?.close(); }
     finally { preview.kill(); }

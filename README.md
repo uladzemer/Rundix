@@ -38,24 +38,36 @@ Already signed in to Codex CLI? Start chatting. Otherwise, open `/account` → *
 
 ### A quick tour
 
-![Rundix feature tour: code chat, access modes and Russian questions in the light theme](standalone/docs/screenshots/demo.gif)
+![Rundix in a real VS Code window: native chat tabs, grouped history, code, queue and Russian questions](standalone/docs/screenshots/demo.gif)
 
-Real Rundix UI with synthetic demo content; no model request or personal conversation. The tour cycles through three scenes. Native VS Code tabs are outside the captures.
+A 29-second tour of a **real VS Code window**, including native chat tabs and the grouped session tree. Switch between three conversations, open code beside a chat, review queued tasks, access modes and history, then see Russian questions in the light theme. All content is synthetic; no model request, real account or personal conversation is used.
 
 <details>
 <summary>View still screenshots</summary>
 
-Chat, highlighted code and the message composer:
+Three native chat tabs, grouped history and the message composer:
 
-![Rundix chat with a TypeScript example in the dark theme](standalone/docs/screenshots/chat-dark.jpg)
+![Rundix full workbench with three native chat tabs and grouped session history](standalone/docs/screenshots/workbench-overview.jpg)
+
+Code and chat side by side:
+
+![TypeScript source beside a Rundix conversation in split VS Code editor groups](standalone/docs/screenshots/workbench-split.jpg)
+
+Editable follow-up queue:
+
+![Rundix queued tasks below the conversation, with pause and reorder controls](standalone/docs/screenshots/workbench-queue.jpg)
 
 Access modes and reasoning effort:
 
-![Rundix access-mode menu and reasoning controls](standalone/docs/screenshots/access-modes.jpg)
+![Rundix access-mode menu and reasoning controls inside the VS Code workbench](standalone/docs/screenshots/workbench-access.jpg)
+
+History across conversations:
+
+![Rundix session-history search with grouped conversations](standalone/docs/screenshots/workbench-history.jpg)
 
 Questions in Russian, in the light theme:
 
-![Rundix question panel with Russian options in the light theme](standalone/docs/screenshots/questions-light.jpg)
+![Rundix Russian question panel with native editor tabs in the light theme](standalone/docs/screenshots/workbench-questions.jpg)
 
 </details>
 

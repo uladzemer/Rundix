@@ -4,11 +4,11 @@ Install and update Rundix through [Microsoft Marketplace](https://marketplace.vi
 
 ## 0.2.2 — 2026-10-18
 
-- Added a Microsoft Marketplace installation badge, a short animated feature tour and dark/light screenshots to the description.
+- Added a Microsoft Marketplace installation badge and a 29-second, seven-scene tour of a real VS Code window: native chat tabs, grouped history, split code/chat layout, follow-up queue, access modes and Russian questions in the light theme.
 - Added version notes and feedback links. Microsoft Marketplace is the only distribution channel promoted in the documentation.
 - Documentation and package presentation only; chat, history and connection behavior are unchanged.
 
-Добавлены значок установки из Microsoft Marketplace, GIF-обзор и скриншоты тёмной/светлой темы, история изменений и ссылки для обратной связи. Работа чатов, истории и подключений не менялась.
+Добавлены значок установки из Microsoft Marketplace, 29-секундный тур по настоящему окну VS Code с вкладками, историей, кодом рядом с чатом, очередью и вопросами в светлой теме, история изменений и ссылки для обратной связи. Работа чатов, истории и подключений не менялась.
 
 ## 0.2.1 — 2026-10-18
 

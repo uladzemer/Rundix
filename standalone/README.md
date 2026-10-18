@@ -22,13 +22,13 @@ Rundix can install and update the official CLI, or use an executable you choose 
 
 ## See it in action
 
-![Rundix feature tour: code chat, access modes and questions](https://raw.githubusercontent.com/uladzemer/Rundix/main/standalone/docs/screenshots/demo.gif)
+![Rundix full-window tour with native VS Code tabs, session history, split editor, queue and questions](https://raw.githubusercontent.com/uladzemer/Rundix/main/standalone/docs/screenshots/demo.gif)
 
-Real Rundix UI with synthetic demo content, cycling through three scenes. No model request or personal conversation is shown.
+A 29-second tour captured from a real VS Code window: three native chat tabs, grouped session history, code beside the chat, queued follow-ups, access modes, history search and Russian questions in the light theme. The content and transport are synthetic; no model request, real account or personal conversation is used.
 
-| Code and project context | Русский · Light theme |
+| Native chat tabs and history | Code and chat side by side |
 | --- | --- |
-| ![Chat and highlighted code in the dark theme](https://raw.githubusercontent.com/uladzemer/Rundix/main/standalone/docs/screenshots/chat-dark.jpg) | ![Russian questions in the light theme](https://raw.githubusercontent.com/uladzemer/Rundix/main/standalone/docs/screenshots/questions-light.jpg) |
+| ![Rundix workbench with three native chat tabs and grouped history](https://raw.githubusercontent.com/uladzemer/Rundix/main/standalone/docs/screenshots/workbench-overview.jpg) | ![Source code beside a Rundix chat in split editor groups](https://raw.githubusercontent.com/uladzemer/Rundix/main/standalone/docs/screenshots/workbench-split.jpg) |
 
 ## Get started
 
@@ -90,7 +90,7 @@ Rundix может установить и обновлять официальн�
 
 ### Демонстрация и обратная связь
 
-На демонстрации выше показаны настоящий интерфейс чата, меню доступа и вопросы на русском в светлой теме. Содержимое синтетическое: реальные чаты и аккаунты не используются.
+На 29-секундной демонстрации выше показано настоящее окно VS Code: три вкладки чатов, группы истории, код рядом с чатом, очередь уточнений, режимы доступа, поиск истории и вопросы на русском в светлой теме. Содержимое и транспорт синтетические: реальные чаты, аккаунты и модельные запросы не используются.
 
 Установка и обновления — через **Microsoft Marketplace**. Изменения версий описаны в [истории изменений](https://github.com/uladzemer/Rundix/blob/main/standalone/CHANGELOG.md). Об ошибках и идеях можно рассказать в [Issues](https://github.com/uladzemer/Rundix/issues); поддержать проект — кнопкой **Star** в [репозитории](https://github.com/uladzemer/Rundix).
 

@@ -10,6 +10,8 @@ The extension ID is `local-rundix-tools.rundix`, with `rundix` commands and sett
 
 Checks, from `standalone/`:
 
+GitHub Actions are disabled in repository settings at the owner's request on 18 October 2026. Keep workflows for possible future use, but do not re-enable Actions without a request. Run the appropriate checks locally.
+
 - `npm.cmd test`: synthetic runtime and contract checks.
 - `npm.cmd run test:browser`: Chrome UI checks. Set `CHROME_PATH` when needed; inspect visible changes in both themes and narrow/wide panels, in Russian and English.
 - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File test/host.ps1 -TestFile local-auth-host.cjs`: isolated synthetic Extension Host authentication checks.

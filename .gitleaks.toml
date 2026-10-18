@@ -4,6 +4,6 @@ useDefault = true
 [[allowlists]]
 description = "Storage key identifiers, not credential values"
 condition = "AND"
-paths = ['''^(?:standalone|\.git/audit-vsix/extension)/runtime/completion-notifications\.cjs$''']
+paths = ['''(?:^|[/\\])(?:standalone|extension)[/\\]runtime[/\\]completion-notifications\.cjs$''']
 regexTarget = "secret"
 regexes = ['''^completionNotifications(?:\.telegram)?\.v1$''']

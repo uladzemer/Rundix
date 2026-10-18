@@ -1,0 +1,383 @@
+{
+  "name": "rundix",
+  "displayName": "Rundix",
+  "icon": "resources/extension-icon.png",
+  "publisher": "local-rundix-tools",
+  "version": "0.1.1",
+  "description": "%extension.description%",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "main": "./extension.cjs",
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onWebviewPanel:rundix.session"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "rundix.close",
+        "title": "%command.close%"
+      },
+      {
+        "command": "rundix.new",
+        "title": "%command.new%",
+        "icon": {
+          "light": "resources/rundix-light.svg",
+          "dark": "resources/rundix-dark.svg"
+        }
+      },
+      {
+        "command": "rundix.rename",
+        "title": "%command.rename%"
+      },
+      {
+        "command": "rundix.openLast",
+        "title": "%command.openLast%"
+      },
+      {
+        "command": "rundix.reopen",
+        "title": "%command.reopen%"
+      },
+      {
+        "command": "rundix.beside",
+        "title": "%command.beside%"
+      },
+      {
+        "command": "rundix.newWindow",
+        "title": "%command.newWindow%"
+      },
+      {
+        "command": "rundix.switch",
+        "title": "%command.switch%"
+      },
+      {
+        "command": "rundix.group",
+        "title": "%command.group%"
+      },
+      {
+        "command": "rundix.unread",
+        "title": "%command.unread%"
+      },
+      {
+        "command": "rundix.selection",
+        "title": "%command.selection%"
+      },
+      {
+        "command": "rundix.addFile",
+        "title": "%command.addFile%"
+      },
+      {
+        "command": "rundix.openSession",
+        "title": "%command.openSession%"
+      },
+      {
+        "command": "rundix.refresh",
+        "title": "%command.refresh%",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "rundix.logs",
+        "title": "%command.logs%"
+      },
+      {
+        "command": "rundix.notifications",
+        "title": "%command.notifications%"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "rundix.new",
+          "group": "navigation"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "rundix.rename",
+          "when": "activeWebviewPanelId == rundix.session",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "rundix.group",
+          "when": "activeWebviewPanelId == rundix.session",
+          "group": "codex@2"
+        },
+        {
+          "command": "rundix.unread",
+          "when": "activeWebviewPanelId == rundix.session",
+          "group": "codex@3"
+        },
+        {
+          "command": "rundix.beside",
+          "when": "activeWebviewPanelId == rundix.session",
+          "group": "codex@4"
+        },
+        {
+          "command": "rundix.notifications",
+          "when": "activeWebviewPanelId == rundix.session",
+          "group": "9_settings"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "rundix.selection",
+          "when": "editorHasSelection",
+          "group": "codex@1"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "rundix.addFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "codex@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "rundix.refresh",
+          "when": "view == rundix.sessions",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "rundix.rename",
+          "when": "viewItem == rundixSession",
+          "group": "codex@1"
+        },
+        {
+          "command": "rundix.group",
+          "when": "viewItem == rundixSession",
+          "group": "codex@2"
+        },
+        {
+          "command": "rundix.unread",
+          "when": "viewItem == rundixSession",
+          "group": "codex@3"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "rundix.rename",
+          "when": "rundix.active"
+        },
+        {
+          "command": "rundix.group",
+          "when": "rundix.active"
+        },
+        {
+          "command": "rundix.unread",
+          "when": "rundix.active"
+        },
+        {
+          "command": "rundix.openSession",
+          "when": "false"
+        },
+        {
+          "command": "rundix.refresh",
+          "when": "config.rundix.showSessionsView"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "rundix",
+          "title": "Rundix",
+          "icon": "resources/rundix-dark.svg"
+        }
+      ]
+    },
+    "views": {
+      "rundix": [
+        {
+          "id": "rundix.sessions",
+          "name": "%view.sessions%",
+          "when": "config.rundix.showSessionsView"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "rundix.close",
+        "key": "ctrl+w",
+        "mac": "cmd+w",
+        "when": "activeWebviewPanelId == rundix.session"
+      },
+      {
+        "command": "rundix.new",
+        "key": "ctrl+alt+n",
+        "mac": "cmd+alt+n"
+      },
+      {
+        "command": "rundix.reopen",
+        "key": "ctrl+shift+t",
+        "mac": "cmd+shift+t",
+        "when": "rundix.hasClosed"
+      },
+      {
+        "command": "rundix.switch",
+        "key": "alt+shift+c",
+        "mac": "alt+shift+c",
+        "when": "rundix.active"
+      },
+      {
+        "command": "rundix.selection",
+        "key": "ctrl+alt+c",
+        "mac": "cmd+alt+c",
+        "when": "editorTextFocus && editorHasSelection"
+      },
+      {
+        "command": "rundix.new",
+        "key": "ctrl+n",
+        "mac": "cmd+n",
+        "when": "rundix.active && config.rundix.useNewShortcut"
+      }
+    ],
+    "configuration": {
+      "title": "Rundix",
+      "properties": {
+        "rundix.activityMotion": {
+          "type": "string",
+          "scope": "application",
+          "enum": [
+            "auto",
+            "on",
+            "off"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "%configuration.activityMotion.auto%",
+            "%configuration.activityMotion.on%",
+            "%configuration.activityMotion.off%"
+          ],
+          "description": "%configuration.activityMotion.description%"
+        },
+        "rundix.controlMotion": {
+          "type": "string",
+          "scope": "application",
+          "enum": [
+            "auto",
+            "on",
+            "off"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "%configuration.controlMotion.auto%",
+            "%configuration.controlMotion.on%",
+            "%configuration.controlMotion.off%"
+          ],
+          "description": "%configuration.controlMotion.description%"
+        },
+        "rundix.contextDisplay": {
+          "type": "string",
+          "scope": "application",
+          "enum": [
+            "percent",
+            "ring"
+          ],
+          "default": "percent",
+          "enumDescriptions": [
+            "%configuration.contextDisplay.percent%",
+            "%configuration.contextDisplay.ring%"
+          ],
+          "description": "%configuration.contextDisplay.description%"
+        },
+        "rundix.chatWidth": {
+          "type": "string",
+          "enum": [
+            "wide",
+            "compact"
+          ],
+          "default": "wide",
+          "enumDescriptions": [
+            "Use the available width for messages and tools; keep the input centered at 640 px.",
+            "Keep a centered 640 px column."
+          ],
+          "description": "Chat width. Also available as Wide chat in the chat commands menu."
+        },
+        "rundix.cliAutoUpdate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically update the extension-managed Codex CLI between tasks. Custom cliPath executables are never modified."
+        },
+        "rundix.cliChannel": {
+          "type": "string",
+          "enum": [
+            "stable",
+            "alpha"
+          ],
+          "default": "stable",
+          "enumDescriptions": [
+            "Official stable release (latest).",
+            "Official preview builds (alpha)."
+          ],
+          "description": "Codex CLI update channel. Also available in the chat's Client and updates menu."
+        },
+        "rundix.cliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the official Codex CLI executable. Empty discovers the installed CLI."
+        },
+        "rundix.showSessionsView": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show the optional grouped session tree. History remains available inside the chat."
+        },
+        "rundix.historyScope": {
+          "type": "string",
+          "enum": [
+            "workspace",
+            "all"
+          ],
+          "default": "workspace",
+          "description": "Default history scope."
+        },
+        "rundix.useNewShortcut": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use Ctrl/Cmd+N for a new session while Rundix is active."
+        },
+        "rundix.language": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "en",
+            "ru"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "Follow the VS Code display language.",
+            "English",
+            "Русский"
+          ],
+          "description": "Interface language. Also available from /language inside the chat."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node test/queued-session-transfer.cjs && node test/queued-attachments.cjs && node test/queued-edits.cjs && node test/new-session-settings.cjs && node test/notification-sounds.cjs && node test/completion-notifications.cjs && node test/task-preflight.cjs && node test/async-questions.cjs && node test/message-images.cjs && node test/quota-warning.cjs && node test/speed.cjs && node test/pasted-image.cjs && node test/transport.cjs && node test/cli-installer.cjs && node test/cli-updates.cjs && node test/model-catalog.cjs && node test/foundation.cjs && node test/store.cjs && node test/account.cjs && node test/rich-checks.cjs",
+    "test:live": "node test/live.cjs",
+    "test:context": "node test/context.cjs",
+    "test:host": "powershell -NoProfile -File test/host.ps1",
+    "test:browser": "node test/browser.cjs",
+    "test:scenario": "node test/scenario.cjs",
+    "package": "node package.cjs",
+    "build": "node build.cjs",
+    "vscode:prepublish": "npm run build",
+    "test:quiz": "node test/quiz-flow.cjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "highlight.js": "^11.12.0",
+    "markdown-it": "^15.0.3",
+    "prettier": "^3.9.10",
+    "puppeteer-core": "^25.14.0",
+    "tar": "^7.5.22"
+  }
+}

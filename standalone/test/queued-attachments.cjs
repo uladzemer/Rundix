@@ -1,0 +1,42 @@
+const assert = require('node:assert/strict');
+const { stageQueuedAttachments } = require('../runtime/queued-attachments.cjs');
+const { selectedAttachments, queuedEdit, moveQueued } = require('../runtime/queued-edits.cjs');
+
+(async () => {
+  const image = { id: 'old-image', kind: 'image', path: 'synthetic.png' };
+  const a = { id: 'a', text: 'Task', attachments: [image], modelSelection: { model: 'fixture' } };
+  const b = { id: 'b', text: 'Second', attachments: [] };
+  const s = { panel: {}, followUps: [a, b] };
+  const msg = { action: 'pickQueuedFiles', id: a.id, editId: 'editor', expectedText: a.text,
+    expectedAttachmentIds: [image.id], attachmentIds: [image.id] };
+  const options = { latest: () => undefined, pickFiles: async () => [{ scheme: 'file', fsPath: 'synthetic/new.js' }] };
+  const files = await stageQueuedAttachments(s, msg, options);
+  assert.equal(files.length, 2);assert.equal(a.attachments.length, 1);
+  const picked = files[1];
+  assert.deepEqual(selectedAttachments(s, { ...msg, attachmentIds: [picked.id] }, a), [picked]);
+  assert.throws(() => selectedAttachments(s, { ...msg, editId: 'other', attachmentIds: [picked.id] }, a));
+  assert.throws(() => selectedAttachments(s, { ...msg, attachmentIds: ['forged'] }, a));
+  assert.throws(() => selectedAttachments(s, { ...msg, attachmentIds: [image.id, image.id] }, a));
+  assert.throws(() => selectedAttachments(s, { ...msg, attachmentIds: new Array(1) }, a));
+  assert.throws(() => queuedEdit(s, { ...msg, text: '', attachmentIds: [] }));
+  assert.throws(() => queuedEdit(s, { ...msg, text: 'Task', expectedAttachmentIds: [] }));
+  assert.throws(() => queuedEdit(s, { ...msg, text: 'Task', expectedAttachmentIds: new Array(1) }));
+  const moved = moveQueued(s, { id: 'b', direction: -1, expectedOrder: ['a', 'b'] });
+  assert.deepEqual(moved, [b, a]);assert.deepEqual(s.followUps, [a, b]);assert.equal(moved[1].attachments[0], image);
+  assert.throws(() => moveQueued(s, { id: 'b', direction: -1, expectedOrder: ['b', 'a'] }));
+  assert.throws(() => moveQueued(s, { id: 'b', direction: -1, expectedOrder: 'not-an-array' }));
+  assert.throws(() => moveQueued(s, { id: 'b', direction: -1, expectedOrder: new Array(2) }));
+  s.followUpSending = true;
+  assert.throws(() => moveQueued(s, { id: 'b', direction: -1, expectedOrder: ['a', 'b'] }));
+  s.followUpSending = false;
+  let resolvePicker;
+  const pending = stageQueuedAttachments(s, msg, { ...options, pickFiles: () => new Promise(resolve => { resolvePicker = resolve; }) });
+  s.followUps = [b];resolvePicker([{ scheme: 'file', fsPath: 'synthetic/stale.js' }]);
+  await assert.rejects(pending);
+  s.followUps = [a, b];
+  const cancelled = stageQueuedAttachments(s, msg, { ...options, pickFiles: () => new Promise(resolve => { resolvePicker = resolve; }) });
+  delete s.queuedAttachmentDraft;resolvePicker([]);await assert.rejects(cancelled);
+  const closed = stageQueuedAttachments(s, msg, { ...options, pickFiles: () => new Promise(resolve => { resolvePicker = resolve; }) });
+  s.panel = null;resolvePicker([]);await assert.rejects(closed);
+  console.log('Queued attachments: authorized IDs, staging/cancel, stale picker and stable reorder passed');
+})().catch(error => { console.error(error);process.exitCode = 1; });

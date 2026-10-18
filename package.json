@@ -1,0 +1,14 @@
+{
+  "name": "rundix-repository",
+  "private": true,
+  "description": "Development entry point for the standalone Rundix extension.",
+  "scripts": {
+    "setup": "npm --prefix standalone ci",
+    "build": "npm --prefix standalone run build",
+    "test": "npm --prefix standalone test",
+    "test:browser": "npm --prefix standalone run test:browser",
+    "test:scenario": "npm --prefix standalone run test:scenario",
+    "test:host": "npm --prefix standalone run test:host",
+    "package": "npm --prefix standalone run package --"
+  }
+}

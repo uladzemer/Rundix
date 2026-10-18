@@ -1,0 +1,10 @@
+**/node_modules/
+**/.verification/
+**/*.vsix
+**/*.log
+.env
+.env.*
+auth.json
+**/auth.json
+**/.wrangler/
+.DS_Store

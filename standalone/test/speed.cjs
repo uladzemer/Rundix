@@ -1,0 +1,12 @@
+const assert=require('node:assert/strict');
+const {fastTier,effectiveTier}=require('../ui/speed.js');
+assert.equal(fastTier({serviceTiers:[{id:'priority',name:'Fast'}]}),'priority');
+assert.equal(fastTier({serviceTiers:[{id:'fast',name:'Fast'}]}),'fast');
+assert.equal(fastTier({serviceTiers:[{id:'ultrafast',name:'Ultrafast'}]}),null);
+assert.equal(fastTier({additionalSpeedTiers:['fast']}),'fast');
+assert.equal(fastTier({serviceTiers:[],additionalSpeedTiers:['fast']}),null);
+assert.equal(fastTier({model:'gpt-6.1-sol'}),null);
+assert.equal(effectiveTier({serviceTiers:[{id:'priority'}]},true),'priority');
+assert.equal(effectiveTier({serviceTiers:[{id:'priority'}]},false),'default');
+assert.equal(effectiveTier({serviceTiers:[]},true),'default');
+console.log('PASS: catalog-owned Fast tier IDs, legacy metadata, unsupported models, Ultra isolation and explicit standard speed.');

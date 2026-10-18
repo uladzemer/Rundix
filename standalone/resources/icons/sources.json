@@ -1,0 +1,19 @@
+{
+  "source": "Original Rundix project geometry; MIT license",
+  "files": [
+    "send",
+    "stop",
+    "play",
+    "plus",
+    "copy",
+    "history",
+    "file",
+    "down",
+    "bookmark",
+    "code",
+    "laptop",
+    "shield-warning",
+    "trash"
+  ],
+  "brand": "Original curly-brace/R mark; see ../branding/README.md"
+}

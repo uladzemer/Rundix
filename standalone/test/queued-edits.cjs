@@ -1,0 +1,26 @@
+const assert = require('node:assert/strict');
+const { queuedEdit, canEditQueued } = require('../runtime/queued-edits.cjs');
+const item = { id: 'synthetic', text: 'Original', attachments: [{ kind: 'image', path: 'synthetic.png' }],
+  modelSelection: { model: 'fixture', effort: 'high', fast: true } };
+const session = { followUps: [item] };
+const message = { id: item.id, expectedText: item.text, text: 'Updated\nwith details' };
+assert.equal(queuedEdit(session, message), item);
+assert.equal(queuedEdit(session, { ...message, text: '' }), item, 'Image-only messages remain valid');
+assert.equal(item.text, 'Original', 'Validation does not mutate persisted state');
+const baseline = JSON.parse(JSON.stringify(session));
+session.persistedRecord = baseline;
+assert.equal(queuedEdit(session, message, baseline), item);
+assert.throws(() => queuedEdit(session, message, { followUps: [] }));
+assert.throws(() => queuedEdit(session, message, null));
+delete session.persistedRecord;
+assert.throws(() => queuedEdit(session, { ...message, text: 'x'.repeat(200001) }));
+assert.throws(() => queuedEdit(session, { ...message, expectedText: 'stale' }));
+assert.throws(() => queuedEdit(session, { ...message, id: 'removed' }));
+session.followUpSending = true;assert.throws(() => queuedEdit(session, message));session.followUpSending = false;
+item.deliveryUncertain = true;assert.equal(canEditQueued(item), false);assert.throws(() => queuedEdit(session, message));
+item.deliveryUncertain = false;item.attachments = [];
+assert.throws(() => queuedEdit(session, { ...message, text: '  ' }));
+const asyncQuestions = require('../runtime/async-questions.cjs');
+const reply = asyncQuestions.buildReply({ id: 'synthetic-quiz', type: 'agentMessage', questions: [{ title: 'Synthetic choice' }] }, { '0': 'Answer' });
+assert.equal(canEditQueued({ text: reply }), false, 'Correlated quiz answers keep their structured metadata');
+console.log('Queued edit validation checks passed');

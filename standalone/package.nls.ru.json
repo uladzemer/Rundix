@@ -2,7 +2,7 @@
   "configuration.contextDisplay.description": "Вид индикатора контекста. Также доступен в меню команд чата.",
   "configuration.contextDisplay.percent": "Кольцо размером с кнопку, с процентом.",
   "configuration.contextDisplay.ring": "Маленькое кольцо без цифр; подробности остаются в подсказке.",
-  "extension.description": "Независимый интерфейс для официального Codex CLI в VS Code: чаты, изображения и уточнения с текущим локальным входом CLI. Неофициальное расширение.",
+  "extension.description": "Codex CLI в VS Code: вкладки чатов, изображения, контекст проекта и очередь уточнений. Независимое расширение с русским и английским интерфейсом.",
   "command.close": "Rundix: Закрыть текущую сессию",
   "command.new": "Rundix: Новая вкладка",
   "command.rename": "Переименовать вкладку…",

@@ -2,52 +2,74 @@
 
 **English** · [Русский](#русский)
 
-An independent VS Code interface for the official Codex CLI through App Server. Rundix uses the CLI's current local sign-in by default. It never reads or copies credential files. Optional installed companion extensions can supply another connection through API v1; selecting a companion is explicit and its authentication is managed by that extension.
+Work with the official Codex CLI in VS Code. Keep conversations in editor tabs, attach images and project files, and queue follow-ups while a task is running.
+
+Rundix is an independent extension, not an official OpenAI product.
 
 ## Features
 
-- Native editor tabs, session history, groups, bookmarks and conversation branches.
-- Markdown, highlighted code, file changes and incremental response streaming.
-- Image paste and attachments, project files and optional IDE context.
-- Follow-up queue, editing, reordering, steering and sending an unrelated queued task in a new tab.
-- Blocking and asynchronous questions, model and reasoning selection, access modes and supported Fast service tiers.
-- Current account and official usage snapshots reported by the CLI. A quota error does not turn into zero remaining usage.
-- Managed official CLI installation and updates, or a user-selected CLI executable.
-- Russian and English interface, VS Code theme colors and reduced-motion support.
-- Optional completion sounds, locally selected Stop hooks and user-configured Telegram notifications. Telegram is off until configured; enabling it sends the final answer to the chosen chat. Hook scripts run with the user's permissions.
-- Experimental task preparation with a separate explicit approval before execution.
+- **Organize conversations:** native editor tabs, history, groups, bookmarks and conversation branches.
+- **Work with code:** streaming responses, Markdown, syntax highlighting and file changes.
+- **Add context:** paste images, attach files and include selected code or IDE context.
+- **Keep tasks moving:** edit and reorder queued follow-ups, steer a running task or send a queued task to a new tab.
+- **Control each task:** choose a model, reasoning effort, access mode and Fast tier when supported by the CLI and account.
+- **Stay informed:** answer questions in chat and check account usage limits.
+- **Make it yours:** English and Russian UI, VS Code theme colors, chat width and motion settings.
 
-## Sign in and start
+Rundix can install and update the official CLI, or use an executable you choose in settings.
 
-1. Install the VSIX in VS Code.
-2. Run **Rundix: New tab**.
-3. Rundix asks the CLI for the current account. An existing CLI sign-in is reused automatically. If needed, open `/account` and choose **Sign in through browser** to start the official CLI browser flow, or run `codex login` in your terminal.
-4. Select a model and send a message.
+## Get started
 
-The extension inherits the CLI's environment, including `CODEX_HOME` when explicitly set. Credential storage, refresh and support for operating-system credential stores belong to the installed CLI. Account changes made outside the extension can be picked up with **Refresh status**. The extension maintains its own conversations metadata and drafts, without storing account credentials.
+1. Install **Rundix** from the VS Code Extensions view.
+2. Open the Command Palette and run **Rundix: New tab**.
+3. If you already use Codex CLI, Rundix reuses its current sign-in. Otherwise, open `/account` → **Sign in through browser**, or run `codex login` in a terminal.
+4. Choose a model and send your first message.
 
-## Settings and development identity
+The CLI manages local sign-in and credential storage. Rundix does not read or copy credential files. Available models, Fast tiers and usage limits depend on your account and CLI version. After changing sign-in outside Rundix, use **Refresh status** in the account menu.
 
-Settings appear under **Rundix**, with the `rundix` prefix: language, chat width, context style, motion, CLI path, update channel and history scope. The extension ID is `local-rundix-tools.rundix`; it is a separate installation and storage namespace. Rundix is available in the Visual Studio Marketplace.
+## Settings and optional features
 
-## Optional connection extensions
+Find **Rundix** in VS Code Settings to change the language, chat width, context indicator, motion, CLI path, update channel and history scope.
 
-Rundix 0.2.0 adds connection API v1 for installed companion extensions. Registering a companion does not change sign-in. Open `/account` → **Connection settings** to configure/select one. If a selected companion is unavailable, sending fails with the draft preserved; there is no automatic fallback to a different account. The public package does not include a private service client, account pool or rotation implementation. Companions must check API compatibility and can be distributed separately.
+Completion sounds, Telegram notifications and local Stop scripts are optional. Telegram is off until configured; when enabled, it sends the final answer to the chat you select. Stop scripts run with your user permissions. Experimental task preparation asks for explicit approval before execution.
 
-From the repository root, run `npm.cmd run setup`, `npm.cmd test`, `npm.cmd run test:browser` and `npm.cmd run package`. For Extension Host authentication checks, run `powershell -NoProfile -File test/host.ps1 -TestFile local-auth-host.cjs` from this directory. That test uses a synthetic App Server and does not inspect or alter the user's real sign-in.
-
-## Licenses
-
-Project code, the `{R}` mark and the action SVGs are MIT licensed. Included library licenses are in `THIRD_PARTY_NOTICES.txt`. Icon provenance is in `resources/icons/NOTICE.md`. Rundix is not an official OpenAI product. Model availability, quotas and CLI functionality depend on the user's account and the installed official CLI.
+Compatible companion extensions can add another connection. Select one through `/account` → **Connection settings**. If the selected companion is unavailable, Rundix preserves your draft and reports the error before sending.
 
 ## Русский
 
-Rundix — самостоятельный интерфейс VS Code для официального Codex CLI. По умолчанию используется текущий локальный вход CLI: авторизация, обновление учётных данных и системное хранилище входа остаются ответственностью CLI. Rundix не читает и не копирует файлы авторизации. С версии 0.2.0 отдельно установленный совместимый модуль может добавить способ подключения через API v1. Выбор выполняется явно через `/account` → **Настройки подключения**; при недоступном выбранном модуле черновик сохраняется и другой аккаунт автоматически не используется.
+Работайте с официальным Codex CLI прямо в VS Code. Открывайте чаты в отдельных вкладках редактора, добавляйте изображения и файлы проекта, ставьте уточнения в очередь во время выполнения задачи.
 
-Создайте вкладку командой **Rundix: Новая вкладка**. Если вход уже выполнен в CLI, он используется автоматически. Если входа нет, откройте `/account` → **Войти через браузер** либо выполните `codex login` в терминале. После внешней смены входа нажмите **Обновить статус**. Выберите модель и отправьте запрос.
+Rundix — независимое расширение, не официальный продукт OpenAI.
 
-Доступны история, группы, закладки и ветки чатов, Markdown и код, изображения и контекст проекта, очередь уточнений, вопросы, режимы доступа, модели, глубина рассуждения и официальные лимиты. Работают управляемые обновления CLI, русский и английский интерфейс, темы VS Code и настройка уменьшения анимации.
+### Возможности
 
-Необязательные уведомления Telegram отправляют итоговый ответ в выбранный чат только после настройки. Пользовательские Stop-скрипты выполняются с правами пользователя. Звук, настройки и черновики хранятся отдельно от авторизации CLI.
+- **Порядок в чатах:** вкладки редактора, история, группы, закладки и ветки разговоров.
+- **Работа с кодом:** потоковые ответы, Markdown, подсветка синтаксиса и просмотр изменений файлов.
+- **Контекст задачи:** вставка изображений, вложения, выделенный код и контекст IDE.
+- **Очередь уточнений:** редактирование и перестановка задач, уточнения во время выполнения и отправка задачи в новую вкладку.
+- **Управление задачей:** выбор модели, глубины рассуждения, режима доступа и Fast при поддержке CLI и аккаунтом.
+- **Вопросы и лимиты:** ответы на вопросы прямо в чате и просмотр доступных квот.
+- **Настройка интерфейса:** русский и английский языки, цвета темы VS Code, ширина чата и анимация.
 
-Это отдельная установка `local-rundix-tools.rundix` с настройками `rundix`. Подготовка пакета не означает публикацию в Marketplace. Код и собственные значки распространяются по MIT; уведомления о библиотеках находятся в `THIRD_PARTY_NOTICES.txt`.
+Rundix может установить и обновлять официальный CLI или использовать исполняемый файл, выбранный в настройках.
+
+### Начало работы
+
+1. Установите **Rundix** из раздела расширений VS Code.
+2. Откройте палитру команд и выполните **Rundix: Новая вкладка**.
+3. Если вы уже вошли в Codex CLI, Rundix использует текущий вход. Иначе откройте `/account` → **Войти через браузер** или выполните `codex login` в терминале.
+4. Выберите модель и отправьте первое сообщение.
+
+Входом и хранением учётных данных управляет CLI. Rundix не читает и не копирует файлы авторизации. Доступные модели, Fast и лимиты зависят от аккаунта и версии CLI. После внешней смены входа нажмите **Обновить статус** в меню аккаунта.
+
+### Настройки и дополнительные возможности
+
+В настройках VS Code найдите **Rundix**: там доступны язык, ширина чата, индикатор контекста, анимация, путь к CLI, канал обновлений и область истории.
+
+Звуки завершения, Telegram и локальные Stop-скрипты включаются по желанию. Telegram выключен до настройки; после включения он отправляет итоговый ответ в выбранный чат. Stop-скрипты выполняются с вашими правами. Экспериментальная подготовка задачи запрашивает явное согласование перед выполнением.
+
+Совместимый дополнительный модуль может предоставить другой способ подключения. Выберите его через `/account` → **Настройки подключения**. Если выбранный модуль недоступен, Rundix сохранит черновик и сообщит об ошибке до отправки.
+
+---
+
+License / Лицензия: [MIT](https://github.com/uladzemer/Rundix/blob/main/LICENSE). Third-party notices / Лицензии библиотек: [THIRD_PARTY_NOTICES.txt](https://github.com/uladzemer/Rundix/blob/main/standalone/THIRD_PARTY_NOTICES.txt).

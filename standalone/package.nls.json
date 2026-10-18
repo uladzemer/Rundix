@@ -2,7 +2,7 @@
   "configuration.contextDisplay.description": "Context indicator style. Also available in the chat commands menu.",
   "configuration.contextDisplay.percent": "Button-sized ring with percentage.",
   "configuration.contextDisplay.ring": "Smaller ring without numbers; details remain in the tooltip.",
-  "extension.description": "Independent VS Code interface for the official Codex CLI: chats, images and follow-ups using your local CLI sign-in. Not an official OpenAI extension.",
+  "extension.description": "Codex CLI in VS Code: chat tabs, images, project context and queued follow-ups. Independent extension with English and Russian UI.",
   "command.close": "Rundix: Close current session",
   "command.new": "Rundix: New tab",
   "command.rename": "Rename tab…",

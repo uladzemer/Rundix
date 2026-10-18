@@ -3,8 +3,21 @@
   "displayName": "Rundix",
   "icon": "resources/extension-icon.png",
   "publisher": "local-rundix-tools",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "%extension.description%",
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "codex",
+    "codex cli",
+    "openai",
+    "ai",
+    "chat",
+    "coding assistant",
+    "agent",
+    "markdown"
+  ],
   "license": "MIT",
   "engines": {
     "vscode": "^1.100.0"

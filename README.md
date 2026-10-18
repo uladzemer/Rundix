@@ -27,7 +27,7 @@ Available models, Fast tiers and usage limits depend on your account and CLI ver
 
 ## Install
 
-Install [Rundix from the Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix), then run **Rundix: New tab** in VS Code. You can also download a VSIX from [GitHub Releases](https://github.com/uladzemer/Rundix/releases).
+Install [Rundix from the Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix), then run **Rundix: New tab** in VS Code. Future updates are delivered through the Marketplace.
 
 Already signed in to Codex CLI? Start chatting. Otherwise, open `/account` → **Sign in through browser**, or run `codex login` in your terminal.
 

@@ -48,6 +48,8 @@ function audit(file) {
   for (const required of ['extension/extension.cjs', 'extension/package.json', 'extension/readme.md', 'extension/changelog.md',
     'extension/runtime/mcp-server.cjs', 'extension/runtime/mcp-bridge.cjs', 'extension/runtime/mcp-tasks.cjs',
     'extension/runtime/mcp-executor.cjs', 'extension/runtime/task-directory.cjs', 'extension/docs/mcp.md',
+    'extension/runtime/connection-companions.cjs', 'extension/runtime/mcp-panel.cjs',
+    'extension/ui/mcp-panel.js', 'extension/ui/mcp-panel.css',
     'extension/runtime/new-session-settings.cjs',
     'extension/runtime/queued-edits.cjs', 'extension/ui/queued-editor.js',
     'extension/runtime/queued-attachments.cjs',

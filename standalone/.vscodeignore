@@ -52,3 +52,5 @@
 !runtime/mcp-server.cjs
 !runtime/task-directory.cjs
 !docs/mcp.md
+!runtime/connection-companions.cjs
+!runtime/mcp-panel.cjs

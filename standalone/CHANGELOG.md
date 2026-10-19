@@ -4,6 +4,7 @@ Install and update Rundix through [Microsoft Marketplace](https://marketplace.vi
 
 ## Unreleased
 
+- Add a bilingual MCP task panel with pool connection, task reports, chat navigation, continuation and cancellation. Explicit pool connection discovers installed companions and reuses the selected working provider.
 - Add an opt-in local MCP bridge for Claude Code: asynchronous tasks, durable chat bindings and request deduplication, same-chat continuations, approval forwarding and cancellation.
 - Reuse the selected companion's existing executor and limit preparation; protect local IPC and serialize directory changes across Rundix chats. See `docs/mcp.md` for setup and recovery limits.
 

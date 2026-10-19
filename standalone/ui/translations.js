@@ -3,6 +3,7 @@
   "Настройки подключения недоступны": "Connection settings unavailable",
   "Модуль подключения недоступен": "Connection extension unavailable",
   "Подключение": "Connection",
+  "Подключить рабочий пул": "Connect working account pool",
   "Выберите или настройте подключение": "Choose or configure a connection",
   "Авторизация управляется расширением подключения.": "Authentication is managed by the connection extension.",
   "Настройки подключения": "Connection settings",

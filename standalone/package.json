@@ -103,11 +103,19 @@
       },
       {
         "command": "rundix.mcpStart",
-        "title": "Rundix: Start MCP bridge and show Claude configuration"
+        "title": "%command.mcpStart%"
       },
       {
         "command": "rundix.mcpStop",
-        "title": "Rundix: Stop MCP bridge"
+        "title": "%command.mcpStop%"
+      },
+      {
+        "command": "rundix.mcpPanel",
+        "title": "%command.mcpPanel%"
+      },
+      {
+        "command": "rundix.mcpConnectPool",
+        "title": "%command.mcpConnectPool%"
       }
     ],
     "menus": {
@@ -220,6 +228,11 @@
           "id": "rundix.sessions",
           "name": "%view.sessions%",
           "when": "config.rundix.showSessionsView"
+        },
+        {
+          "type": "webview",
+          "id": "rundix.mcpTasks",
+          "name": "%view.mcpTasks%"
         }
       ]
     },
@@ -383,11 +396,11 @@
     }
   },
   "scripts": {
-    "test": "node test/mcp.cjs && node test/mcp-executor.cjs && node test/connection-history.cjs && node test/connections.cjs && node test/queued-session-transfer.cjs && node test/queued-attachments.cjs && node test/queued-edits.cjs && node test/new-session-settings.cjs && node test/notification-sounds.cjs && node test/completion-notifications.cjs && node test/task-preflight.cjs && node test/async-questions.cjs && node test/message-images.cjs && node test/quota-warning.cjs && node test/speed.cjs && node test/pasted-image.cjs && node test/transport.cjs && node test/cli-installer.cjs && node test/cli-updates.cjs && node test/model-catalog.cjs && node test/foundation.cjs && node test/store.cjs && node test/account.cjs && node test/rich-checks.cjs",
+    "test": "node test/mcp-panel.cjs && node test/mcp.cjs && node test/mcp-executor.cjs && node test/connection-history.cjs && node test/connections.cjs && node test/queued-session-transfer.cjs && node test/queued-attachments.cjs && node test/queued-edits.cjs && node test/new-session-settings.cjs && node test/notification-sounds.cjs && node test/completion-notifications.cjs && node test/task-preflight.cjs && node test/async-questions.cjs && node test/message-images.cjs && node test/quota-warning.cjs && node test/speed.cjs && node test/pasted-image.cjs && node test/transport.cjs && node test/cli-installer.cjs && node test/cli-updates.cjs && node test/model-catalog.cjs && node test/foundation.cjs && node test/store.cjs && node test/account.cjs && node test/rich-checks.cjs",
     "test:live": "node test/live.cjs",
     "test:context": "node test/context.cjs",
     "test:host": "powershell -NoProfile -File test/host.ps1",
-    "test:browser": "node test/browser.cjs",
+    "test:browser": "node test/mcp-panel-browser.cjs && node test/browser.cjs",
     "test:scenario": "node test/scenario.cjs",
     "package": "node package.cjs",
     "build": "node build.cjs",

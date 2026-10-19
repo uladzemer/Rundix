@@ -27,5 +27,10 @@
   "configuration.activityMotion.auto": "Follow the system preference for reduced motion.",
   "configuration.activityMotion.on": "Enable activity animation even when reduced motion is enabled.",
   "configuration.activityMotion.off": "Keep the activity indicator and its phrase still.",
-  "command.notifications": "Rundix: Notifications and hooks"
+  "command.notifications": "Rundix: Notifications and hooks",
+  "view.mcpTasks": "MCP tasks",
+  "command.mcpPanel": "Rundix: Open MCP tasks",
+  "command.mcpConnectPool": "Rundix: Connect MCP to account pool",
+  "command.mcpStart": "Rundix: Start MCP bridge and show Claude configuration",
+  "command.mcpStop": "Rundix: Stop MCP bridge"
 }

@@ -1,0 +1,20 @@
+const fs=require('node:fs');
+const path=require('node:path');
+function readRecords(directory) {
+  if(!fs.existsSync(directory))return [];
+  return fs.readdirSync(directory).filter(name=>/^mcp-task-[\w-]+\.json$/.test(name)).map(name=>{
+    const record=JSON.parse(fs.readFileSync(path.join(directory,name),'utf8'));
+    if(record.taskId!==name.slice(9,-5) || !record.sessionKey)throw Error('MCP task metadata is unavailable.');
+    return record;
+  });
+}
+function snapshot({records,language,connection,connected,bridgeRunning,pending}) {
+  const tasks=records.slice().sort((a,b)=>b.updatedAt-a.updatedAt).slice(0,100).map(task=>({
+    taskId:task.taskId,title:(task.description || task.taskId).slice(0,160),state:task.state,
+    chatId:task.chatId || null,projectDirectory:task.projectDirectory,progress:task.progress,
+    report:task.report || null,error:task.error || null,recoveryRequired:!!task.recoveryRequired,
+    pendingRequests:pending(task).map(request=>({id:request.id,method:request.method})),
+  }));
+  return {language,connection,connected,bridgeRunning,tasks};
+}
+module.exports={readRecords,snapshot};

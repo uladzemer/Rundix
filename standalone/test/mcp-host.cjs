@@ -25,6 +25,7 @@ exports.run=async()=>{
   registration=api.connections.registerProvider('synthetic.companion',{id:'synthetic-pool',label:'Synthetic pool',authenticate:async()=>{authenticated++;},configure:async()=> 'activate',prepareTurn:async({assertCanChange})=>{assertCanChange();prepared++;}});
   await api.connections.configure('synthetic-pool');
   descriptor=await api.mcp.start();
+  await api.mcp.connectPool();assert.equal(api.mcp.panelSnapshot().connected,true);
   const args={requestId:'synthetic-host-submit',description:'Synthetic task',projectDirectory:vscode.workspace.workspaceFolders[0].uri.fsPath,acceptanceCriteria:'Synthetic checks pass'};
   const first=await request(descriptor,'submit_task',args);assert.equal(first.state,'queued');
   await wait(()=>turns===1);
@@ -42,11 +43,13 @@ exports.run=async()=>{
   };
   finish();
   const completed=await wait(async()=>{const t=await request(descriptor,'get_task',{taskId:first.taskId});return t.state==='completed'?t:null;});assert.equal(completed.report.result,'Synthetic success');
-  await request(descriptor,'continue_task',{requestId:'synthetic-follow',taskId:first.taskId,clarification:'Synthetic follow-up'});
+  assert.equal(api.mcp.panelSnapshot().tasks.find(task=>task.taskId===first.taskId).report.result,'Synthetic success');
+  await api.mcp.panelAction({action:'continue',requestId:'synthetic-follow',taskId:first.taskId,clarification:'Synthetic follow-up'});
   await wait(()=>turns===2);assert.equal(threads,1);assert.equal(s.id,completed.chatId);assert.equal(prepared,2);
-  await request(descriptor,'cancel_task',{requestId:'synthetic-stop',taskId:first.taskId});
+  await api.mcp.panelAction({action:'cancel',requestId:'synthetic-stop',taskId:first.taskId});
   await wait(async()=> (await request(descriptor,'get_task',{taskId:first.taskId})).state==='cancelled');
   await api.mcp.stop();
+  assert.equal(api.mcp.panelSnapshot().bridgeRunning,false);assert.equal(api.mcp.panelSnapshot().tasks[0].chatId,completed.chatId);
   descriptor=await api.mcp.start();assert.equal((await request(descriptor,'get_task',{taskId:first.taskId})).chatId,completed.chatId);assert.equal(turns,2);
   report.passed=true;report.sameChatContinuation=true;report.companionPrepareCalls=prepared;report.approvalAndCancellation=true;report.persistedRestart=true;
  }catch{report.passed=false;report.failure='Synthetic MCP Extension Host scenario failed.';throw Error(report.failure);}

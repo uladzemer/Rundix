@@ -10,8 +10,8 @@ Select and configure your installed companion connection in Rundix first. The pu
 
 ## Connect
 
-1. Open and trust the project in VS Code. Select the companion connection.
-2. Run **Rundix: Start MCP bridge and show Claude configuration** from the command palette.
+1. Open and trust the project in VS Code. Open **Rundix → MCP tasks** in the sidebar, or run **Rundix: Open MCP tasks**.
+2. Click **Connect pool**, then **Start MCP** and **Claude configuration**. Alternatively run **Rundix: Start MCP bridge and show Claude configuration** from the command palette.
 3. The command opens an unsaved JSON document containing the exact server script and bridge descriptor paths. Copy its `mcpServers.rundix` entry into your Claude MCP configuration, or use those two paths in:
 
    ```powershell
@@ -25,6 +25,14 @@ The CLI syntax follows [Claude Code's stdio instructions](https://code.claude.co
 Do not commit generated configuration containing personal paths. The descriptor contains a random bridge capability, consumed only by the local Node process; never paste its contents into a chat. The bridge listens only on `127.0.0.1`, requires this capability, rejects browser origins and bounds request sizes/timeouts. Storage uses user-only directory permissions (Windows DACL: current user and SYSTEM; POSIX: 0700 directory, 0600 records). Other processes running as the same OS user are part of the trust boundary.
 
 Only one Extension Host per extension storage/profile owns the bridge. After opt-in, it starts again when Rundix activates (including VS Code startup). Start it in the intended trusted window. **Rundix: Stop MCP bridge** disables automatic startup; cancel active tasks and wait for confirmation first. No VS Code settings outside Rundix are changed.
+
+## Working pool and task panel
+
+**Connect pool** uses the existing selected companion. When local sign-in is selected, this explicit action activates installed extensions declaring a dependency on Rundix. It configures the sole registered companion, or asks you to choose when several are available. Registration and merely opening the panel never switch connections. If the companion needs interactive setup, complete its own prompt. No separate MCP pool or token import is created.
+
+The connection indicator is based on the existing CLI account/limit reads through the selected provider; it does not claim that a model request has passed. Every actual task still calls the companion's normal authorization and server limit preparation. Missing companions and local sign-in remain blocked for MCP submissions.
+
+The panel displays up to 100 recent tasks, state, directory and report. **Open chat** opens the original Codex chat. **Send continuation** queues a follow-up in that chat; **Cancel task** uses the same task service as Claude's MCP call. Permission requests are reviewed in the chat or Claude, never automatically approved by the panel. Drafts survive background refresh, failed submission and text typed while a prior submission is pending. Recent tasks remain visible with the bridge stopped.
 
 ## Tools
 
@@ -61,4 +69,4 @@ After Extension Host restart the bridge observes saved chats and active turns; i
 
 ## Local validation
 
-`npm.cmd test` covers synthetic persistence, replay, queue, cancellation, directory exclusion, channel authentication and stdio RPC. `powershell.exe -NoProfile -ExecutionPolicy Bypass -File test/host.ps1 -TestFile mcp-host.cjs` exercises the real Extension Host with synthetic CLI and companion: submit → chat → companion preparation → report → same-chat continuation, approvals and cancellation. It performs no real sign-in or model inference. A real pool/model end-to-end run additionally needs the separately installed companion and its test environment.
+`npm.cmd test` covers synthetic persistence, replay, queue, cancellation, directory exclusion, channel authentication, stdio RPC, companion discovery and panel data projection. `npm.cmd run test:browser` includes the MCP panel in Russian/English, both themes and narrow/wide layouts, including draft preservation and safe rendering. `powershell.exe -NoProfile -ExecutionPolicy Bypass -File test/host.ps1 -TestFile mcp-host.cjs` exercises the real Extension Host with synthetic CLI and companion: submit → chat → companion preparation → report → panel continuation in the same chat → panel cancellation, and approvals. It performs no real sign-in or model inference. A real pool/model end-to-end run additionally needs the separately installed companion and its environment.

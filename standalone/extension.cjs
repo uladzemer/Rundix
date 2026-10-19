@@ -23,6 +23,10 @@ const { transferQueuedSession, acquireQueuedSession } = require('./runtime/queue
 const { SessionStore } = require("./runtime/store.cjs");
 const { startLogin, identity } = require("./runtime/account.cjs");
 const { Connections } = require('./runtime/connections.cjs');
+const taskDirectory = require('./runtime/task-directory.cjs');
+const { McpTasks } = require('./runtime/mcp-tasks.cjs');
+const mcpBridgeTransport = require('./runtime/mcp-bridge.cjs');
+const { executor: mcpExecutor } = require('./runtime/mcp-executor.cjs');
 const { ProjectFiles } = require("./runtime/files.cjs");
 const modes = require("./ui/modes.js");
 const speed = require('./ui/speed.js');
@@ -144,6 +148,50 @@ function activate(context) {
     }),
   );
   const pendingRequests = new Map();
+  let mcpTasks=null, mcpBridge=null, mcpLease=null, mcpStarting=null;
+  async function startMcp() {
+    if(mcpStarting)return mcpStarting;
+    if(mcpBridge)return mcpBridge.descriptor;
+    mcpStarting=(async()=>{
+      if(!vscode.workspace.isTrusted)throw Error('Trust the VS Code workspace before starting MCP.');
+      mcpLease=store.acquire('mcp-bridge');
+      try {
+        const root=path.join(context.globalStorageUri.fsPath,'mcp');
+        mcpBridgeTransport.privateDirectory(root);
+        mcpTasks=new McpTasks({store:new SessionStore(path.join(root,'tasks')),directoryStore:store,
+          adapter:mcpExecutor({connections,sessions,store,create,send,resume,handle,pending:pendingRequests,save,alive:()=>!disposed && !!mcpBridge,
+            retainTurn(s,task){
+              if(turnLeases.has(s.id))return;
+              const unlockDirectory=taskDirectory.acquire(store,s.cwd,task.taskId);
+              let unlockSession;
+              try{unlockSession=store.acquire(s.id);}catch(error){unlockDirectory();throw error;}
+              turnLeases.set(s.id,()=>{unlockSession();unlockDirectory();});
+            }})});
+        mcpBridge=await mcpBridgeTransport.serve({directory:root,call:(name,args)=>{
+          if(!vscode.workspace.isTrusted)throw Error('Workspace trust is required.');
+          return mcpTasks.call(name,args);
+        }});
+        mcpTasks.schedule();
+        await context.globalState.update('mcpEnabled',true);
+        return mcpBridge.descriptor;
+      }catch(error){mcpTasks?.dispose();mcpTasks=null;mcpBridge?.dispose();mcpBridge=null;mcpLease?.();mcpLease=null;throw error;}
+    })();
+    try{return await mcpStarting;}finally{mcpStarting=null;}
+  }
+  async function stopMcp() {
+    if(mcpStarting)await mcpStarting;
+    if(mcpTasks && [...mcpTasks.tasks.values()].some(t=>['running','waiting_approval'].includes(t.state)))throw Error('Cancel active MCP tasks and wait for confirmation before stopping the bridge.');
+    mcpTasks?.dispose();mcpTasks=null;mcpBridge?.dispose();mcpBridge=null;mcpLease?.();mcpLease=null;
+    await context.globalState.update('mcpEnabled',false);
+  }
+  context.subscriptions.push(vscode.commands.registerCommand('rundix.mcpStart',async()=>{
+    const descriptor=await startMcp();
+    const config={mcpServers:{rundix:{command:'node',args:[path.join(context.extensionUri.fsPath,'runtime','mcp-server.cjs'),'--bridge',descriptor]}}};
+    const document=await vscode.workspace.openTextDocument({language:'json',content:JSON.stringify(config,null,2)});
+    await vscode.window.showTextDocument(document);
+    return descriptor;
+  }),vscode.commands.registerCommand('rundix.mcpStop',stopMcp));
+  if(context.globalState.get('mcpEnabled',false))void startMcp().catch(()=>{});
   let nextDraft = 1;
   const virtualDocuments = new Map();
   context.subscriptions.push(
@@ -462,9 +510,9 @@ function activate(context) {
                 preflight.finish(s.preflight,s.items,message.params.turn.id,message.params.turn.status,hasPendingQuestions(s));
               turnLeases.get(s.id)?.();
               turnLeases.delete(s.id);
+              s.lastTurnStatus=message.params.turn.status;
               void save(s);
               void applyPendingMode(s).catch(error=>{s.error=error.message;publish(s);});
-              s.lastTurnStatus=message.params.turn.status;
               if(s.lastTurnStatus==='completed' && !s.stopRequested)void drainFollowUps(s).catch(error=>{s.error=error.message;publish(s);});
               if (!isActive(s))
                 void library.update(s, { unread: true }).then(broadcast);
@@ -709,6 +757,7 @@ function activate(context) {
       tokenUsage: s.tokenUsage,
       usageModel: s.usageModel,
       usageStale: !!s.usageStale,
+      lastTurnStatus:s.lastTurnStatus,
     };
     const written = store.saveSession(record, s.persistedRecord);
     for (const key of Object.keys(record))
@@ -1088,7 +1137,7 @@ function activate(context) {
     s.name = result.thread.name || result.thread.preview || "Rundix";
     s.busy = result.thread.status?.type === "active";
     if(!s.busy&&s.preflight?.phase==='executing')s.preflight.phase='review';
-    if (s.busy) {
+    {
       const turns = await server.request("thread/turns/list", {
         threadId: id,
         limit: 1,
@@ -1096,7 +1145,8 @@ function activate(context) {
         itemsView: "summary",
       });
       if (s.busy)
-        s.turnId = turns.data.find((turn) => turn.status === "inProgress")?.id;
+        s.turnId = turns.data?.find((turn) => turn.status === "inProgress")?.id;
+      else s.lastTurnStatus=turns.data?.[0]?.status;
     }
     const page = await server.request("thread/items/list", {
       threadId: id,
@@ -1119,6 +1169,12 @@ function activate(context) {
     if (authBusy) throw Error(locale.t('Дождитесь переключения аккаунта.'));
     if(s.sendingTask)throw Error(locale.t('Дождитесь обработки уточнений перед согласованием.'));
     const accountLease = store.acquire('account-credentials');
+    let directoryLease=null, leasedDirectory=null;
+    const ensureDirectory=()=>{
+      const actual=taskDirectory.canonical(s.cwd || cwd());
+      if(options.projectDirectory && actual!==options.projectDirectory)throw Error('MCP chat project directory changed.');
+      if(actual!==leasedDirectory){const next=taskDirectory.acquire(store,actual,options.taskId);directoryLease?.();directoryLease=next;leasedDirectory=actual;}
+    };
     s.sendingTask=true;
     try {
     if (s.busy)
@@ -1130,9 +1186,11 @@ function activate(context) {
         locale.t("Сначала разрешите доверие рабочему пространству VS Code."),
       );
     await syncExternal(s);
+    ensureDirectory();
     await applyPendingMode(s);
     const accountRevisionBeforeConnect=accountReadRevision;
     await connect();
+    if(options.requiredConnection && (activeConnection?.id!==options.requiredConnection.id || activeConnection?.revision!==options.requiredConnection.revision || !activeConnection?.provider))throw Error('MCP task connection changed.');
     connections.assertCurrent(activeConnection);
     if (activeConnection.provider) await activeConnection.provider.authenticate(providerClient(server, activeConnection));
     // A cold connection already read the account and loaded its model catalog.
@@ -1163,6 +1221,7 @@ function activate(context) {
       if (decision?.waitUntil) return {waitUntil:decision.waitUntil,connection};
     }
     const exhausted = require('./ui/limits.js').exhaustion(limits);
+    if(options.requiredConnection && (activeConnection?.id!==options.requiredConnection.id || activeConnection?.revision!==options.requiredConnection.revision || !activeConnection?.provider))throw Error('MCP task connection changed.');
     if(exhausted){
       const date=exhausted.resetAt?new Intl.DateTimeFormat(undefined,{dateStyle:'short',timeStyle:'short'}).format(exhausted.resetAt):null;
       throw Error(date?locale.t('Лимиты аккаунта закончились. Дождитесь сброса: {0}. Запрос сохранён.',date):locale.t('Лимиты аккаунта закончились. Дождитесь сброса лимитов. Запрос сохранён.'));
@@ -1170,6 +1229,7 @@ function activate(context) {
     updateDraftModel(s);
     const selection=options.modelSelection || {model:s.model,effort:s.effort,fast:s.prefs.fast};
     if (s.id && !s.loaded) await resume(s, s.id);
+    ensureDirectory();
     const selectedModel=catalog.find(model=>model.model===selection.model);
     if (!selectedModel)
       throw Error(
@@ -1212,9 +1272,12 @@ function activate(context) {
       await server.request("thread/name/set", { threadId: s.id, name: s.name });
       await save(s);
     }
+    ensureDirectory();
     const input = buildInput(text, attached, options.includeIde!==false && s.prefs.ide && lastEditor?.document.uri.scheme==='file'
       ? {path:lastEditor.document.uri.fsPath,text:lastEditor.document.getText(lastEditor.selection).slice(0,20000)} : null);
-    const release = store.acquire(s.id);
+    const sessionRelease = store.acquire(s.id), releaseDirectory=directoryLease;
+    const release = () => {sessionRelease();releaseDirectory?.();};
+    directoryLease=null;
     turnLeases.set(s.id, release);
     s.error = null;
     s.stopRequested=false;
@@ -1233,7 +1296,7 @@ function activate(context) {
         approvalPolicy,
         approvalsReviewer,
         sandboxPolicy,
-        ...(preparing?{outputSchema:preflight.schema}:{}),
+        ...(preparing?{outputSchema:preflight.schema}:options.outputSchema?{outputSchema:options.outputSchema}:{}),
         collaborationMode: {
           // Our JSON proposal has its own workflow; native Plan uses a different final format.
           mode: s.preflight?.enabled ? 'default' : s.prefs.plan ? 'plan' : 'default',
@@ -1256,7 +1319,7 @@ function activate(context) {
     } finally {
       publish(s);
     }
-    } finally { s.sendingTask=false;accountLease(); }
+    } finally { s.sendingTask=false;directoryLease?.();accountLease(); }
   }
   async function preparationConfig(s){
     const client=server;
@@ -2576,6 +2639,7 @@ function activate(context) {
   context.subscriptions.push({
     dispose() {
       disposed=true;clearInterval(maintenanceTimer);
+      mcpTasks?.dispose();mcpBridge?.dispose();mcpLease?.();
       server?.dispose();
     },
   });
@@ -2601,6 +2665,7 @@ function activate(context) {
         });
       },
     },
+    mcp:{start:startMcp,stop:stopMcp,tasks:()=>mcpTasks},
     create,
     connect,
     sessions,

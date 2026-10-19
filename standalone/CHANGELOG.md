@@ -2,6 +2,11 @@
 
 Install and update Rundix through [Microsoft Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix).
 
+## Unreleased
+
+- Add an opt-in local MCP bridge for Claude Code: asynchronous tasks, durable chat bindings and request deduplication, same-chat continuations, approval forwarding and cancellation.
+- Reuse the selected companion's existing executor and limit preparation; protect local IPC and serialize directory changes across Rundix chats. See `docs/mcp.md` for setup and recovery limits.
+
 ## 0.2.2 — 2026-10-18
 
 - Added a Microsoft Marketplace installation badge and a 29-second, seven-scene tour of a real VS Code window: native chat tabs, grouped history, split code/chat layout, follow-up queue, access modes and Russian questions in the light theme.

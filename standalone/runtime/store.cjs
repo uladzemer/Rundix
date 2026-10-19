@@ -18,7 +18,7 @@ class SessionStore {
   catch(error){if(error.code!=='EEXIST')throw error;const lease=this.read('lease',id);let alive=false;try{if(lease?.pid){process.kill(lease.pid,0);alive=true;}}catch(error){if(error.code!=='ESRCH')alive=true;}if(alive)throw Error(locale.t('Эта сессия уже выполняет задачу в другом окне. Дождитесь завершения или создайте ветку.'));try{fs.unlinkSync(target);}catch{}}
  }throw Error(locale.t('Не удалось получить доступ к локальной сессии.'));}
  assertNoActiveTurns(){
-  for(const name of fs.readdirSync(this.directory).filter(name=>/^lease-.*\.json$/.test(name)&&name!=='lease-account-credentials.json'&&!name.startsWith('lease-queued-session-'))){
+  for(const name of fs.readdirSync(this.directory).filter(name=>/^lease-.*\.json$/.test(name)&&name!=='lease-account-credentials.json'&&name!=='lease-mcp-bridge.json'&&!name.startsWith('lease-directory-')&&!name.startsWith('lease-queued-session-'))){
    const lease=this.read('lease',name.slice(6,-5));if(!lease?.pid)continue;
    let alive=true;try{process.kill(lease.pid,0);}catch(error){alive=error.code!=='ESRCH';}
    if(alive)throw Error(locale.t('Дождитесь завершения задач во всех окнах Rundix перед сменой аккаунта.'));

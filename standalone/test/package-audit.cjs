@@ -30,7 +30,7 @@ function audit(file) {
     const local = zip.readUInt32LE(offset + 42);
     const name = zip.subarray(offset + 46, offset + 46 + nameLength).toString('utf8');
     assert(!/^extension\/runtime\/(?:cloud-auth|account-(?:profiles|refresh|usage|rotation))\.cjs$/.test(name), 'Unexpected non-local authentication module');
-    assert(allowed.test(name), `Unexpected packaged file: ${name}`);
+    assert(allowed.test(name) || name === 'extension/docs/mcp.md', `Unexpected packaged file: ${name}`);
     assert(!names.has(name), `Duplicate packaged file: ${name}`);
     names.add(name);
     assert.equal(zip.readUInt32LE(local), 0x04034b50, 'Invalid local ZIP entry');
@@ -46,6 +46,8 @@ function audit(file) {
     offset += 46 + nameLength + extraLength + commentLength;
   }
   for (const required of ['extension/extension.cjs', 'extension/package.json', 'extension/readme.md', 'extension/changelog.md',
+    'extension/runtime/mcp-server.cjs', 'extension/runtime/mcp-bridge.cjs', 'extension/runtime/mcp-tasks.cjs',
+    'extension/runtime/mcp-executor.cjs', 'extension/runtime/task-directory.cjs', 'extension/docs/mcp.md',
     'extension/runtime/new-session-settings.cjs',
     'extension/runtime/queued-edits.cjs', 'extension/ui/queued-editor.js',
     'extension/runtime/queued-attachments.cjs',

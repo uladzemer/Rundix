@@ -1,4 +1,4 @@
-param([ValidateSet('host.cjs','new-session-host.cjs','titles-host.cjs','local-auth-host.cjs','reconnect-host.cjs','cli-install-host.cjs','cli-updates-host.cjs','pasted-image-host.cjs','mode-queue-host.cjs','follow-ups-host.cjs','fast-host.cjs','startup-host.cjs','control-motion-host.cjs','activity-host.cjs','context-display-host.cjs','notifications-host.cjs','toggle-response-host.cjs')][string]$TestFile='host.cjs',[switch]$ForceReducedMotion)
+param([ValidateSet('host.cjs','mcp-host.cjs','new-session-host.cjs','titles-host.cjs','local-auth-host.cjs','reconnect-host.cjs','cli-install-host.cjs','cli-updates-host.cjs','pasted-image-host.cjs','mode-queue-host.cjs','follow-ups-host.cjs','fast-host.cjs','startup-host.cjs','control-motion-host.cjs','activity-host.cjs','context-display-host.cjs','notifications-host.cjs','toggle-response-host.cjs')][string]$TestFile='host.cjs',[switch]$ForceReducedMotion)
 $ErrorActionPreference='Stop'
 $workbenchRoot=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $workbenchCode=Join-Path $env:LOCALAPPDATA 'Programs/Microsoft VS Code/Code.exe'

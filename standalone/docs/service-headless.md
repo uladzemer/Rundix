@@ -329,7 +329,7 @@ provider implementation, credential storage and rotation stay outside this repo.
 In `service` mode this window never starts its MCP bridge/executor or selects a
 window companion for MCP. Manual chats retain their existing connection API.
 The panel displays a background-service note and configuration controls; task
-projection belongs to 3b. The Stop MCP command disables this window's launcher controls;
+projection belongs to 3b. The Stop MCP command saves the profile-wide Stop preference and disconnects this client;
 it does not interrupt service tasks or other clients. The service exits when idle.
 
 Start MCP installs a stable `<serviceRoot>/bin/mcp-server.cjs` shim, an atomic
@@ -671,6 +671,7 @@ transcript items. Window snapshots use a durable archive summary index/counts
 and a bounded latest page. Corrupt display records log archive_record_corrupt
 and are skipped; damaged requestId records still fail closed for mutations.
 Legacy migration does not gate service task admission. Root failures remain
-separate legacy statuses; ordinary provider admission and quota waits are unchanged. Stop MCP persists across window reactivation and
-is cleared only by explicit Start MCP. Tests exercise actual extension
+separate legacy statuses; ordinary provider admission and quota waits are unchanged. Stop MCP is saved profile-wide in globalState and persists across window
+reactivation. Stop disconnects the initiating window; other connected clients
+and tasks continue. Explicit Start MCP clears the profile preference. Tests exercise actual extension
 reactivation with the same globalState.

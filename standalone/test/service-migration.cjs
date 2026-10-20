@@ -97,7 +97,7 @@ async function main(){
     const concurrentRoot=make('service-concurrent'),first=make('legacy-first'),second=make('legacy-second');seed(first,'synthetic-first',a);seed(second,'synthetic-second',b);registerRoot(concurrentRoot,first);
     let unblock,copied;const gate=new Promise(resolve=>unblock=resolve),reached=new Promise(resolve=>copied=resolve);
     const concurrent=createMigration({root:concurrentRoot,hooks:{afterCopy(){copied();return gate;}}});
-    const firstRun=concurrent.sync();await reached;const secondRun=concurrent.register(second);unblock();await Promise.all([firstRun,secondRun]);concurrent.assertReady();
+    const firstRun=concurrent.sync();await reached;const secondRun=concurrent.register(second);unblock();await Promise.all([firstRun,secondRun]);assert.equal(concurrent.status(canonical(second)).state,'ready');
     assert.equal(concurrent.visible(sb,[canonical(b)]).length,1,'Concurrent registration waits for its own root');await concurrent.close();
     const closingRoot=make('service-closing'),closingSource=make('legacy-closing');seed(closingSource,'synthetic-closing',a);registerRoot(closingRoot,closingSource);
     let resumeClose,copyStarted;const closeGate=new Promise(resolve=>resumeClose=resolve),closeReached=new Promise(resolve=>copyStarted=resolve);
@@ -137,6 +137,8 @@ async function main(){
       mixedService=await require('../runtime/service-main.cjs').runService({root:mixedRoot,hostOptions:mixedData.hostOptions});
       mixedClient=new ServiceWindowClient({root:mixedRoot,legacyRoot:busySource,trusted:true,workspaceFolders:[pathToFileURL(a).href]});await mixedClient.start();
       assert.equal(mixedClient.legacyStatus.state,'busy');assert.equal(mixedClient.snapshots.get(sa).tasks.length,0);
+      const independent=await mixedClient.call(sa,'submit_task',{requestId:'synthetic-independent-admission',description:'Synthetic independent service task',acceptanceCriteria:'Synthetic report',projectDirectory:a});
+      assert.equal((await mixedClient.call(sa,'wait_task',{taskId:independent.taskId,waitSeconds:5})).state,'completed','Busy and corrupt legacy roots do not gate service admission');
       assert(!JSON.parse(fs.readFileSync(path.join(mixedRoot,'legacy-roots.json'),'utf8')).roots.includes(goneSource));
       const other=new ServiceWindowClient({root:mixedRoot,legacyRoot:badSource,trusted:true,workspaceFolders:[pathToFileURL(b).href]});
       try{await other.start();assert.equal(other.legacyStatus.state,'needs_repair');assert.equal(other.snapshots.get(sb).tasks.length,1);}finally{other.close();}

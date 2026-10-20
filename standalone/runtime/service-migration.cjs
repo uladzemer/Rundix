@@ -204,7 +204,6 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
       publish(undefined,{state:'needs_repair',code:'migration_conflict',retryAt:clock()+60000});
     }).finally(()=>{syncing=null;clearTimeout(timer);if(!closed){timer=setTimeout(()=>void sync().catch(()=>{}),retryMs);timer.unref?.();}});return syncing;
   }
-  function assertReady(){if(closed || roots(store).some(source=>!ready.has(source)))throw failure('legacy_owner_active');}
   const all=()=>[...imports.values()].flat();
   function visible(spaceId,folders){return all().filter(row=>(row.inferredSpace || 'legacy:'+row.sourceId)===spaceId && contains(folders,row.projectDirectory));}
   function spaces(folders){return [...imports].filter(([,rows])=>rows.some(row=>!row.inferredSpace && contains(folders,row.projectDirectory))).map(([id])=>({spaceId:'legacy:'+id,kind:'legacy',root:'Legacy history'}));}
@@ -215,7 +214,7 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
       title:('MCP · '+row.task.description).slice(0,167),state:row.interrupted?'error':row.task.state,recoveryRequired:!!row.interrupted,progress:row.task.progress,closed:false,pendingRequests:[],
       ...projection.transcript(saved.session?.items || []),cursor:null};
   }
-  return {sync,assertReady,spaces,visible,chat,status,onChanged(listener){listeners.add(listener);return ()=>listeners.delete(listener);},
+  return {sync,spaces,visible,chat,status,onChanged(listener){listeners.add(listener);return ()=>listeners.delete(listener);},
     async register(source){
       if(typeof source!=='string' || !path.isAbsolute(source) || source.includes('\0'))throw failure('migration_conflict');
       let identity=path.normalize(source);if(process.platform==='win32')identity=identity.toLowerCase();

@@ -670,7 +670,7 @@ chat.open verifies one bounded stored record on demand and returns bounded
 transcript items. Window snapshots use a durable archive summary index/counts
 and a bounded latest page. Corrupt display records log archive_record_corrupt
 and are skipped; damaged requestId records still fail closed for mutations.
-Admission gate failures are retryable queued tasks with blockedUntil and a
-visible fixed blockedReason. Stop MCP persists across window reactivation and
+Legacy migration does not gate service task admission. Root failures remain
+separate legacy statuses; ordinary provider admission and quota waits are unchanged. Stop MCP persists across window reactivation and
 is cleared only by explicit Start MCP. Tests exercise actual extension
 reactivation with the same globalState.

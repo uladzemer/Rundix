@@ -44,6 +44,10 @@ async function main(){
   const restarted=new(require('../runtime/service-task-archive.cjs').TaskArchive)(store);assert.equal(restarted.page(space,{limit:3}).total,126,'Durable index survives restart');
   const logs=[];restarted.log=value=>logs.push(value);fs.writeFileSync(restarted.store.file('mcp-task','synthetic-page-124'),'{');
   const safe=restarted.page(space,{limit:3});assert.equal(safe.tasks.length,3);assert.equal(safe.total,125);assert(!safe.tasks.some(row=>row.taskId==='synthetic-page-124'));assert.deepEqual(logs,[{code:'archive_record_corrupt'}]);
+  const staleBlocked=[...tasks.tasks.values()].find(row=>row.space===space && row.state==='queued');assert(staleBlocked);
+  staleBlocked.error='Synthetic old admission error';staleBlocked.blockedReason='legacy_owner_active';staleBlocked.blockedUntil=Date.now()+60000;
+  const cancelledBlocked=tasks.call('cancel_task',{taskId:staleBlocked.taskId,requestId:'synthetic-cancel-old-block'});
+  assert.equal(cancelledBlocked.state,'cancelled');assert.equal(cancelledBlocked.error,null);assert.equal(staleBlocked.blockedReason,undefined);assert.equal(staleBlocked.blockedUntil,undefined);
   console.log('PASS task archive: per-space cap, automatic closed history, archived get/isolation, persistent requestId dedup, explicit restore and damaged-index fail closed.');
  }finally{tasks?.dispose();assert.equal(path.dirname(root),os.tmpdir());assert(path.basename(root).startsWith('rundix-task-archive-synthetic-'));fs.rmSync(root,{recursive:true,force:true});}
 }

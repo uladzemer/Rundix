@@ -8,7 +8,7 @@
   }
   function create(request, answer, {paged=false}={}) {
     const form = element('form', undefined, 'quiz-form');
-    const fields = [];
+    const fields = [], draftFields = [];
     const pages=[],tabs=[];
     const navigation=element('div',undefined,'quiz-pages');
     form.questionTabs=navigation;
@@ -46,6 +46,7 @@
           field.value=valueFromSelection();selected.clear();
         }
         mode.setAttribute('aria-pressed',String(multiple));update();
+        form.dispatchEvent(new Event('input',{bubbles:true}));
       };
       function valueFromSelection(){return [...selected,field.value.trim()].filter(Boolean).join('; ');}
       const choices = element('div', undefined, 'quiz-choices');
@@ -93,6 +94,10 @@
       };
       field.addEventListener('input', update);
       fields.push([question.id, field,value,()=>{selected.clear();multiple=false;mode.setAttribute('aria-pressed','false');custom.open=true;}]);
+      draftFields.push({get:()=>({value:field.value,multiple,selected:[...selected],open:custom.open}),
+        set:draft=>{field.value=draft.value || '';multiple=!!draft.multiple;selected.clear();
+          for(const label of draft.selected || [])selected.add(label);
+          custom.open=!!draft.open;mode.setAttribute('aria-pressed',String(multiple));update();}});
       form.append(group);
     }
     const submit = element('button', t('Отправить ответы'), 'primary');
@@ -123,6 +128,8 @@
       submit.disabled=readOnly || busy || !fields.every(([, ,getValue])=>getValue().trim());
       show(page);
     };
+    form.getDraft=()=>({fields:draftFields.map(field=>field.get()),page});
+    form.restoreDraft=draft=>{draftFields.forEach((field,index)=>{if(draft.fields?.[index])field.set(draft.fields[index]);});show(draft.page || 0);};
     form.restoreAnswers=answers=>{
       for(const [id,field,,reset] of fields){reset();field.value=(answers?.[id] || '').replace(/\n/g,'; ');field.dispatchEvent(new Event('input'));}
     };

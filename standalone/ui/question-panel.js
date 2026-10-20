@@ -7,7 +7,8 @@
     return node;
   }
   class QuestionPanel {
-    constructor(send){
+    constructor(send,{drafts=new Map(),onDraft=()=>{}}={}){
+      this.drafts=drafts;this.onDraft=onDraft;
       this.send=send;this.views=new Map();this.key=null;this.session=null;this.sessions=new Map();
       this.element=el('section',undefined,'question-panel');this.element.hidden=true;
       const header=el('div',undefined,'question-panel-header');
@@ -53,6 +54,7 @@
     }
     submit(view,answers,skip=false){
       if(view.record || view.busy)return;
+      this.drafts.delete(JSON.stringify([this.session,view.key]));this.onDraft();
       view.busy=true;view.form.setQuizState({busy:true});this.render();
       this.send(view.action,{...view.target,answers,skip});
     }
@@ -84,7 +86,12 @@
         if(request && !state.asyncQuestionReplies?.[item.id])entries.push({key:'a:'+item.id,request,action:'answerAsync',target:{itemId:item.id}});
       }
       for(const record of state.questionHistory || [])entries.push({key:record.id,record,request:{params:{questions:record.questions}}});
-      const valid=new Set(entries.map(entry=>entry.key));
+      const valid=new Set(entries.filter(entry=>!entry.record).map(entry=>entry.key));
+      for(const key of this.drafts.keys()){
+        const [session,id]=JSON.parse(key);
+        if(session===state.key && !valid.has(id)){this.drafts.delete(key);this.onDraft();}
+      }
+      for(const entry of entries)valid.add(entry.key);
       for(const key of this.views.keys())if(!valid.has(key))this.views.delete(key);
       for(const entry of entries){
         let view=this.views.get(entry.key);
@@ -92,6 +99,13 @@
         if(!view || view.signature!==signature){
           view={...entry,signature};
           view.form=root.WorkbenchQuestions.create(entry.request,answers=>this.submit(view,answers),{paged:true});
+          const draftKey=JSON.stringify([state.key,entry.key]);
+          const saved=this.drafts.get(draftKey);
+          if(!entry.record && saved?.signature===signature)view.form.restoreDraft(saved.draft);
+          view.form.addEventListener('input',()=>{
+            if(view.record || view.busy)return;
+            this.drafts.set(draftKey,{signature,draft:view.form.getDraft()});this.onDraft();
+          });
           this.views.set(entry.key,view);
         }
         Object.assign(view,entry);

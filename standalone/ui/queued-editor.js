@@ -1,7 +1,7 @@
 // An independent draft; transcript renders never replace the editor's textarea.
 class WorkbenchQueuedEditor {
-  constructor({ send, focusComposer }) {
-    this.send = send;
+  constructor({ send, focusComposer, drafts=new Map(), onDraft=()=>{} }) {
+    this.send = send;this.drafts=drafts;this.onDraft=onDraft;
     this.focusComposer = focusComposer;
     const node = (tag, text) => {
       const element = document.createElement(tag);
@@ -25,7 +25,7 @@ class WorkbenchQueuedEditor {
     document.body.append(this.dialog);
     cancel.onclick = () => this.dialog.close();
     this.save.onclick = () => this.submit();
-    this.input.oninput = () => this.refresh();
+    this.input.oninput = () => { this.storeDraft();this.refresh(); };
     this.input.addEventListener('paste', event => {
       const images = [...event.clipboardData?.items || []].filter(item => item.kind === 'file' && item.type.startsWith('image/'));
       if (!images.length) return;
@@ -61,11 +61,20 @@ class WorkbenchQueuedEditor {
     this.originalImages = item.images || 0;
     this.owner.expectedAttachmentIds = this.hasAttachmentMetadata ? this.attachments.map(file => file.id) : undefined;
     this.uploading = null;this.reading = false;this.renderAttachments();
-    this.input.value = this.owner.expectedText;this.status.textContent = '';this.pending = null;
+    const saved=this.drafts.get(JSON.stringify([state.key,item.id]));
+    this.input.value = saved?.expectedText===this.owner.expectedText ? saved.text : this.owner.expectedText;this.status.textContent = '';this.pending = null;
     this.update(state);this.dialog.showModal();this.input.focus();
     this.input.setSelectionRange(this.input.value.length, this.input.value.length);
   }
+  storeDraft() {
+    if(!this.owner)return;
+    this.drafts.set(JSON.stringify([this.owner.key,this.owner.id]),{expectedText:this.owner.expectedText,text:this.input.value});this.onDraft();
+  }
   update(state) {
+    for(const key of this.drafts.keys()){
+      const [session,id]=JSON.parse(key);
+      if(session===state.key && !state.followUps?.some(item=>item.id===id)){this.drafts.delete(key);this.onDraft();}
+    }
     if (!this.owner) return;
     if (state.key !== this.owner.key) { this.dialog.close();return; }
     const item = state.followUps?.find(row => row.id === this.owner.id);
@@ -127,7 +136,7 @@ class WorkbenchQueuedEditor {
   finish(message) {
     if (!this.owner || message.key !== this.owner.key || message.requestId !== this.pending) return;
     clearTimeout(this.timer);this.pending = null;
-    if (message.ok) { this.dialog.close();return; }
+    if (message.ok) { this.drafts.delete(JSON.stringify([this.owner.key,this.owner.id]));this.onDraft();this.dialog.close();return; }
     this.status.textContent = WorkbenchI18n.t('Не удалось сохранить правку. Проверьте, что задача ещё в очереди, и откройте её заново.');
     this.refresh();
   }

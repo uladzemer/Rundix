@@ -23,10 +23,13 @@ let menu = null,
   sending = false,
   hydrated = false,
   historyCursor = null,
-  historyScope = "workspace",
+  historyScope = previous.historyScope || null,
+  historyListRender = null,
   historyQuery = "",
   historyTimer,
   historyGeneration = 0;
+const quizDrafts = new Map(previous.quizDrafts || []);
+const queuedDrafts = new Map(previous.queuedDrafts || []);
 const approvalDrafts = new Map();
 const pendingSends = new Map();
 const pendingPreviews = new Map();
@@ -349,11 +352,11 @@ window.addEventListener('pagehide', () => quotaWarningView.dispose(), { once: tr
 reviewBar.hidden = true;
 const composerDock = el("section", undefined, "composer-dock");
 const queuedMessages=el('section',undefined,'queued-messages');queuedMessages.setAttribute('aria-label',WorkbenchI18n.t('Очередь сообщений'));queuedMessages.hidden=true;
-const queuedEditor = new WorkbenchQueuedEditor({ send, focusComposer: () => input.focus() });
+const queuedEditor = new WorkbenchQueuedEditor({ send, drafts: queuedDrafts, onDraft: persist, focusComposer: () => input.focus() });
 window.addEventListener('pagehide', () => queuedEditor.dispose(), { once: true });
 const localBar = el("div", undefined, "local-work-bar");
 localBar.append(limitsButton,quotaWarning);
-const questionPanel=new WorkbenchQuestionPanel(send);
+const questionPanel=new WorkbenchQuestionPanel(send, { drafts: quizDrafts, onDraft: persist });
 const taskPreflight=new WorkbenchTaskPreflight(send);
 composerDock.append(questionPanel.element,taskPreflight.element,reviewBar, queuedMessages, composer, localBar);
 const menuTriggers = new Set([attach, slash, model, access, limitsButton]);
@@ -438,6 +441,9 @@ function persist() {
     key: state.key,
     draft: input.value,
     drafts: localDrafts,
+    quizDrafts: [...quizDrafts],
+    queuedDrafts: [...queuedDrafts],
+    historyScope,
     quotaDismissals:[...quotaDismissals],
     reviewDismissals: [...reviewDismissals],
     state: {
@@ -458,6 +464,7 @@ function close() {
   modelListRender = null;
   commandMenuRender = null;
   clientMenuRender = null;
+  historyListRender = null;
   fileListView = null;
   mention = null;
   clearTimeout(fileTimer);
@@ -1683,6 +1690,7 @@ function revealItem(id) {
   return true;
 }
 function renderHistory() {
+  if (menuKind === "history" && historyListRender) { historyListRender();return; }
   const target = dialog(WorkbenchI18n.t("История сессий"), "history"),
     query = el("input");
   query.value = historyQuery;
@@ -1701,12 +1709,16 @@ function renderHistory() {
   }
   const list = el("div");
   target.append(scope, query, list);
+  const rows = new Map();
+  const more = el("button", WorkbenchI18n.t("Загрузить ещё"));
   const render = () => {
-    list.replaceChildren();
+    const focused = document.activeElement;
+    const wanted=[];
     for (const s of history.filter((s) =>
       s.name.toLowerCase().includes(query.value.toLowerCase()),
-    ))
-      row(
+    )) {
+      const key=s.id || s.key;
+      const node=row(
         list,
         (s.unread ? "● " : "") + s.name,
         [
@@ -1729,13 +1741,15 @@ function renderHistory() {
           send("open", { id: s.id, key: s.key });
           close();
         },
+        {existing:rows.get(key)},
       );
+      rows.set(key,node);wanted.push(node);
+    }
     if (!history.length)
-      list.append(
+      wanted.push(
         el("p", WorkbenchI18n.t("История загружается или пока пуста.")),
       );
     if (historyCursor) {
-      const more = el("button", WorkbenchI18n.t("Загрузить ещё"));
       more.onclick = () =>
         send("history", {
           scope: historyScope,
@@ -1743,8 +1757,12 @@ function renderHistory() {
           cursor: historyCursor,
           generation: historyGeneration,
         });
-      list.append(more);
+      wanted.push(more);
     }
+    for(const node of [...list.children])if(!wanted.includes(node))node.remove();
+    wanted.forEach((node,index)=>{if(list.children[index]!==node)list.insertBefore(node,list.children[index] || null);});
+    for(const [key,node] of rows)if(!wanted.includes(node))rows.delete(key);
+    if(list.contains(focused) && document.activeElement!==focused)focused.focus({preventScroll:true});
   };
   query.oninput = () => {
     historyQuery = query.value;
@@ -1768,6 +1786,7 @@ function renderHistory() {
       generation: ++historyGeneration,
     });
   };
+  historyListRender = render;
   render();
   query.focus();
 }
@@ -1933,7 +1952,7 @@ function render() {
   resizeComposer();
   renderQuotaWarning();
   renderReview();
-  queuedEditor.update(state);
+  if(hydrated)queuedEditor.update(state);
   renderQueuedMessages();
   updateActivity();
   if (
@@ -2029,7 +2048,7 @@ function render() {
       send("removeAttachment", { id: file.id, path: file.path });
     attachments.append(b);
   }
-  questionPanel.update(state);
+  if(hydrated)questionPanel.update(state);
   const preview=pendingPreviews.get(state.key);
   if(preview && state.items.some(item=>item.type==='userMessage' && !preview.known.has(item.id)))pendingPreviews.delete(state.key);
   messageList.update(state, { pending: pendingPreviews.get(state.key)?.node, scrollSnapshot });
@@ -2226,6 +2245,7 @@ window.addEventListener("message", (event) => {
         : msg.data.draft || "";
     } else if (!hydrated && !input.value && msg.data.draft)
       input.value = msg.data.draft;
+    if (!historyScope) historyScope = msg.data.historyScope === "all" ? "all" : "workspace";
     hydrated = true;
     state = { ...state, ...msg.data };
     document.documentElement.dataset.controlMotion =

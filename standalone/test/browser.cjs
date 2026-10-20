@@ -548,6 +548,7 @@ if(!chromePath)throw Error('Set CHROME_PATH to an installed Chrome or Chromium e
  await require('./mcp-composer-browser.cjs')({page});
  await require('./activity-browser.cjs')({page});
  await require('./report-layout-browser.cjs')({page});
+ await require('./chat-state-browser.cjs')({browser});
  assert.deepEqual(errors,[]);
  console.log('PASS: project @ files, attachment menu, copy/code/fork actions, incremental streaming preserves old DOM and selection; tabs, drafts, account UI, forms/history, slider/context, warning colors and responsive layout.');
  }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1});

@@ -404,6 +404,7 @@ function activate(context) {
         data: {
           language: locale.language,
           languageChoice: languageChoice(),
+          historyScope: vscode.workspace.getConfiguration("rundix").get("historyScope", "workspace"),
           hostKey: host.key,
           tabs: tabRows(host),
           key: s.key,

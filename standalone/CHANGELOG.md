@@ -2,6 +2,12 @@
 
 Install and update Rundix through [Microsoft Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix).
 
+## 0.3.1 — 2026-10-20
+
+- Fixed: after an MCP task continued (for example once the pool switched accounts on a usage limit), the delivered continuation could stay in the chat's input box. The composer now tracks who owns a draft, clears text the extension placed there once it is delivered, and never removes what you typed yourself.
+- MCP: continuations that were definitely not sent are kept on the task and returned by `get_task` (full text) and shown in the MCP panel; other tool replies carry only `unsentInputCount`. A queued continuation cancelled with `cancel_task` stays recoverable.
+- Internal: the session core and MCP task hosting no longer depend on the VS Code API, in preparation for running MCP tasks with VS Code closed. Behaviour is unchanged.
+
 ## 0.3.0 — 2026-10-20
 
 Reliability and automation release. Highlights:

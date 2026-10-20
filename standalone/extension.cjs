@@ -21,6 +21,7 @@ const { canEditQueued, queuedEdit, selectedAttachments, assertQueueCurrent, move
 const { fileAttachment, stageQueuedAttachments } = require('./runtime/queued-attachments.cjs');
 const { transferQueuedSession, acquireQueuedSession } = require('./runtime/queued-session-transfer.cjs');
 const { SessionStore } = require("./runtime/store.cjs");
+const {PendingLogin} = require('./runtime/pending-login.cjs');
 const { startLogin, identity } = require("./runtime/account.cjs");
 const { Connections } = require('./runtime/connections.cjs');
 const taskDirectory = require('./runtime/task-directory.cjs');
@@ -67,7 +68,17 @@ function activate(context) {
     defaultModel,
     defaultEffort,
     lastEditor = vscode.window.activeTextEditor;
-  let authBusy = false;
+  let authBusy = false, authOwner = null;
+  const pendingLogin = new PendingLogin({onFinish: (error, record) => {
+    loginId = null;
+    if (authOwner === record.release) { authOwner = null; authBusy = false; }
+    if (record.disposed && server === record.client) {
+      server = null; connecting = null; activeConnection = null;
+      account = null; catalog = []; catalogUpdatedAt = 0;
+    }
+    if (error && target()) target().error = error;
+    broadcast();
+  }});
   const pastedImageRoot=path.join(context.globalStorageUri.fsPath,'pasted-images');
   const cliUpdates = new CliUpdates({root:path.join(context.globalStorageUri.fsPath,'cli')});
   let cliOverride = null, cliPrepared = null, cliCheckRequest = null, disposed = false;
@@ -415,7 +426,7 @@ function activate(context) {
           model: s.model,
           effort: s.effort,
           models: catalog,
-          cli: {...cliInfo, channel:cliChannel(),autoUpdate:vscode.workspace.getConfiguration('rundix').get('cliAutoUpdate',true),custom:!!vscode.workspace.getConfiguration('rundix').get('cliPath','')},
+          cli: {...cliInfo, channel:cliChannel(),autoUpdate:vscode.workspace.getConfiguration('rundix').get('cliAutoUpdate',true),custom:!!configuredCliPath()},
           modelsUpdatedAt: catalogUpdatedAt,
           account: connections.projectAccount(account),
           connection: connections.display(),
@@ -489,8 +500,11 @@ function activate(context) {
   function cliChannel() {
     return vscode.workspace.getConfiguration('rundix').get('cliChannel','stable') === 'alpha' ? 'alpha' : 'stable';
   }
+  function configuredCliPath() {
+    return vscode.workspace.getConfiguration('rundix').inspect('cliPath')?.globalValue || '';
+  }
   async function resolveCli() {
-    const configured=vscode.workspace.getConfiguration('rundix').get('cliPath','');
+    const configured=configuredCliPath();
     let executable;
     if(configured) {executable=findCli(configured);cliInfo.managed=false;}
     else if(cliOverride)executable=cliOverride;
@@ -519,13 +533,13 @@ function activate(context) {
   async function checkCliUpdates(force=false) {
     if(cliCheckRequest)return cliCheckRequest;
     const config=vscode.workspace.getConfiguration('rundix');
-    if(disposed || config.get('cliPath','') || (!force && !config.get('cliAutoUpdate',true)))return;
+    if(disposed || configuredCliPath() || (!force && !config.get('cliAutoUpdate',true)))return;
     const channel=cliChannel();
     cliCheckRequest=(async()=>{
       cliInfo={...cliInfo,phase:'checking',error:false};broadcast();
       const candidate=await cliUpdates.prepare(channel,{force,onProgress:()=>{cliInfo.phase='downloading';broadcast();}});
       if(disposed||channel!==cliChannel())return;
-      if(vscode.workspace.getConfiguration('rundix').get('cliPath','') || (!force&&!vscode.workspace.getConfiguration('rundix').get('cliAutoUpdate',true))){cliInfo.phase='idle';return;}
+      if(configuredCliPath() || (!force&&!vscode.workspace.getConfiguration('rundix').get('cliAutoUpdate',true))){cliInfo.phase='idle';return;}
       cliInfo.checkedAt=Date.now();
       if(server?.executable===candidate.executable){cliUpdates.accept(channel,candidate);cliInfo={...cliInfo,version:candidate.version,managed:true,phase:'ready'};await refreshCatalog();return;}
       if(authBusy||loginId||accountStatusRequest||pendingRequests.size||[...sessions.values()].some(s=>s.busy||s.compacting)) {cliInfo.phase='pending';return;}
@@ -591,7 +605,14 @@ function activate(context) {
           return;
         }
         if (message.method === "account/login/completed") {
-          loginId = null;
+          const pending = pendingLogin.current;
+          if (pending?.client === notificationServer && !pending.id) {
+            // A response and its notification may share a transport chunk;
+            // login/start's await continuation has not assigned the ID yet.
+            (pending.completions ||= []).push(message);
+            return;
+          }
+          if (!pendingLogin.complete(notificationServer, message.params.loginId)) return;
           if (!message.params.success) {
             const active = target();
             if (active)
@@ -709,6 +730,8 @@ function activate(context) {
           );
       });
       server.on("disconnected", (message) => {
+        if (server !== notificationServer) return;
+        if (pendingLogin.current?.client === notificationServer) pendingLogin.finish();
         connecting = null;
         limitsEpoch++;
         limitsRequest = null;
@@ -769,14 +792,21 @@ function activate(context) {
     return changed;
   }
   async function withLocalSignIn(operation) {
+    if (pendingLogin.current) throw Error('Browser sign-in is pending. Complete or cancel it before sending or changing connections.');
     if (authBusy || connectionStarting || accountStatusRequest || [...sessions.values()].some(session => session.busy || session.compacting || session.sendingTask))
       throw Error(locale.t('Дождитесь завершения задач перед сменой аккаунта.'));
     const release = store.acquire('account-credentials');
     try {
       store.assertNoActiveTurns();
-      authBusy = true; broadcast();
-      return await operation();
-    } finally { authBusy = false; release(); broadcast(); }
+      authOwner = release; authBusy = true; broadcast();
+      return await operation(release);
+    } finally {
+      if (pendingLogin.current?.release !== release) {
+        if (authOwner === release) { authOwner = null; authBusy = false; }
+        release();
+      }
+      broadcast();
+    }
   }
   function refreshAccountStatus() {
     if (authBusy) return Promise.reject(Error('Wait for the connection change to finish.'));
@@ -789,6 +819,7 @@ function activate(context) {
     return accountStatusRequest;
   }
   function stopAccountServer() {
+    pendingLogin.finish();
     server?.removeAllListeners(); server?.dispose(); server = null; connecting = null;
   }
   async function resetConnection() {
@@ -814,6 +845,7 @@ function activate(context) {
     });
   }
   async function chooseConnection() {
+    if (pendingLogin.current) throw Error('Browser sign-in is pending. Complete or cancel it before changing connections.');
     const choice = await vscode.window.showQuickPick(connections.choices().map(item => ({label:item.label,id:item.id})), {title:'Rundix · '+locale.t('Подключение'),placeHolder:locale.t('Выберите или настройте подключение')});
     if (choice) await configureConnection(choice.id);
   }
@@ -2493,27 +2525,34 @@ function activate(context) {
       await refreshAccountStatus();
       publish(s);
     } else if (msg.action === "accountCancel") {
-      if (loginId) {
-        await server.request("account/login/cancel", { loginId });
-        loginId = null;
-        broadcast();
-      }
+      await pendingLogin.cancel();
     } else if (msg.action === "account") {
       if (connections.selection().id !== 'local') return chooseConnection();
       if ([...sessions.values()].some((session) => session.busy))
         throw Error(
           locale.t("Дождитесь завершения задач перед сменой аккаунта."),
         );
-      await withLocalSignIn(async () => {
-      await connect();
-      await refreshAccount();
-      if (loginId) await server.request("account/login/cancel", { loginId });
-      for (const session of sessions.values()) await save(session);
-      loginId = await startLogin(server, {
-        openExternal: (url) => vscode.env.openExternal(vscode.Uri.parse(url)),
-      });
-      await refreshAccount();
-      broadcast();
+      await withLocalSignIn(async release => {
+        await connect();
+        await refreshAccount();
+        for (const session of sessions.values()) await save(session);
+        const record = pendingLogin.begin(server, release);
+        try {
+          await startLogin(record.client, {
+            onStarted: id => {
+              if (pendingLogin.current !== record) throw Error('Browser sign-in expired. Please try again.');
+              if (!id) throw Error('CLI did not return a login identifier.');
+              record.id = loginId = id;
+              const completion = record.completions?.find(message => message.params.loginId === id);
+              if (completion) record.client.emit('notification', completion);
+            },
+            openExternal: (url) => vscode.env.openExternal(vscode.Uri.parse(url)),
+          });
+        } catch (error) {
+          await pendingLogin.cancel(record).catch(() => {});
+          throw error;
+        }
+        broadcast();
       });
     } else if (msg.action === "retry") {
       if(authBusy)throw Error(locale.t('Дождитесь переключения аккаунта.'));
@@ -2891,8 +2930,8 @@ function activate(context) {
   context.subscriptions.push({
     dispose() {
       disposed=true;clearInterval(maintenanceTimer);
+      server?.dispose(); pendingLogin.finish();
       mcpTasks?.dispose();mcpBridge?.dispose();mcpLease?.();
-      server?.dispose();
     },
   });
   let lastCliCheck=0;

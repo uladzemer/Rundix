@@ -6,24 +6,35 @@ const {AppServer, findCli} = require('../runtime/transport.cjs');
 
 exports.run = async () => {
   const report = {syntheticTransport: true, inferencePerformed: false};
-  const original = {start: AppServer.prototype.start, request: AppServer.prototype.request, home: process.env.CODEX_HOME};
+  const original = {start: AppServer.prototype.start, request: AppServer.prototype.request, home: process.env.CODEX_HOME, openExternal: vscode.env.openExternal};
   const calls = [], states = [];
   let api, session, originalPost;
   let currentAccount = {type: 'chatgpt', email: 'local@example.test', planType: 'plus'};
   let usedPercent = 20;
-  let failAccount = false;
+  let failAccount = false, immediateCompletion = false;
   try {
     const config = vscode.workspace.getConfiguration('rundix');
-    await config.update('cliPath', findCli(), vscode.ConfigurationTarget.Global);
+    const userCli = findCli();
+    await config.update('cliPath', userCli, vscode.ConfigurationTarget.Global);
     await config.update('cliAutoUpdate', false, vscode.ConfigurationTarget.Global);
+    await assert.rejects(config.update('cliPath', 'synthetic-workspace-cli-must-never-run', vscode.ConfigurationTarget.Workspace), /only into User settings/);
+    assert.equal(require('../package.json').contributes.configuration.properties['rundix.cliPath'].scope, 'machine');
+    let openBrowser = async () => true;
+    vscode.env.openExternal = (...args) => openBrowser(...args);
+    let client;
     process.env.CODEX_HOME = path.join(__dirname, '../.verification/local-auth-empty-home');
     fs.mkdirSync(process.env.CODEX_HOME, {recursive: true});
     const sentinel = '{"synthetic_fixture":"must remain unchanged"}\n';
     const fixtureAuth = path.join(process.env.CODEX_HOME, 'auth.json');
     fs.writeFileSync(fixtureAuth, sentinel);
-    AppServer.prototype.start = async function () { return this; };
+    AppServer.prototype.start = async function () { client = this; assert.equal(this.executable, path.resolve(userCli)); return this; };
     AppServer.prototype.request = async function (method, params) {
       calls.push({method, params});
+      if (method === 'account/login/start') {
+        if (immediateCompletion) this.emit('notification', {method:'account/login/completed', params:{loginId:'synthetic-login',success:false}});
+        return {loginId: 'synthetic-login', authUrl: 'https://example.test/synthetic-login'};
+      }
+      if (method === 'account/login/cancel') return {};
       if (method === 'account/read') {
         assert.deepEqual(params, {refreshToken: false});
         if (failAccount) throw Error('Synthetic account read failure');
@@ -64,9 +75,35 @@ exports.run = async () => {
     failAccount = false;
     usedPercent = 20;
     await api.handle(session, {action: 'accountRefresh'});
+    await api.handle(session, {action: 'account'});
+    await assert.rejects(api.handle(session, {action: 'send', text: session.draft}), /./);
+    await assert.rejects(api.handle(session, {action: 'connectionSettings'}), /sign-in/i);
+    assert.equal(session.draft, 'Preserve my draft');
+    client.emit('notification', {method:'account/login/completed',params:{loginId:'stale-login',success:true}});
+    await assert.rejects(api.handle(session, {action:'send',text:session.draft}));
+    await api.handle(session, {action:'accountCancel'});
+    let releaseBrowser;
+    openBrowser = () => new Promise(resolve => { releaseBrowser = resolve; });
+    const firstLogin = api.handle(session, {action:'account'});
+    for (let attempt=0; !releaseBrowser && attempt<100; attempt++) await new Promise(resolve=>setTimeout(resolve,10));
+    assert.ok(releaseBrowser);
+    client.emit('notification', {method:'account/login/completed',params:{loginId:'synthetic-login',success:false}});
+    openBrowser = async () => true;
+    await api.handle(session, {action:'account'});
+    releaseBrowser(true);
+    await firstLogin;
+    await assert.rejects(api.handle(session, {action:'accountRefresh'}), /connection change/);
+    await assert.rejects(api.handle(session, {action:'send',text:session.draft}));
+    await api.handle(session, {action:'accountCancel'});
+    report.staleLoginKeepsNewOwnerBusy = true;
+    immediateCompletion = true;
+    await api.handle(session, {action:'account'});
+    report.immediateLoginCompletionHandled = true;
     await api.handle(session, {action: 'send', text: session.draft});
     assert.equal(calls.filter(call => call.method === 'turn/start').length, 1);
-    assert.equal(calls.some(call => /login|logout|AuthStatus|refresh.*token/i.test(call.method)), false);
+    assert.equal(calls.some(call => /logout|AuthStatus|refresh.*token/i.test(call.method)), false);
+    report.pendingLoginBlocksSendAndConnectionChanges = true;
+    report.workspaceExecutableIgnored = true;
     assert.equal(fs.readFileSync(fixtureAuth, 'utf8'), sentinel);
     assert.ok(fs.readdirSync(process.env.CODEX_HOME).every(name => ['auth.json', 'tmp'].includes(name)), 'Only the synthetic auth fixture and ordinary attachment staging directory are allowed');
     report.localAccountOnly = true;
@@ -80,6 +117,7 @@ exports.run = async () => {
   } finally {
     if (session?.panel && originalPost) session.panel.webview.postMessage = originalPost;
     session?.panel?.dispose();
+    vscode.env.openExternal = original.openExternal;
     Object.assign(AppServer.prototype, {start: original.start, request: original.request});
     if (original.home === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = original.home;

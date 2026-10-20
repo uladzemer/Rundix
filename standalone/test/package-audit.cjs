@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const zlib = require('node:zlib');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 
 function audit(file) {
   const zip = fs.readFileSync(file);
@@ -10,7 +11,7 @@ function audit(file) {
   assert(end >= 0 && zip.readUInt32LE(end) === 0x06054b50, 'Missing ZIP directory');
   const count = zip.readUInt16LE(end + 10);
   let offset = zip.readUInt32LE(end + 16);
-  const names = new Set();
+  const names = new Set(), sources = new Map();
   const allowed = /^(?:extension\.vsixmanifest|\[Content_Types\]\.xml|extension\/(?:extension\.cjs|LICENSE(?:\.txt)?|package(?:\.nls(?:\.ru)?)?\.json|(?:readme|changelog)\.md|THIRD_PARTY_NOTICES\.txt|runtime\/(?!.*-source\.cjs$)[\w-]+\.cjs|runtime\/cli-manifest\.json|ui\/[\w-]+\.(?:js|css)|resources\/(?:rundix-(?:dark|light)\.svg|extension-icon\.png)|resources\/icons\/(?:[\w-]+\.svg|NOTICE\.md|sources\.json)))$/i;
   const checks = [
     ['JWT', /\beyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}/],
@@ -39,6 +40,7 @@ function audit(file) {
     assert(method === 0 || method === 8, 'Unsupported ZIP compression');
     const data = method === 8 ? zlib.inflateRawSync(compressed) : compressed;
     const text = data.toString('utf8');
+    if (/^extension\/.*\.c?js$/.test(name)) sources.set(name, text);
     for (const [label, pattern] of checks) {
       // Never include the matched value in logs.
       assert(!pattern.test(text), `${label} detected in ${name}`);
@@ -58,6 +60,14 @@ function audit(file) {
     'extension/resources/rundix-dark.svg', 'extension/resources/rundix-light.svg',
     'extension/resources/icons/rundix.svg']) {
     assert(names.has(required), `Missing packaged file: ${required}`);
+  }
+  // Every relative module a packaged script requires must itself be packaged; a new runtime file
+  // missing from .vscodeignore would otherwise only fail when the installed extension activates.
+  for (const [name, text] of sources) {
+    for (const match of text.matchAll(/require\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g)) {
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(name), match[1]));
+      assert(names.has(target), `Missing packaged module ${target} required by ${name}`);
+    }
   }
   console.log(`Package audit passed: ${count} files; only distributable assets; no detected credential or personal-path patterns.`);
 }

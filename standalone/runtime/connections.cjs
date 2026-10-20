@@ -1,13 +1,15 @@
 // Optional connection providers are installed extensions, not webview plug-ins.
 // The selected owner is durable: a missing provider must never fall back to local sign-in.
 const {randomUUID} = require('node:crypto');
+const {activateOwner} = require('./connection-companions.cjs');
 const locale = require('../ui/i18n.js');
 const ID = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const OWNER = /^[a-z0-9-]+\.[a-z0-9-]+$/i;
 class Connections {
-  constructor({store, activateOwner}) {
+  constructor({store, activateOwner, activationTimeout = 15000}) {
     this.store = store;
     this.activateOwner = activateOwner;
+    this.activationTimeout = activationTimeout;
     this.providers = new Map();
   }
   selection() {
@@ -39,7 +41,7 @@ class Connections {
   async resolve() {
     const selected = this.selection();
     if (selected.id === 'local') return {...selected, provider: null};
-    if (!this.providers.has(selected.id)) await this.activateOwner(selected.owner);
+    if (!this.providers.has(selected.id)) await activateOwner(() => this.activateOwner(selected.owner), this.activationTimeout);
     const entry = this.providers.get(selected.id);
     if (!entry || entry.owner !== selected.owner) throw Error('The selected connection extension is unavailable. Enable or update it, or explicitly choose Local Codex CLI.');
     const result = {...selected, provider: entry.provider};

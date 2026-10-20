@@ -197,7 +197,15 @@ async function install({
       })
     )(binary);
     fs.writeFileSync(path.join(unpack, ".complete"), release.version);
-    fs.renameSync(unpack, location.directory);
+    // Quarantine only the exact managed version under the install lock, after
+    // its replacement has passed verification. Stage cleanup removes it safely.
+    const broken = path.join(stage, "broken");
+    if (fs.existsSync(location.directory)) fs.renameSync(location.directory, broken);
+    try { fs.renameSync(unpack, location.directory); }
+    catch (error) {
+      if (fs.existsSync(broken)) fs.renameSync(broken, location.directory);
+      throw error;
+    }
     return location.executable;
   } catch (error) {
     // Keep credentials and arbitrary process output out of UI errors.

@@ -388,6 +388,7 @@
         },
         "rundix.cliPath": {
           "type": "string",
+          "scope": "machine",
           "default": "",
           "description": "Path to the official Codex CLI executable. Empty discovers the installed CLI."
         },

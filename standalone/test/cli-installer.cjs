@@ -69,6 +69,14 @@ const manifest = require("../runtime/cli-manifest.json");
         .readdirSync(root)
         .some((name) => name.endsWith(".lock") || name.startsWith(".install-")),
     );
+    fs.unlinkSync(a);
+    fs.writeFileSync(path.join(layout(root, 'win32', 'x64').directory, 'synthetic-leftover'), 'broken');
+    await assert.rejects(install({...options, verify: async () => { throw Error('synthetic verification failure'); }}));
+    assert.ok(fs.existsSync(path.join(layout(root, 'win32', 'x64').directory, 'synthetic-leftover')), 'Failed repair preserves the broken cache');
+    assert.equal(await install(options), a);
+    assert.ok(fs.existsSync(a));
+    assert.equal(fs.existsSync(path.join(layout(root, 'win32', 'x64').directory, 'synthetic-leftover')), false);
+    assert.deepEqual(fs.readdirSync(root), [path.basename(layout(root, 'win32', 'x64').directory)]);
     const invalid = {
       ...options,
       root: path.join(root, "invalid"),

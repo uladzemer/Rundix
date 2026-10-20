@@ -3,5 +3,29 @@ const assert=require('node:assert/strict');const {startLogin,identity}=require('
  assert.equal(await startLogin(server,{openExternal:async url=>{opened.push(url);return true;}}),'fixture-login');assert.deepEqual(calls.map(call=>call.method),['account/login/start']);assert.deepEqual(calls[0].params,{type:'chatgpt'});assert.equal(opened.length,1);
  calls.length=0;await startLogin(server,{openExternal:async()=>true});assert.equal(calls.length,1);assert.equal(calls[0].method,'account/login/start');assert.notEqual(identity({type:'chatgpt',email:'first@example.test'}),identity({type:'chatgpt',email:'second@example.test'}));
  await assert.rejects(startLogin({request:async()=>({authUrl:'file:///fixture'})},{openExternal:async()=>{throw Error('Must not open');}}),/адрес/);
+ const {PendingLogin} = require('../runtime/pending-login.cjs');
+ const fs=require('node:fs'), os=require('node:os'), path=require('node:path');
+ const {SessionStore}=require('../runtime/store.cjs');
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-synthetic-login-'));
+ try {
+  const store=new SessionStore(root), other=new SessionStore(root), notices=[];
+  const pending=new PendingLogin({onFinish:error=>notices.push(error),timeout:20});
+  let cancelled=0, disposed=0;
+  const client={request:async(method,params)=>{assert.equal(method,'account/login/cancel');assert.equal(params.loginId,'fixture');cancelled++;},dispose:()=>disposed++};
+  const record=pending.begin(client,store.acquire('account-credentials'));record.id='fixture';
+  assert.throws(()=>other.acquire('account-credentials'));
+  assert.equal(pending.complete({},'fixture'),false);
+  assert.equal(pending.complete(client,'stale'),false);
+  assert.equal(pending.complete(client,'fixture'),true);
+  other.acquire('account-credentials')();
+  assert.equal(pending.finish(record),false);
+  const cancelledRecord=pending.begin(client,store.acquire('account-credentials'));cancelledRecord.id='fixture';
+  await pending.cancel();assert.equal(cancelled,1);other.acquire('account-credentials')();
+  const failed=pending.begin({...client,request:async()=>{throw Error('synthetic cancel failure');}},store.acquire('account-credentials'));failed.id='fixture';
+  await assert.rejects(pending.cancel(),/synthetic/);assert.equal(disposed,1);other.acquire('account-credentials')();
+  pending.begin(client,store.acquire('account-credentials')).id='fixture';
+  await new Promise(resolve=>setTimeout(resolve,50));
+  assert.equal(pending.current,null);assert.equal(cancelled,2);assert.match(notices.at(-1),/timed out/);other.acquire('account-credentials')();
+ } finally {fs.rmSync(root,{recursive:true,force:true});}
  console.log('PASS: local browser sign-in uses only the official login RPC; URLs validated and account identities isolated.');
 })().catch(error=>{console.error(error);process.exitCode=1});

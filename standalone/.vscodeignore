@@ -34,6 +34,7 @@
 !runtime/store.cjs
 !runtime/titles.cjs
 !runtime/transport.cjs
+!runtime/pending-login.cjs
 !runtime/cli-manifest.json
 !ui/*.js
 !ui/*.css

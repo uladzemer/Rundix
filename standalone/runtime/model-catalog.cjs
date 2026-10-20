@@ -2,7 +2,7 @@
 async function readCatalog(client) {
   const models = [],
     seen = new Set();
-  let cursor;
+  let cursor, pages = 0;
   do {
     const result = await client.request("model/list", {
       limit: 100,
@@ -12,7 +12,8 @@ async function readCatalog(client) {
     if (!Array.isArray(result.data)) throw Error("Invalid CLI model catalog");
     models.push(...result.data);
     cursor = result.nextCursor;
-    if (cursor && (seen.has(cursor) || models.length > 5000))
+    pages++;
+    if (cursor && (!result.data.length || pages >= 50 || typeof cursor !== 'string' || seen.has(cursor) || models.length > 5000))
       throw Error("Invalid model catalog pagination");
     if (cursor) seen.add(cursor);
   } while (cursor);

@@ -48,6 +48,13 @@ const { readCatalog } = require("../runtime/model-catalog.cjs");
     readCatalog({ request: async () => ({ data: [], nextCursor: "loop" }) }),
     /pagination/,
   );
+  let pages = 0;
+  await assert.rejects(readCatalog({request: async () => ({data: [], nextCursor: 'empty-' + ++pages})}), /pagination/);
+  assert.equal(pages, 1);
+  pages = 0;
+  await assert.rejects(readCatalog({request: async () => ({data: [{model: 'fixture'}], nextCursor: 'page-' + ++pages})}), /pagination/);
+  assert.equal(pages, 50);
+  assert.deepEqual(await readCatalog({request: async () => ({data: [], nextCursor: null})}), []);
   console.log(
     "PASS: current CLI catalog replaces stale models, complete pagination, account/client changes, capabilities and hidden-model filtering.",
   );

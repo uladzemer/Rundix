@@ -111,6 +111,8 @@ function notification(session, message) {
     session.compacting = false;
     session.turnId = null;
     if (p.turn.error) session.error = p.turn.error.message;
+  } else if (message.method === "thread/closed") {
+    session.loaded = false;
   } else if (message.method === "thread/tokenUsage/updated") {
     session.tokenUsage = p.tokenUsage;
     session.usageModel = session.turnModel || session.model;

@@ -5,7 +5,7 @@ exports.run=async()=>{
  const report={syntheticTransport:true,syntheticCompanion:true,inferencePerformed:false};
  const original={start:AppServer.prototype.start,request:AppServer.prototype.request,respond:AppServer.prototype.respond};
  let mcpEditor;
- let api,registration,descriptor,stage='initialization';let turns=0,threads=0,prepared=0,authenticated=0;const responses=[];
+ let api,registration,descriptor,stage='initialization';let turns=0,threads=0,prepared=0,authenticated=0,unsubscribed=0,resumed=0;const responses=[];
  const wait=async predicate=>{const until=Date.now()+15000;while(Date.now()<until){const value=await predicate();if(value)return value;await new Promise(r=>setTimeout(r,60));}throw Error('Synthetic scenario timeout');};
  try{
   await vscode.workspace.getConfiguration('rundix').update('cliPath',findCli(),vscode.ConfigurationTarget.Global);
@@ -20,6 +20,10 @@ exports.run=async()=>{
    if(method==='thread/start'){threads++;return {thread:{id:'synthetic-mcp-chat',cwd:p.cwd},model:'synthetic-model',reasoningEffort:'medium'};}
    if(method==='turn/start'){turns++;assert.equal(p.approvalPolicy,'on-request');assert.equal(p.outputSchema.type,'object');return {turn:{id:'synthetic-turn-'+turns}};}
    if(method==='turn/interrupt'){this.emit('notification',{method:'turn/completed',params:{threadId:p.threadId,turn:{id:p.turnId,status:'interrupted'}}});return {};}
+   // Finished MCP threads are unsubscribed; the next continuation resumes the same thread.
+   if(method==='thread/unsubscribe'){unsubscribed++;return {status:'unsubscribed'};}
+   if(method==='thread/resume'){resumed++;return {thread:{id:p.threadId,cwd:vscode.workspace.workspaceFolders[0].uri.fsPath},model:'synthetic-model',reasoningEffort:'medium'};}
+   if(method==='thread/turns/list' || method==='thread/items/list')return {data:[]};
    return {};
   };
   api=await vscode.extensions.getExtension('local-rundix-tools.rundix').activate();
@@ -51,7 +55,7 @@ exports.run=async()=>{
   const completed=await wait(async()=>{const t=await request(descriptor,'get_task',{taskId:first.taskId});return t.state==='completed'?t:null;});assert.equal(completed.report.result,'Synthetic success');
   assert.equal(api.mcp.panelSnapshot().tasks.find(task=>task.taskId===first.taskId).report.result,'Synthetic success');
   await api.mcp.panelAction({action:'continue',requestId:'synthetic-follow',taskId:first.taskId,clarification:'Synthetic follow-up'});
-  await wait(()=>turns===2);assert.equal(threads,1);assert.equal(s.id,completed.chatId);assert.equal(prepared,2);
+  await wait(()=>turns===2);assert.equal(threads,1);assert.equal(s.id,completed.chatId);assert.equal(prepared,2);assert.equal(unsubscribed,1,'The finished task thread was released');assert.ok(resumed>=1,'The continuation resumed the released thread');
   await api.mcp.panelAction({action:'cancel',requestId:'synthetic-stop',taskId:first.taskId});
   await wait(async()=> (await request(descriptor,'get_task',{taskId:first.taskId})).state==='cancelled');
   await api.mcp.stop();

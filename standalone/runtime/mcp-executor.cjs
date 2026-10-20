@@ -27,7 +27,7 @@ function taskTitle(description) {
   const points=Array.from(line), short=points.length>60?points.slice(0,59).join('').trimEnd()+'…':line;
   return short?'MCP · '+short:'MCP task';
 }
-function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,accessMode=()=>'workspace',retainTurn=()=>{},sent=()=>{}}) {
+function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,client=()=>null,releases=new Map(),accessMode=()=>'workspace',retainTurn=()=>{},sent=()=>{}}) {
   const turnOptions=task=>({includeIde:false,taskId:task.taskId,projectDirectory:task.projectDirectory,requiredConnection:task.connection,outputSchema:reportSchema,
     ...(task.model?{modelSelection:{model:task.model,effort:task.effort,fast:false}}:task.effort?{modelSelection:{effort:task.effort}}:{})});
   // Only questions from the task's current run count; older unanswered quizzes in the chat are history.
@@ -57,6 +57,24 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       if(task && (task.connection.id!==selected.id || task.connection.owner!==selected.owner || task.connection.revision!==selected.revision))throw Error('The task belongs to a different connection selection. Restore that connection before continuing.');
     },
     chatId:task=>sessions.get(task.sessionKey)?.id || task.chatId,
+    release(task) {
+      adapter.assertConnection(task);
+      const id=adapter.chatId(task);
+      if(!id)return;
+      if(releases.has(id))return releases.get(id);
+      const matching=[...sessions.values()].filter(s=>s.id===id);
+      if(matching.some(s=>s.busy || s.sendingTask || s.loading || s.compacting || s.followUpSending || s.asyncQuestionSending || s.modeChange) || adapter.pending(task).length)return;
+      const server=client();
+      if(!server)return;
+      // Visible tabs render cached items. Keep them intact; the next use resumes before sending.
+      // Mark unloaded even on failure: a timeout may have hidden a successful unsubscribe.
+      for(const s of matching)s.loaded=false;
+      const release=Promise.resolve().then(()=>server.request('thread/unsubscribe',{threadId:id})).finally(()=>{
+        if(releases.get(id)===release)releases.delete(id);
+      });
+      releases.set(id,release);
+      return release;
+    },
     pending:task=>{
       // A closed task chat is read from its saved record instead of being reopened.
       const s=sessions.get(task.sessionKey) || (task.awaitingAsync?store.session(task.sessionKey):null),id=s?.id || task.chatId;
@@ -109,7 +127,8 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       if(canonical(s.cwd)!==task.projectDirectory)throw Error('Chat project directory changed.');
       task.needsReconcile=false;
       if(s.busy)retainTurn(s,task);
-      if(s.sendingTask)return {done:false,chatId:s.id,progress:'Preparing task'};
+      // Let transient chat operations finish before the terminal transition's one cleanup attempt.
+      if(s.sendingTask || s.modeChange || s.compacting || s.followUpSending || s.asyncQuestionSending)return {done:false,chatId:s.id,progress:'Preparing task'};
       if(!s.id)return {done:true,failed:true,cancelled:!!task.cancelRequested,report:report(s,task)};
       const hasAsync=asyncPending(s,task).length>0;
       const awaitingAsync=hasAsync && !task.cancelRequested && !s.error && (s.busy || s.lastTurnStatus==='completed');

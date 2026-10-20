@@ -38,6 +38,11 @@ class McpTasks {
     this.store.write('mcp-task', task.taskId, task);
     for (const waiter of this.waiters) waiter.check();
   }
+  release(task) {
+    directories.release(this.directoryStore,task.projectDirectory,task.taskId);
+    // Best-effort cleanup must never change the durable task outcome, even on synchronous failure.
+    try { void Promise.resolve(this.adapter.release?.(task)).catch(()=>{}); } catch {}
+  }
   limit() { const value = Number(this.maxParallel()); return Number.isInteger(value) && value >= 1 ? Math.min(value, MAX_PARALLEL) : 1; }
   get(id) { const task = this.tasks.get(id); if (!task) throw fail('unknown_task', 'Unknown taskId'); return task; }
   view(task, brief = false) {
@@ -177,7 +182,7 @@ class McpTasks {
         task.continuations=[];
         if (task.state === 'queued' && !task.recoveryRequired) {
           task.state='cancelled'; task.progress='Cancelled before execution';
-          directories.release(this.directoryStore,task.projectDirectory,task.taskId);
+          this.release(task);
         } else { task.state='running';task.progress='Cancellation requested'; }
       }
       task.operations.push(op); this.save(task);
@@ -221,7 +226,7 @@ class McpTasks {
     }
     if (task.cancelRequested) {
       task.state='cancelled'; task.progress='Cancellation confirmed';
-      directories.release(this.directoryStore,task.projectDirectory,task.taskId); this.save(task); return 'handled';
+      this.release(task); this.save(task); return 'handled';
     }
     try { directories.reserve(this.directoryStore,task.projectDirectory,task.taskId); }
     catch (error) { return this.block(task, /reserved/.test(error.message) ? 'Waiting: project directory is used by another MCP task or chat' : 'Waiting: project directory is unavailable'); }
@@ -245,7 +250,7 @@ class McpTasks {
               task.state=status.cancelled?'cancelled':status.failed?'error':'completed';
               task.progress='Turn finished'; task.report=status.report; task.recoveryRequired=false;
               if(task.state==='completed' && task.continuations?.length){task.nextInput=task.continuations.shift();task.state='queued';task.progress='Continuation queued';}
-              else directories.release(this.directoryStore,task.projectDirectory,task.taskId);
+              else this.release(task);
             } else { task.state=status.pending?'waiting_approval':'running'; task.progress=status.progress || task.progress; }
           });
         }
@@ -293,7 +298,7 @@ class McpTasks {
     } catch (error) {
       if(task.cancelRequested && (task.awaitingPreparation || error?.retryable)){
         task.state='cancelled';task.recoveryRequired=false;task.progress='Cancelled before model execution';
-        directories.release(this.directoryStore,task.projectDirectory,task.taskId);this.save(task);return;
+        this.release(task);this.save(task);return;
       }
       // Nothing was sent (another turn holds the connection or credentials): wait and start again.
       if(error?.retryable && !task.cancelRequested){

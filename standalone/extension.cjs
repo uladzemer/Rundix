@@ -150,6 +150,7 @@ function activate(context) {
     }),
   );
   const pendingRequests = new Map();
+  const threadReleases = new Map();
   let mcpTasks=null, mcpBridge=null, mcpLease=null, mcpStarting=null, mcpLauncher=null;
   const mcpViews=new Map();
   let mcpEditor=null, mcpPanelBusy=false;
@@ -264,6 +265,7 @@ function activate(context) {
         mcpTasks=new McpTasks({store:new SessionStore(path.join(root,'tasks')),directoryStore:store,
           maxParallel:()=>vscode.workspace.getConfiguration('rundix').inspect('mcpMaxParallelTasks')?.globalValue ?? 3,
           adapter:mcpExecutor({connections,sessions,store,create,send,resume,handle,pending:pendingRequests,save,alive:()=>!disposed && !!mcpBridge,
+            releases:threadReleases,client:()=>{if(!activeConnection || !server)return null;connections.assertCurrent(activeConnection);return server;},
             // Only the user's own settings count: a repository's workspace settings must not grant MCP full access.
             accessMode:()=>vscode.workspace.getConfiguration('rundix').inspect('mcpAccessMode')?.globalValue || 'workspace',
             async sent(s,text){
@@ -545,7 +547,9 @@ function activate(context) {
         cwd: cwd() ? context.globalStorageUri.fsPath : undefined,
         configArgs:['-c','features.default_mode_request_user_input=true'],
       });
+      const notificationServer=server;
       server.on("notification", (message) => {
+        if(server!==notificationServer)return;
         if (message.method === "account/rateLimits/updated") {
           const update = require("./ui/limits.js").normalize(message.params);
           if (update.length) {
@@ -1230,6 +1234,8 @@ function activate(context) {
     }
   }
   async function resumeThread(s, id) {
+    // Serialize reloads with best-effort MCP cleanup, including a tab reopened while it is in flight.
+    await threadReleases.get(id)?.catch(()=>{});
     await connect();
     if (s.id === id && s.loaded) return;
     const existing = [...sessions.values()].find(

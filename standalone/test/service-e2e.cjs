@@ -102,7 +102,7 @@ require(${JSON.stringify(reg.entryPath)}).runService({root,hostOptions:data.host
       if (current.state === 'alive' && current.processStart === owner.processStart) {process.kill(owner.pid);await eventually(async () => (await processIdentityAsync(owner.pid)).state === 'dead');}
     }
     assert.equal(path.dirname(root),os.tmpdir());assert(path.basename(root).startsWith('rundix-e2e-synthetic-'));
-    fs.rmSync(root,{recursive:true,force:true});
+    fs.rmSync(root,{recursive:true,force:true,maxRetries:10,retryDelay:50});
   }
 }
 main().catch(error => {console.error(error);process.exitCode=1;});

@@ -16,7 +16,7 @@ const {plainSettings}=require('./service-settings.cjs');
 function boundedLogger(root) {
   const directory = path.join(root, 'diagnostics'); fs.mkdirSync(directory, {recursive:true, mode:0o700});
   const file = index => path.join(directory, 'service-' + index + '.log');
-  const codes = new Set(['host_error', 'service_started', 'service_stopped', 'idle_exit_failed', 'provider_unavailable','archive_record_corrupt','archive_index_corrupt','archive_index_unavailable']);
+  const codes = new Set(['host_error', 'service_started', 'service_stopped', 'idle_exit_failed', 'provider_unavailable','archive_record_corrupt','archive_record_unavailable','archive_index_corrupt','archive_index_unavailable']);
   return input => {
     const code = codes.has(input?.code) ? input.code : 'host_error';
     try {

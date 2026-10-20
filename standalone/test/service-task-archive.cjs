@@ -44,6 +44,18 @@ async function main(){
   const restarted=new(require('../runtime/service-task-archive.cjs').TaskArchive)(store);assert.equal(restarted.page(space,{limit:3}).total,126,'Durable index survives restart');
   const logs=[];restarted.log=value=>logs.push(value);fs.writeFileSync(restarted.store.file('mcp-task','synthetic-page-124'),'{');
   const safe=restarted.page(space,{limit:3});assert.equal(safe.tasks.length,3);assert.equal(safe.total,125);assert(!safe.tasks.some(row=>row.taskId==='synthetic-page-124'));assert.deepEqual(logs,[{code:'archive_record_corrupt'}]);
+  const retainedFile=restarted.store.file('mcp-task','synthetic-page-123');
+  for(const code of ['EBUSY','EPERM']){
+    const stat=fs.statSync;try{fs.statSync=function(file,...args){if(file===retainedFile)throw Object.assign(Error('Synthetic archive temporarily unavailable'),{code});return stat.call(this,file,...args);};
+      const transient=restarted.page(space,{limit:3});assert.equal(transient.total,125);assert(transient.tasks.some(row=>row.taskId==='synthetic-page-123'));assert(restarted.index.has('synthetic-page-123'),'Transient stat failure retains index row');
+    }finally{fs.statSync=stat;}
+  }
+  const changedArchive=JSON.parse(fs.readFileSync(retainedFile,'utf8'));changedArchive.progress='Synthetic updated archive progress';fs.writeFileSync(retainedFile,JSON.stringify(changedArchive));
+  const read=fs.readFileSync;try{fs.readFileSync=function(file,...args){if(file===retainedFile)throw Object.assign(Error('Synthetic transient archive read'),{code:'EBUSY'});return read.call(this,file,...args);};
+    assert.equal(restarted.page(space,{limit:3}).total,125);assert(restarted.index.has('synthetic-page-123'),'Transient read failure retains index row');
+  }finally{fs.readFileSync=read;}
+  assert.equal(restarted.page(space,{limit:3}).tasks.find(row=>row.taskId==='synthetic-page-123').progress,'Synthetic updated archive progress','Next page retries the retained record');
+  fs.unlinkSync(retainedFile);assert.equal(restarted.page(space,{limit:3}).total,124);assert(!restarted.index.has('synthetic-page-123'),'ENOENT removes a vanished archive row');
   const staleBlocked=[...tasks.tasks.values()].find(row=>row.space===space && row.state==='queued');assert(staleBlocked);
   staleBlocked.error='Synthetic old admission error';staleBlocked.blockedReason='legacy_owner_active';staleBlocked.blockedUntil=Date.now()+60000;
   const cancelledBlocked=tasks.call('cancel_task',{taskId:staleBlocked.taskId,requestId:'synthetic-cancel-old-block'});

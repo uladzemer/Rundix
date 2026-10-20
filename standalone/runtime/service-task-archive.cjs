@@ -43,7 +43,10 @@ class TaskArchive {
           const updated=this.entry(task);this.index.set(row.taskId,updated);Object.assign(row,updated);dirty=true;
         }
         tasks.push({...row.summary,archived:true});
-      }catch{this.index.delete(row.taskId);dirty=true;this.notice('archive_record_corrupt');}
+      }catch(error){
+        if(error.code==='ENOENT' || error.code==='storage_unavailable' || error instanceof SyntaxError){this.index.delete(row.taskId);dirty=true;this.notice('archive_record_corrupt');}
+        else{tasks.push({...row.summary,archived:true});this.notice('archive_record_unavailable');}
+      }
     }
     if(dirty){this.group();try{this.persist();}catch{this.notice('archive_index_unavailable');}}
     let total=(this.spaces.get(space) || []).length;for(const id of exclude)if(this.index.get(id)?.space===space)total--;

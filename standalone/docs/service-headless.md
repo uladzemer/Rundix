@@ -628,15 +628,20 @@ confirmed remaining findings after history/copy/cursor fixes.
 
 `service-migration.cjs` registers explicit legacy globalStorage roots, acquires
 `sessions-v1/lease-mcp-bridge.json` for the service lifetime, and imports only
-validated MCP task/session pairs. A live legacy executor or unresolved running
-turn blocks migration and new admissions. Manual sessions are never imported.
+validated MCP task/session pairs. A live legacy executor delays its own root;
+busy/corrupt/transient roots expose per-root status and retry with backoff while
+the service remains available. Vanished roots are removed from registration.
+Stale running tasks are imported as interrupted only after leases are acquired. Manual sessions are never imported.
 No imported queued input is executed.
 
 Each import copies into a private source-specific namespace, verifies content
 hashes and unchanged source membership, writes a verified receipt and source
-marker, then renames `mcp/tasks` to `mcp/backup-<sourceId>/tasks`. Atomic receipts
-and deterministic IDs allow restart after copy or marker publication. Conflicting
-source/backup/target data fails closed. Shutdown waits for an active copy before
+marker, then renames `mcp/tasks` to `mcp/backup-<sourceId>[-gN]/tasks`. Atomic
+receipts and immutable generation targets allow restart after copy, marker or
+rename. Recreated `mcp/tasks` becomes a new generation; task/transcript content
+digests prevent duplicate display or rollback to previously imported content.
+Changing sources are re-copied after backoff; corrupt committed data remains
+read-only and exposes needs_repair without stopping other roots. Shutdown waits for an active copy before
 releasing the legacy lease. Completed imports validate their receipt/backup
 without re-inferring a project that may have disappeared.
 
@@ -649,7 +654,7 @@ the cutover receipt and never derives task ownership from that argument.
 
 `test/service-migration.cjs` uses synthetic temporary roots and an actual child
 process crash during copy. It checks restart/idempotency, marker recovery, source
-mutation conflicts, simultaneous registrations, live legacy/thread leases,
+source re-copy, additive generations, simultaneous registrations, live legacy/thread leases,
 shutdown ordering, backup, A/B visibility and no imported execution. Independent
 read-only review closed the concurrency and source-membership findings; the
 second round reported no new confirmed findings.
@@ -658,3 +663,14 @@ The default `npm test` includes migration crash/recovery and corruption checks.
 Browser acceptance includes imported read-only panel/chat views in RU/EN, both
 themes and narrow/wide sizes. It asserts disabled mutations, accessible history,
 preserved drafts and no horizontal overflow.
+
+Correctness follow-up: imported sessions are not retained in memory. Metadata
+contains only bounded display fields, content hashes and a private file pointer;
+chat.open verifies one bounded stored record on demand and returns bounded
+transcript items. Window snapshots use a durable archive summary index/counts
+and a bounded latest page. Corrupt display records log archive_record_corrupt
+and are skipped; damaged requestId records still fail closed for mutations.
+Admission gate failures are retryable queued tasks with blockedUntil and a
+visible fixed blockedReason. Stop MCP persists across window reactivation and
+is cleared only by explicit Start MCP. Tests exercise actual extension
+reactivation with the same globalState.

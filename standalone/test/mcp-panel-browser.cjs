@@ -81,6 +81,12 @@ if(!chrome)throw Error('Set CHROME_PATH.');
    await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'mcpResult',ok:true,action:'openChat',requestId:window.calls.at(-1).requestId}})));
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    await page.screenshot({path:path.join(__dirname,`../.verification/mcp-legacy-${language}-${theme}-${width}.png`),fullPage:true});
+   for(const legacyState of ['busy','retry_later','needs_repair']){
+    await page.evaluate(legacyState=>{window.fixture.legacyStatus={state:legacyState};window.update();},legacyState);
+    assert.match(await page.$eval('.legacy-status',node=>node.textContent),language==='ru'?/Импорт старой истории/:/Legacy history import/);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    await page.screenshot({path:path.join(__dirname,`../.verification/mcp-legacy-${legacyState}-${language}-${theme}-${width}.png`),fullPage:true});
+   }
    assert.deepEqual(errors,[]);await page.close();
   }
   console.log('MCP panel browser: RU/EN, dark/light, narrow/wide, safe text, draft/focus retention and action results passed.');

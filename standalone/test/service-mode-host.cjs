@@ -66,7 +66,7 @@ exports.run = async () => {
     await api.mcp.start();assert.equal(activationContext.globalState.get('mcpServiceStopped'),false);assert.equal(api.mcp.panelSnapshot().bridgeRunning,true);
     await api.mcp.stop();report.stopPersistsAcrossReload=true;
     report.globalOnly = true; report.noWindowExecutor = true; report.serviceConfiguration = true; report.passed = true;
-  } catch (error) {report.error = 'synthetic_service_panel_check_failed';report.passed = false;}
+  } catch (error) {report.error = String(error?.stack || error);report.passed = false;}
   finally {
     await api?.mcp.stop();peer?.close();await service?.shutdown();await data.close();
     launcher.installLauncherAsync = original;entry.activate=activate;fs.writeFileSync(path.join(__dirname,'../.verification/service-mode-host.json'), JSON.stringify(report,null,2));

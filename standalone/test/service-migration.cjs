@@ -158,6 +158,14 @@ async function main(){
     const additiveSessions=new SessionStore(path.join(additiveSource,'sessions-v1')),transcript=additiveSessions.session('synthetic-session-synthetic-repeat');
     transcript.items.push({id:'synthetic-transcript-update',type:'agentMessage',text:'Synthetic transcript-only update'});additiveSessions.saveSession(transcript);
     await additive.sync();assert((await additive.chat(sa,additive.visible(sa,[canonical(a)]).find(row=>row.task.taskId==='synthetic-repeat').taskId,[canonical(a)],'synthetic-generation')).items.some(item=>item.text==='Synthetic transcript-only update'));await additive.close();
+    seed(additiveSource,'synthetic-service-reenabled',a);
+    const reenabledData=require('./service-fixture.cjs').fixture(additiveRoot);let reenabledService,reenabledClient;
+    try{
+      reenabledService=await require('../runtime/service-main.cjs').runService({root:additiveRoot,hostOptions:reenabledData.hostOptions});
+      reenabledClient=new ServiceWindowClient({root:additiveRoot,legacyRoot:additiveSource,trusted:true,workspaceFolders:[pathToFileURL(a).href]});await reenabledClient.start();
+      assert.equal(reenabledClient.legacyStatus.state,'ready');assert.equal(reenabledClient.snapshots.get(sa).tasks.length,3,'Re-enabled service imports recreated tasks and retains earlier generations');
+      assert(reenabledClient.snapshots.get(sa).tasks.every(task=>task.readOnly));assert.equal(reenabledData.children.length,0);
+    }finally{reenabledClient?.close();await reenabledService?.shutdown();await reenabledData.close();}
     const recopyRoot=make('service-recopy'),recopySource=make('legacy-recopy');seed(recopySource,'synthetic-changing',a);registerRoot(recopyRoot,recopySource);
     const recopyFile=path.join(recopySource,'mcp','tasks','mcp-task-synthetic-changing.json'),unboundedMetadata=JSON.parse(fs.readFileSync(recopyFile,'utf8'));
     unboundedMetadata.createdAt={synthetic:'x'.repeat(1024*1024)};unboundedMetadata.closedAt='x'.repeat(1024*1024);fs.writeFileSync(recopyFile,JSON.stringify(unboundedMetadata));
@@ -176,6 +184,11 @@ async function main(){
     finally{fs.promises.lstat=lstat;}
     assert(injected);assert.equal(probes.visible(sb,[canonical(b)]).length,2,'An inaccessible ready-root probe cannot starve another generation');
     await probes.close();
+    const registryRoot=make('service-registry'),registrySource=make('legacy-registry');seed(registrySource,'synthetic-registry',a);
+    fs.writeFileSync(path.join(registryRoot,'legacy-roots.json'),'{');const registry=createMigration({root:registryRoot});await registry.sync();await registry.register(registrySource);
+    assert.equal(registry.status(canonical(registrySource)).state,'needs_repair');
+    fs.writeFileSync(path.join(registryRoot,'legacy-roots.json'),JSON.stringify({schemaVersion:1,roots:[]}));await registry.sync({force:true});
+    assert.equal(registry.status(canonical(registrySource)).state,'ready');assert.equal(registry.visible(sa,[canonical(a)]).length,1,'Pending first registration retries after registry repair');await registry.close();
     console.log('PASS legacy migration: real mid-copy process crash, idempotent verify/marker/backup, live bridge/turn gates, lifetime lease, read-only inferred/unknown spaces, A/B isolation and no queued execution.');
   }finally{await migration?.close();clients.forEach(client=>client.close());await service?.shutdown();assert.equal(path.dirname(base),os.tmpdir());assert(path.basename(base).startsWith('rundix-migration-synthetic-'));fs.rmSync(base,{recursive:true,force:true});}
 }

@@ -2,7 +2,8 @@ const {itemText} = require('./session.cjs');
 const {canonical} = require('./task-directory.cjs');
 const reportSchema={type:'object',properties:{result:{type:'string'},changedFiles:{type:'array',items:{type:'string'}},checks:{type:'array',items:{type:'string'}},remainingIssues:{type:'array',items:{type:'string'}}},required:['result','changedFiles','checks','remainingIssues'],additionalProperties:false};
 function report(session, task) {
-  const items=session.items.filter(item=>!task.baselineItems?.includes(item.id));
+  const attributed=task.turnId && session.items.some(item=>item.turnId);
+  const items=session.items.filter(item=>attributed?item.turnId===task.turnId:!task.baselineItems?.includes(item.id));
   const result=items.filter(i=>i.type==='agentMessage').map(itemText).join('\n').slice(-60000);
   for(const item of items.filter(i=>i.type==='agentMessage').slice().reverse()) {
     try {
@@ -12,7 +13,8 @@ function report(session, task) {
   }
   return {result,changedFiles:[...new Set(items.filter(i=>i.type==='fileChange').flatMap(i=>(i.changes || []).map(c=>c.path)))],
     checks:items.filter(i=>i.type==='commandExecution').map(i=>({command:i.command,exitCode:i.exitCode??null,status:i.status})),
-    remainingIssues:[...(session.error?[session.error]:[]),'Structured report unavailable; review the result and command evidence.'],source:'transcript_evidence'};
+    remainingIssues:[...(session.error?[session.error]:[]),'Structured report unavailable; review the result and command evidence.',
+      ...(session.cursor?['Transcript evidence is incomplete: older session items were not loaded; commands and file changes may be missing.']:[])],source:'transcript_evidence'};
 }
 function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,retainTurn=()=>{},sent=()=>{}}) {
   function session(task) {
@@ -39,12 +41,18 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       if(s.id && !s.loaded)await resume(s,s.id);
       if(canonical(s.cwd)!==task.projectDirectory)throw Error('Chat project directory changed.');
       task.baselineItems=s.items.map(item=>item.id);
+      delete task.turnId;
       checkpoint();
       s.draft=input;await save(s);
       if(task.cancelRequested){task.awaitingPreparation=true;throw Error('Cancelled before sending.');}
       const options={includeIde:false,taskId:task.taskId,projectDirectory:task.projectDirectory,requiredConnection:task.connection,outputSchema:reportSchema,
-        ...(task.model?{modelSelection:{model:task.model,effort:task.effort,fast:false}}:{})};
-      let result=await send(s,input,[],options);
+        ...(task.model?{modelSelection:{model:task.model,effort:task.effort,fast:false}}:task.effort?{modelSelection:{effort:task.effort}}:{})};
+      const sendTurn=async()=>{
+        const result=await send(s,input,[],options);
+        if(result?.turnId){task.turnId=result.turnId;checkpoint();}
+        return result;
+      };
+      let result=await sendTurn();
       if(task.cancelRequested && !result?.waitUntil)await handle(s,{action:'stop'});
       while(result?.waitUntil) {
         task.awaitingPreparation=true;task.progress='Waiting for companion quota reset';checkpoint();
@@ -54,7 +62,7 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
         if(!retry || task.cancelRequested)throw Error('Waiting cancelled.');
         adapter.assertConnection(task);
         task.awaitingPreparation=false;checkpoint();
-        result=await send(s,input,[],options);
+        result=await sendTurn();
         if(task.cancelRequested && !result?.waitUntil)await handle(s,{action:'stop'});
       }
       if(s.draft===input)s.draft='';

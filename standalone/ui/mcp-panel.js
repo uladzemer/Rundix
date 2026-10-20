@@ -33,7 +33,7 @@
       const labels=configurationText[state.language==='ru'?'ru':'en'],section=element('section',undefined,'claude-configuration');
       section.append(element('h2',labels.title),element('p',labels.hint,'muted'),element('pre',JSON.stringify(configuration,null,2),'configuration-json'),button(copied?labels.copied:labels.copy,'copyConfiguration',{},!state.bridgeRunning));root.append(section);
     }
-    if(error || pending){const alert=element('p',pending?t('working'):t('failed'),'alert');alert.setAttribute('role','status');root.append(alert);}
+    if(error || pending){const alert=element('p',pending?t('working'):error==='failed'?t('failed'):t('failed')+' '+error,'alert');alert.setAttribute('role','status');root.append(alert);}
     const tasks=state.tasks || [];
     if(!tasks.length){root.append(element('p',t('empty'),'empty'));return;}
     if(!tasks.some(task=>task.taskId===selected)){selected=tasks[0].taskId;persist();}
@@ -76,7 +76,7 @@
     if(message?.type==='mcpState'){state=message.data;render();}
     if(message?.type==='mcpResult'){
       if(pending && message.requestId!==requestId)return;
-      pending=false;error=message.ok?'':'failed';
+      pending=false;error=message.ok?'':typeof message.error==='string' && message.error?message.error.slice(0,300):'failed';
       if(message.ok && message.configuration){configuration=message.configuration;copied=message.action==='copyConfiguration';}
       if(message.ok && message.action==='continue' && submission?.taskId===message.taskId && submission.version===(versions[message.taskId] || 0)){delete drafts[message.taskId];persist();}
       submission=null;requestId=null;

@@ -4,6 +4,11 @@ Install and update Rundix through [Microsoft Marketplace](https://marketplace.vi
 
 ## Unreleased
 
+- MCP: `wait_task` blocks until a task needs attention, and the launcher's `--wait` mode lets Claude wait in the background and be notified on completion, so clients no longer poll `get_task`. Tasks carry a `revision`.
+- MCP: Claude's configuration now points at a stable launcher copy in extension storage that survives Rundix updates; copy the configuration once more after updating from 0.2.2.
+- MCP: errors carry a code and the next step (for example how to start the bridge); `list_tasks` returns compact summaries with state/directory filters and a cursor; `effort` is honoured without `model`.
+- MCP reliability: replayed cancellations and failed approvals can no longer act on a later turn; a busy directory no longer stalls tasks for other directories; a stopped bridge never starts a pending turn; reports use only the task's own turn and flag incomplete evidence; directory leases cover the enclosing git worktree and are released even if the directory was deleted. `recoveryRequired` is reported only when no turn is executing.
+
 - Add a visible MCP button to the chat toolbar. It opens the MCP controls in an editor tab, with inline Claude configuration and a copy button, without requiring the command palette.
 - Add a bilingual MCP task panel with pool connection, task reports, chat navigation, continuation and cancellation. Explicit pool connection discovers installed companions and reuses the selected working provider.
 - Add an opt-in local MCP bridge for Claude Code: asynchronous tasks, durable chat bindings and request deduplication, same-chat continuations, approval forwarding and cancellation.

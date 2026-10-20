@@ -2,7 +2,7 @@
 
 ## Architecture and prerequisites
 
-Claude launches `runtime/mcp-server.cjs` with Node.js (18 or newer). This is a stdio MCP server supporting protocol versions 2025-11-25, 2025-06-18 and 2024-11-05. It forwards bounded local requests to the running extension. It does not launch a second Codex executor.
+Claude launches a stable copy of `runtime/mcp-server.cjs` with Node.js (18 or newer). When the bridge starts, Rundix copies the server into `<extension-storage>/mcp/bin/`, so Claude's configuration keeps working after Rundix updates; configurations created by version 0.2.2 or older point into the versioned extension folder and must be copied again once. This is a stdio MCP server supporting protocol versions 2025-11-25, 2025-06-18 and 2024-11-05. It forwards bounded local requests to the running extension. It does not launch a second Codex executor.
 
 **VS Code with Rundix must remain open.** On a remote VS Code workspace, Node and Claude must run on the same host as the workspace Extension Host. A closed VS Code cannot execute tasks. A lost MCP process does not stop tasks already accepted by the extension.
 
@@ -15,7 +15,7 @@ Select and configure your installed companion connection in Rundix first. The pu
 3. The configuration appears directly in that tab. Click **Copy configuration** to copy the `mcpServers` JSON into your Claude MCP configuration. If `rundix` is already registered in Claude Code, copying it again is unnecessary. For CLI setup, the same server script and bridge descriptor paths can be used in:
 
    ```powershell
-   claude mcp add --transport stdio --scope user rundix -- node "<extension-directory>/runtime/mcp-server.cjs" --bridge "<extension-storage>/mcp/bridge.json"
+   claude mcp add --transport stdio --scope user rundix -- node "<extension-storage>/mcp/bin/mcp-server.cjs" --bridge "<extension-storage>/mcp/bridge.json"
    ```
 
 4. Check the server with `claude mcp list` and `/mcp` in Claude Code. Restart Claude if necessary.
@@ -43,12 +43,27 @@ Every mutation requires a caller-generated, globally unique `requestId` (for exa
 | Tool | Arguments | Result |
 | --- | --- | --- |
 | `submit_task` | `requestId`, `description`, absolute `projectDirectory`, `acceptanceCriteria`; optional `model`, `effort` | A persisted `taskId` and initial snapshot, before model execution |
-| `get_task` | `taskId` | State, progress, `chatId`, canonical directory, timestamps, pending requests, report, recovery flag |
+| `get_task` | `taskId` | State, progress, `chatId`, canonical directory, timestamps, `revision`, pending requests, report, recovery flag |
+| `wait_task` | `taskId`; optional `waitSeconds` (1–1500, default 600), `afterRevision` | Blocks until the task is settled (`completed`, `error`, `cancelled`, `waiting_approval`) or the time elapses; the `get_task` snapshot plus `timedOut` |
 | `continue_task` | `requestId`, `taskId`, `clarification` (queued during an active turn); or `approval` for a pending request | Same task and same chat; a queued/new turn or approval response |
-| `cancel_task` | `requestId`, `taskId` | Cancellation requested; poll until confirmed |
-| `list_tasks` | optional `limit` (1–100, default 25) | Most recently updated snapshots |
+| `cancel_task` | `requestId`, `taskId` | Cancellation requested; wait until confirmed |
+| `list_tasks` | optional `limit` (1–100, default 25), `state`, `projectDirectory`, `cursor` | `{tasks, nextCursor}`: compact summaries without reports, newest created first |
 
-States: `queued`, `running`, `waiting_approval`, `completed`, `error`, `cancelled`. Progress is descriptive, not an invented percentage. While the companion waits for quota reset, progress identifies the wait and cancellation remains available. Tasks execute serially within the bridge. Per-directory leases also prevent simultaneous turns from ordinary Rundix chats and other windows using the same storage. Real paths resolve symlink aliases; Windows paths compare case insensitively. Separate worktrees are separate directories. This does not lock unrelated applications such as Claude's own shell: do not let them edit the same project concurrently.
+`revision` increases whenever the stored task changes. `wait_task` returns immediately for a settled task; pass `afterRevision` from an earlier snapshot to wait for a newer settled state. A queued task blocked by a busy directory or connection stays `queued` with the reason in `progress`, so `wait_task` returns `timedOut:true` until it can run; tasks for other directories keep running.
+
+Errors are returned as `<code>: <message>` with an actionable message, for example `bridge_unavailable` (start the bridge in VS Code, then retry with the same `requestId`), `unknown_task`, `invalid_argument`, `invalid_directory`, `request_conflict`, `connection_unavailable`, `approval_not_pending`, `approval_rejected`, `workspace_untrusted`, `limit`. Unexpected failures are reported only as `rejected`.
+
+### Waiting in the background
+
+To keep working while Codex runs, start the launcher as a background shell command; it exits when the task needs attention:
+
+```powershell
+node "<extension-storage>/mcp/bin/mcp-server.cjs" --bridge "<extension-storage>/mcp/bridge.json" --wait <taskId> --timeout 3600
+```
+
+It prints the final snapshot as one JSON line. Exit codes: `0` completed, `2` waiting for approval, `3` error or cancelled, `4` timed out, `1` rejected request. While the bridge is briefly unavailable (for example during a VS Code window reload) it retries every five seconds until the timeout. In Claude Code, run it with background execution so the session is notified when it exits.
+
+States: `queued`, `running`, `waiting_approval`, `completed`, `error`, `cancelled`. Progress is descriptive, not an invented percentage. While the companion waits for quota reset, progress identifies the wait and cancellation remains available. Tasks execute serially within the bridge. Per-directory leases also prevent simultaneous turns from ordinary Rundix chats and other windows using the same storage. Real paths resolve symlink aliases; Windows paths compare case insensitively. A lease covers the whole enclosing git worktree, so a chat in a subfolder and a task in the repository root exclude each other; a separate git worktree (its own `.git` file) is independent, even when it is nested inside the repository. Outside git, only the exact directory is leased, so avoid running work in a folder and its subfolder at the same time. A task whose directory was deleted while running needs manual recovery; its lease is released once it is resolved. This does not lock unrelated applications such as Claude's own shell: do not let them edit the same project concurrently.
 
 `pendingRequests` includes the original method, ID and requested operation. Obtain the user's decision in Claude before calling `continue_task` with `approval`. Example:
 
@@ -61,9 +76,9 @@ Use `decline` or `cancel` to refuse. Blocking questions use `approval.answers` m
 ## Scenario
 
 1. Submit `{"requestId":"synthetic-submit-1","description":"Create a greeting function","projectDirectory":"<absolute-project-directory>","acceptanceCriteria":"The function has a passing unit test"}`.
-2. Poll `get_task` using the returned `taskId`. Rundix creates a visible chat and sends through the selected companion. Resolve pending requests explicitly.
+2. Call `wait_task` with the returned `taskId` (or start the background waiter). Rundix creates a visible chat and sends through the selected companion. Resolve pending requests explicitly.
 3. On `completed`, inspect `report`: `result`, `changedFiles`, `checks`, `remainingIssues`. `source:model_report` identifies model-reported data; `source:transcript_evidence` identifies a fallback built from observed file-change and command items. A successful turn is not a guarantee that all acceptance criteria passed: inspect the checks and remaining issues.
-4. Call `continue_task` with a new `requestId` and `clarification:"Add a second greeting test"`. Poll again and verify `chatId` remains unchanged.
+4. Call `continue_task` with a new `requestId` and `clarification:"Add a second greeting test"`. Wait again and verify `chatId` remains unchanged.
 
 Task bindings, inputs, idempotency records and reports are persisted locally, never logged. Up to 1000 tasks and 1000 mutation records per task are retained; submissions fail rather than evicting deduplication keys. Archive storage only while the bridge is stopped, after resolving outstanding work.
 

@@ -150,7 +150,7 @@ function activate(context) {
     }),
   );
   const pendingRequests = new Map();
-  let mcpTasks=null, mcpBridge=null, mcpLease=null, mcpStarting=null;
+  let mcpTasks=null, mcpBridge=null, mcpLease=null, mcpStarting=null, mcpLauncher=null;
   const mcpViews=new Map();
   let mcpEditor=null, mcpPanelBusy=false;
   const mcpRecords=()=>mcpTasks?[...mcpTasks.tasks.values()]:mcpPanelState.readRecords(path.join(context.globalStorageUri.fsPath,'mcp','tasks'));
@@ -185,7 +185,7 @@ function activate(context) {
   }
   function mcpConfiguration() {
     if(!mcpBridge)throw Error('Start the MCP bridge first.');
-    return {mcpServers:{rundix:{command:'node',args:[path.join(context.extensionUri.fsPath,'runtime','mcp-server.cjs'),'--bridge',mcpBridge.descriptor]}}};
+    return {mcpServers:{rundix:{command:'node',args:[mcpLauncher,'--bridge',mcpBridge.descriptor]}}};
   }
   async function handleMcpPanel(message) {
     if(!message || typeof message.action!=='string')throw Error('Invalid MCP panel action.');
@@ -223,7 +223,8 @@ function activate(context) {
         if(mcpPanelBusy){await view.webview.postMessage({type:'mcpResult',ok:false,requestId:message?.requestId});return;}
         mcpPanelBusy=true;
         try{const result=await handleMcpPanel(message);await view.webview.postMessage({type:'mcpResult',ok:true,action:message.action,taskId:message.taskId,requestId:message.requestId,...result});}
-        catch{try{await view.webview.postMessage({type:'mcpResult',ok:false,requestId:message?.requestId});}catch{}}
+        catch(error){try{await view.webview.postMessage({type:'mcpResult',ok:false,requestId:message?.requestId,
+          ...(typeof error?.code==='string' && /^[a-z_]{1,40}$/.test(error.code) && typeof error.message==='string'?{error:error.message.slice(0,300)}:{})});}catch{}}
         finally{mcpPanelBusy=false;}
       });
       const visible=onVisible(()=>publishMcpPanel(true));
@@ -257,6 +258,9 @@ function activate(context) {
       try {
         const root=path.join(context.globalStorageUri.fsPath,'mcp');
         mcpBridgeTransport.privateDirectory(root);
+        // A locked launcher copy must not keep the bridge down; the packaged server still works until the next start.
+        try{mcpLauncher=mcpBridgeTransport.installLauncher(root,context.extension.packageJSON.version);}
+        catch{mcpLauncher=path.join(context.extensionUri.fsPath,'runtime','mcp-server.cjs');}
         mcpTasks=new McpTasks({store:new SessionStore(path.join(root,'tasks')),directoryStore:store,
           adapter:mcpExecutor({connections,sessions,store,create,send,resume,handle,pending:pendingRequests,save,alive:()=>!disposed && !!mcpBridge,
             async sent(s,text){
@@ -271,7 +275,7 @@ function activate(context) {
               turnLeases.set(s.id,()=>{unlockSession();unlockDirectory();});
             }})});
         mcpBridge=await mcpBridgeTransport.serve({directory:root,call:(name,args)=>{
-          if(!vscode.workspace.isTrusted)throw Error('Workspace trust is required.');
+          if(!vscode.workspace.isTrusted)throw Object.assign(Error('Trust the VS Code workspace that runs the Rundix MCP bridge.'),{code:'workspace_untrusted'});
           return mcpTasks.call(name,args);
         }});
         mcpTasks.schedule();
@@ -1334,7 +1338,7 @@ function activate(context) {
       throw Error(date?locale.t('Лимиты аккаунта закончились. Дождитесь сброса: {0}. Запрос сохранён.',date):locale.t('Лимиты аккаунта закончились. Дождитесь сброса лимитов. Запрос сохранён.'));
     }
     updateDraftModel(s);
-    const selection=options.modelSelection || {model:s.model,effort:s.effort,fast:s.prefs.fast};
+    const selection={model:s.model,effort:s.effort,fast:s.prefs.fast,...options.modelSelection};
     if (s.id && !s.loaded) await resume(s, s.id);
     ensureDirectory();
     const selectedModel=catalog.find(model=>model.model===selection.model);
@@ -1418,6 +1422,7 @@ function activate(context) {
       if (s.busy) s.turnId = result.turn.id;
       if(s.busy && s.stopRequested)await server.request('turn/interrupt',{threadId:s.id,turnId:result.turn.id});
       const consumed=new Set(attached.map(file=>file.id));s.attachments=s.attachments.filter(file=>!consumed.has(file.id));
+      return {turnId:result.turn.id};
     } catch (error) {
       release();
       turnLeases.delete(s.id);

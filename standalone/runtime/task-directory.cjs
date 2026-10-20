@@ -8,26 +8,48 @@ function canonical(directory) {
   if (!fs.statSync(real).isDirectory()) throw Error('Project directory is unavailable.');
   return process.platform === 'win32' ? real.toLowerCase() : real;
 }
-function key(directory) { return createHash('sha256').update(canonical(directory)).digest('hex'); }
-function assertAvailable(store, directory, taskId) {
-  const id=key(directory), owner = store.read('task-directory', id);
+function key(directory) {
+  const real = canonical(directory);
+  for (let ancestor = real;; ancestor = path.dirname(ancestor)) {
+    try {
+      // A nested worktree's .git file establishes its own reservation boundary.
+      fs.lstatSync(path.join(ancestor, '.git'));
+      return createHash('sha256').update(ancestor).digest('hex');
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (path.dirname(ancestor) === ancestor) break;
+  }
+  return createHash('sha256').update(real).digest('hex');
+}
+function assertAvailable(store, id, taskId) {
+  const owner = store.read('task-directory', id);
   if(fs.existsSync(store.file('task-directory',id)) && (!owner || typeof owner.taskId!=='string'))throw Error('Project directory reservation is unreadable.');
   if (owner && owner.taskId !== taskId) throw Error('Project directory is reserved by another MCP task.');
 }
 function reserve(store, directory, taskId) {
   const id = key(directory), release = store.acquire('directory-' + id);
   try {
-    assertAvailable(store, directory, taskId);
+    assertAvailable(store, id, taskId);
     store.write('task-directory', id, {taskId});
   } finally { release(); }
 }
 function release(store, directory, taskId) {
-  const id = key(directory);
-  if (store.read('task-directory', id)?.taskId === taskId) fs.unlinkSync(store.file('task-directory', id));
+  if (typeof taskId !== 'string') return;
+  // The persisted filename already holds the reservation key. Search by owner,
+  // including legacy {taskId} records, without accessing the project directory.
+  for (const name of fs.readdirSync(store.directory)) {
+    const match = /^task-directory-([a-f0-9]{64})\.json$/.exec(name);
+    if (!match) continue;
+    // Another owner's record may be mid-rename on Windows; it is never ours to release.
+    let owner;
+    try { owner = store.read('task-directory', match[1]); } catch { continue; }
+    if (owner?.taskId !== taskId) continue;
+    try { fs.unlinkSync(store.file('task-directory', match[1])); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
 }
 function acquire(store, directory, taskId) {
-  const unlock = store.acquire('directory-' + key(directory));
-  try { assertAvailable(store, directory, taskId); return unlock; }
+  const id = key(directory), unlock = store.acquire('directory-' + id);
+  try { assertAvailable(store, id, taskId); return unlock; }
   catch (error) { unlock(); throw error; }
 }
 module.exports = {canonical, reserve, release, acquire};

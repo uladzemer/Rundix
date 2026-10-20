@@ -190,6 +190,11 @@ class ServiceAppServer extends EventEmitter {
     return {
       fence:structuredClone(fence), request, invalidated, current,
       get loggedIn() { return auth.loggedIn; },
+      // Internal evidence only; non-ready admission outcomes carry no revision.
+      get confirmedAccountRevision() {
+        return auth.loggedIn && !auth.loginPending
+          ? fence.binding.accountRevision + (auth.changedAccount ? 1 : 0) : null;
+      },
       complete:result => {
         if (!current() || !auth.loggedIn || result?.kind !== 'authenticated' || !sameFence(result.fence, fence) ||
             ![fence.binding.accountRevision, fence.binding.accountRevision + 1].includes(result.accountRevision) ||

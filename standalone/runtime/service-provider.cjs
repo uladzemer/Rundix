@@ -13,6 +13,16 @@ const identity = binding => binding && ({appServerId:binding.appServerId, appSer
 function unavailable(code, retryable = false, retryAfterMs = 0) {
   return {kind:'unavailable', code, retryable, retryAfterMs, messageKey:'provider.unavailable'};
 }
+function validUnavailable(result) {
+  return result.kind === 'unavailable' && UNAVAILABLE_CODES.includes(result.code) && typeof result.retryable === 'boolean' &&
+    Number.isFinite(result.retryAfterMs) && result.retryAfterMs >= 0 && typeof result.messageKey === 'string';
+}
+function validWait(result, waitId) {
+  return result.kind === 'waitUntil' && result.waitId === waitId &&
+    (result.resetAt === null || typeof result.resetAt === 'number' && Number.isFinite(result.resetAt)) &&
+    ['low_remaining', 'exhausted'].includes(result.reason);
+}
+const quotaCodes = new Set(['LIMITS_UNKNOWN', 'RESET_UNKNOWN', 'BUSY_ACTIVE']);
 function providerEnvironment(source) {
   return Object.fromEntries(Object.entries(source).filter(([key]) =>
     !/^(?:NODE_OPTIONS|NODE_PATH)$|^(?:OPENAI|CODEX|CHATGPT)_.*(?:AUTH|TOKEN|KEY|SECRET|PASSWORD)/i.test(key)));
@@ -166,15 +176,21 @@ class ServiceProvider extends EventEmitter {
         throw actionRequired(result.code);
       }
       if (parent.transaction?.loggedIn) {
-        if (!['authenticated', 'ready'].includes(result.kind)) throw actionRequired('PROVIDER_PROTOCOL_INVALID');
+        const scanned = method === 'prepareTurn' && (validWait(result, params.waitId) || validUnavailable(result));
+        if (!['authenticated', 'ready'].includes(result.kind) && !scanned) throw actionRequired('PROVIDER_PROTOCOL_INVALID');
+        // Candidate scanning may finish with no admission after a confirmed
+        // login. Preserve that outcome; never invent an accountRevision field
+        // on the wire. Action-required outcomes keep the proof closed.
+        if (scanned && result.kind === 'unavailable' && !quotaCodes.has(result.code)) return result;
+        const accountRevision = scanned ? parent.transaction.confirmedAccountRevision : result.accountRevision;
         const initial = parent.transaction.fence.binding.accountRevision;
-        if (!revision(result.accountRevision) || ![initial, initial + 1].includes(result.accountRevision) || !result.accountRevision) throw rpcError('INVALID_REVISION_STEP');
-        parent.transaction.complete({kind:'authenticated', accountRevision:result.accountRevision, fence:parent.transaction.fence});
+        if (!revision(accountRevision) || ![initial, initial + 1].includes(accountRevision) || !accountRevision) throw rpcError('INVALID_REVISION_STEP');
+        parent.transaction.complete({kind:'authenticated', accountRevision, fence:parent.transaction.fence});
         parent.transaction.close(); parent.transaction = null;
         let account = this.#account && equal(identity(this.#account.binding), identity(this.#cli.binding)) ? this.#account : parent.proposed;
         if (account === this.#account) this.#revoke(parent.proposed);
         else this.#revoke(this.#account);
-        if (!account || account.binding.accountRevision !== result.accountRevision) {
+        if (!account || account.binding.accountRevision !== accountRevision) {
           this.#revoke(account); account = this.#grant('account', this.#cli.binding);
         }
         account.provisional = false; this.#event('lease/grant', {grant:account});
@@ -278,13 +294,11 @@ class ServiceProvider extends EventEmitter {
         return {...result, grant:structuredClone(grant)};
       }
       if (result.kind === 'waitUntil') {
-        if (result.waitId !== waitId || ![null, 'number'].some(type => type === null ? result.resetAt === null : typeof result.resetAt === type && Number.isFinite(result.resetAt)) ||
-            !['low_remaining', 'exhausted'].includes(result.reason)) throw actionRequired('PROVIDER_PROTOCOL_INVALID');
+        if (!validWait(result, waitId)) throw actionRequired('PROVIDER_PROTOCOL_INVALID');
         return result;
       }
-      if (result.kind === 'unavailable' && UNAVAILABLE_CODES.includes(result.code) && typeof result.retryable === 'boolean' &&
-          Number.isFinite(result.retryAfterMs) && result.retryAfterMs >= 0 && typeof result.messageKey === 'string') {
-        if (!['LIMITS_UNKNOWN', 'RESET_UNKNOWN', 'BUSY_ACTIVE'].includes(result.code)) this.#cli.invalidateProvider();
+      if (validUnavailable(result)) {
+        if (!quotaCodes.has(result.code)) this.#cli.invalidateProvider();
         return {...result, waitId};
       }
       // No interactive decision is legal in stage-1 MCP, even with an open UI.

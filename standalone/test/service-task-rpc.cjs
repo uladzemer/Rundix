@@ -38,7 +38,7 @@ async function main() {
     await assert.rejects(call(pa, 'submit_task', {requestId:'synthetic-no-provider', description:'Synthetic task', acceptanceCriteria:'Synthetic check', projectDirectory:a}),
       {code:'action_required', providerCode:'PROVIDER_NOT_CONFIGURED'});
     fs.renameSync(hiddenConfig, data.installed.configPath);
-    await service.host.provider.configureByClient({clientId:'synthetic-client', operationId:'synthetic-wait-config', expectedSelectionRevision:1, action:'synthetic', payload:{scenario:'wait'}});
+    await service.host.provider.configureByClient({clientId:'synthetic-client', operationId:'synthetic-wait-config', expectedSelectionRevision:1, action:'synthetic', payload:{scenario:'scan-wait'}});
     const waiting = await call(pa, 'submit_task', {requestId:'synthetic-limit', description:'Synthetic limited task', acceptanceCriteria:'Synthetic check', projectDirectory:a});
     const started = Date.now();
     const checkpoint = await call(pa, 'wait_task', {taskId:waiting.taskId, waitSeconds:1});
@@ -58,12 +58,27 @@ async function main() {
     await call(pa, 'continue_task', {taskId:waiting.taskId, requestId:'synthetic-after-cancel', clarification:'Synthetic fresh execution'});
     const fresh = await call(pa, 'wait_task', {taskId:waiting.taskId, waitSeconds:2});
     assert.equal(fresh.state, 'completed', 'Continuing after cancelled limit wait uses a fresh wait identity');
+    let selection = 3;
+    for (const code of ['LIMITS_UNKNOWN','RESET_UNKNOWN','BUSY_ACTIVE','AUTH_REQUIRED','AUTH_REVOKED','STORE_UNAVAILABLE','CLIENT_REQUIRED','PLATFORM_UNSUPPORTED','PROVIDER_PROCESS_UNCERTAIN','MIRROR_BUSY']) {
+      await service.host.provider.configureByClient({clientId:'synthetic-client', operationId:'synthetic-map-' + code, expectedSelectionRevision:selection++, action:'synthetic', payload:{scenario:'scan-' + code}});
+      await service.host.provider.authenticate();
+      const task = await call(pa, 'submit_task', {requestId:'synthetic-map-' + code, description:'Synthetic mapping', acceptanceCriteria:'Synthetic checks', projectDirectory:a});
+      const value = await call(pa, 'wait_task', {taskId:task.taskId, waitSeconds:1});
+      const reason = {LIMITS_UNKNOWN:'limits_unknown', RESET_UNKNOWN:'reset_unknown', BUSY_ACTIVE:'active_turns'}[code];
+      if (reason) {
+        assert.equal(value.state, 'waiting_limit');assert(value.timedOut);assert.deepEqual(value.waitingLimit, {resetAt:null, reason});
+        await call(pa, 'cancel_task', {taskId:task.taskId, requestId:'synthetic-cancel-' + code});
+      } else {
+        assert.equal(value.state, 'error');assert(!value.timedOut);assert.match(value.error, /action_required/);assert.equal(value.recoveryRequired, false);
+      }
+      assert.equal(service.host.provider.activeTurns, 0);
+    }
     for (const peer of peers) peer.close(); await pause(30);
     assert.equal((await service.dispose()).exiting, true); service = null;
     console.log('PASS space task RPC: real IPC bindings, cross-repo execution, per-space replay, foreign IDs, limit non-wake, wait snapshots, cancellation and disconnect cleanup.');
   } finally {
     for (const peer of peers) peer.close();
-    try {await service?.dispose();} catch {} await data.close();
+    try {await service?.dispose();} catch {} await service?.endpoint.dispose(); await data.close();
     assert.equal(path.dirname(root), os.tmpdir()); assert(path.basename(root).startsWith('rundix-space-rpc-synthetic-'));
     fs.rmSync(root, {recursive:true, force:true});
   }

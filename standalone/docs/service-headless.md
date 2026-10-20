@@ -219,23 +219,18 @@ The original normative prose does not settle every concrete payload choice.
 | Public depth 64, numeric IDs, unbounded string IDs, 32 per direction vs companion depth 16/string 1–128/32 total | Public provider framing now uses the companion's tighter bounds. Config parsing retains its separate bound. |
 | Public callback string `owner` vs `{leaseId}` | Public callbacks now require `{leaseId}`; synthetic fixture updated. |
 | Public login/reconnect callback missing `idleGrantId` | Public now requires the exact live idleGrantId for both mutations. |
-| Public raw CLI callback result vs `{response,fence}` | Public now returns nested `response`, with callback fence inside result. The existing public `authGrantId`/`nextAccountRevision` login result extensions remain; companion must tolerate/use them until grant-order alignment below. |
+| Public raw CLI callback result vs `{response,fence}` | Public now returns nested `response`, with callback fence inside result. The existing public `authGrantId`/`nextAccountRevision` login result extensions remain; these are retained as part of the current public contract. |
 | Public reconnect `{binding}` vs `{confirmedExit,effectiveBinding,fence}` | Public result now uses `confirmedExit:true`/`effectiveBinding`; original callback fence is inside result. Binding-transition ordering remains different (below). |
 | Public status `{status,counts?}` vs `{authenticated,activeTurns,preparing}` | Public status validates/projects the three companion fields; optional numeric method `counts` remain a synthetic diagnostics extension. |
-| Public account/idle/turn event `{grant:{...}}` vs flat `params.kind` and kind-specific IDs with binding in fence | **Still incompatible.** Recommend changing public event serialization to the companion's flat generic shapes, with independent raw-wire fixtures, as part of the next lifecycle alignment. Internal grant records should stay service-owned. Do not merely change field names without the ordering checks below. |
-| Public revoke `{leaseId,leaseRevision}` for every kind vs kind-specific account/idle/turn payloads | **Still incompatible.** Public serialization should change together with grant events. A turn revoke must remain uncertainty, never proof of terminal. |
-| Public idle binding replaces account leaseId, events precede parent ID allocation vs companion separate idleGrantId, account binding retained and parentRequestId supplied before parent RPC | **Still incompatible.** Public lifecycle should change transaction setup to reserve the parent ID before grant publication, retaining a separate idle grant. |
-| Public account grant after login callback with proposed revision vs companion account grant before login, initial revision 1, later transitions tied to parent | **Still incompatible.** Public needs explicit provisional/account proof separation before changing ordering. Both sides must preserve the hard gate: issuing a grant is not confirmed login. This affects CLI transaction revision validation. |
-| Public reconnect creates revision-0 CLI binding and returns it before login vs companion new-generation account revision current+1 grant before reconnect reply | **Still incompatible.** Public should preserve account lineage across CLI restart and publish the recorded transition before callback reply; gate stays closed until confirmed login. |
-| Public terminal `{trigger,spaceId,...}` vs companion `{confirmed:true,...}` and `confirmedExit:true`/null turnId when start unobserved | **Still incompatible.** Public wire serializer should change while keeping exact internal task/run/turn/lease verification. Space routing stays internal. |
-| Public top-level `manifestPath` vs companion notes `provider.manifestPath` | Companion installer documentation/implementation should change to top-level `manifestPath`, as explicitly accepted in the prior owner decision. No public schema change here. |
-| Public live selectionRevision CAS vs companion establishes once per process and rejects later revisions | Companion should implement the same explicit CAS transition or public service must replace the provider instance after configuration. Pending configuration UI remains out of scope; do not silently continue with a new revision. |
-| Public refresh expects `cliResponse.response` or `unavailable`; companion also describes a fixed failure code/messageKey without an explicit outcome shape | Companion notes should specify a closed `unavailable` outcome using the existing public enum, or the service must add an agreed typed failure envelope. No arbitrary failure payload is forwarded. |
-| Public deadline rejects/closes as `PROVIDER_UNAVAILABLE`; companion uses unavailable `PROVIDER_PROCESS_UNCERTAIN` after lost mutation ACK | Public should distinguish mutation uncertainty at the owner boundary. Existing CLI quarantine and retained turn grants remain mandatory; do not make timeout safe-to-replay. |
+| Current public nested grants, idle/account binding lifecycle, opaque generation, terminal payloads | Retained unchanged. Owner correction: the private provider now follows the current public contract; the former item-6 reshaping is cancelled. |
+| Candidate scan login followed by waitUntil/unavailable | Public driver now accepts validated prepare outcomes after login and routes them through the existing task-state table. Quota waits retain confirmed login evidence but create no turn grant; action-required closes the turn gate. |
+| Refresh provider refusal | Public forwarding fix tracked separately below; arbitrary diagnostic/credential payloads must never be forwarded or logged. |
 
-The shapes marked **still incompatible** are integration blockers for the real
-companion; the synthetic service/provider tests do not prove cross-repository
-interoperability. This checkpoint does not modify the companion repository.
+The owner reports that the private provider now passes integration against the
+current public ServiceProvider/ServiceAppServer. This repository's checks remain
+synthetic; that external result is not represented as a locally repeated check.
+Nested grants, opaque generation and existing callback envelopes remain the public
+contract from 7f358b8/23cb9ba. No item-6 shape changes were implemented.
 
 ## Headless host (item 2)
 
@@ -319,7 +314,7 @@ zero remaining confirmed findings. No real account or CLI was used.
 
 ## Remaining work for 3a
 
-The owner-approved grant lifecycle alignments remain. Existing McpTasks recovery is retained; additional
+Grant-lifecycle reshaping was cancelled by the owner. Existing McpTasks recovery is retained; additional
 durable intents/recovery are deferred. Window
 projections/migration belong to 3b; real Windows scenarios belong to 3c. Private
 provider implementation, credential storage and rotation stay outside this repo.
@@ -389,3 +384,18 @@ the end-to-end test. After one intermittent startup timeout, author inspection
 found that the initial 150ms test idle interval could expire within discovery's
 1s backoff; the fixture now uses 2s and verifies connected-client suppression
 for longer than that interval. Production idle timing remains five minutes.
+
+
+## Candidate scan outcomes after login
+
+A prepare transaction can successfully log in one or more candidates and still
+return waitUntil or unavailable. These outcomes have no accountRevision field.
+For validated quota waits the driver derives the confirmed revision internally
+from its CLI login transaction (same account retains revision; changed account
+advances it), promotes the existing nested account grant, and returns the outcome.
+No turn grant is created. Action-required outcomes do not promote the login proof.
+Malformed waits, unsupported outcomes and invalid revisions still fail closed.
+
+Synthetic provider cases cover same/changed account, waitUntil, every unavailable
+code and malformed wait identity. Real-IPC task tests verify waiting_limit versus
+error/action_required, no wake before wait timeout, no active grant, and cancellation.

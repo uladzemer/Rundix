@@ -92,6 +92,21 @@ async function main() {
     const rotated = await create('rotated-account'); await rotated.provider.authenticate(); await rotated.configure('change-account-new-revision');
     const rotatedReady = await rotated.provider.prepareTurn(task('rotated'));
     assert.equal(rotatedReady.grant.binding.accountRevision, 2); rotated.provider.releaseReserved(rotatedReady.grant); await rotated.provider.dispose();
+    for (const scenario of ['wait','same','LIMITS_UNKNOWN','RESET_UNKNOWN','BUSY_ACTIVE','AUTH_REQUIRED','AUTH_REVOKED','STORE_UNAVAILABLE','CLIENT_REQUIRED','PLATFORM_UNSUPPORTED','PROVIDER_PROCESS_UNCERTAIN','MIRROR_BUSY','invalid']) {
+      const scan = await create('scan-' + scenario); await scan.provider.authenticate(); await scan.configure('scan-' + scenario);
+      if (scenario === 'invalid') await assert.rejects(scan.provider.prepareTurn(task('scan')), {code:'PROVIDER_PROTOCOL_INVALID'});
+      else {
+        const outcome = await scan.provider.prepareTurn(task('scan'));
+        assert.equal(outcome.kind, ['wait','same'].includes(scenario) ? 'waitUntil' : 'unavailable');
+        if (outcome.kind === 'unavailable') assert.equal(outcome.code, scenario);
+        const waiting = ['wait','same','LIMITS_UNKNOWN','RESET_UNKNOWN','BUSY_ACTIVE'].includes(scenario);
+        assert.equal(scan.cli.authenticated, waiting);
+        if (waiting) assert.equal(scan.provider.accountGrant.binding.accountRevision, scenario === 'same' ? 1 : 2);
+      }
+      assert.equal(scan.provider.activeTurns, 0);
+      await assert.rejects(scan.cli.request('turn/start', {}), error => ['STALE_FENCE','connection_unavailable'].includes(error.code));
+      await scan.provider.dispose();
+    }
     const pending = await create('pending-config'); await pending.provider.authenticate();
     const operation = await pending.configure('pending-config'); assert.equal(operation.kind, 'pending'); assert(pending.provider.busy);
     await assert.rejects(pending.provider.authenticate(), {code:'CLIENT_REQUIRED'});

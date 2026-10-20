@@ -16,21 +16,27 @@ const peer = new ProviderPeer({readable:process.stdin, writable:process.stdout, 
   if (method === 'authenticate') {
     counts.authenticate++;
     if (scenario === 'auth-required') return {kind:'unavailable', code:'AUTH_REQUIRED', retryable:false, retryAfterMs:0, messageKey:'synthetic.auth'};
-    let fence = context.fence, effectiveBinding;
+    let fence = context.fence, effectiveBinding, login;
     if (scenario === 'reconnect') {
       const {result} = await peer.request('cli/reconnect', {parentRequestId:context.id, owner:{leaseId:fence.binding.leaseId}, binding:fence.binding, idleGrantId:idleGrant?.leaseId}, fence, 5000);
       effectiveBinding = result.effectiveBinding; fence = {...fence, binding:effectiveBinding};
     }
     if (scenario !== 'no-login') {
-      await peer.request('cli/request', {parentRequestId:scenario === 'stale-parent' ? 'retired-parent' : context.id,
+      login = await peer.request('cli/request', {parentRequestId:scenario === 'stale-parent' ? 'retired-parent' : context.id,
         owner:{leaseId:scenario === 'stale-owner' ? 'foreign-owner' : fence.binding.leaseId}, binding:fence.binding, idleGrantId:idleGrant?.leaseId,
         method:scenario === 'logout' ? 'account/logout' : 'account/login/start',
         params:{type:'chatgptAuthTokens', accessToken:'SYNTHETIC_NOT_A_CREDENTIAL', chatgptAccountId:'synthetic-account', chatgptPlanType:'plus'}}, fence, 5000);
     }
-    return {kind:'authenticated', accountRevision:fence.binding.accountRevision || 1, ...(effectiveBinding ? {effectiveBinding} : {})};
+    return {kind:'authenticated', accountRevision:scenario.startsWith('scan-') ? login.result.nextAccountRevision : fence.binding.accountRevision || 1, ...(effectiveBinding ? {effectiveBinding} : {})};
   }
   if (method === 'prepareTurn') {
     counts.prepareTurn++;
+    if (scenario.startsWith('scan-')) {
+      await peer.request('cli/request', {parentRequestId:context.id, owner:{leaseId:context.fence.binding.leaseId}, binding:context.fence.binding, idleGrantId:idleGrant?.leaseId,
+        method:'account/login/start', params:{type:'chatgptAuthTokens', accessToken:'SYNTHETIC_NOT_A_CREDENTIAL', chatgptAccountId:scenario === 'scan-same' ? 'synthetic-account' : 'synthetic-scanned-account'}}, context.fence, 5000);
+      if (['scan-wait','scan-same','scan-invalid'].includes(scenario)) return {kind:'waitUntil', waitId:scenario === 'scan-invalid' ? 'foreign-wait' : params.waitId, resetAt:Date.now() + 30000, reason:'exhausted'};
+      return {kind:'unavailable', code:scenario.slice(5), retryable:true, retryAfterMs:1000, messageKey:'synthetic.scan'};
+    }
     if (scenario === 'refresh-barrier' && params.taskId === 'refresh-prepare') await new Promise(resolve => {releasePrepare = resolve;});
     if (scenario === 'slow') await new Promise(resolve => setTimeout(resolve, 80));
     if (scenario === 'wait') return {kind:'waitUntil', waitId:params.waitId, resetAt:Date.now() + 30000, reason:'low_remaining'};

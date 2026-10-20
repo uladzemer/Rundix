@@ -31,7 +31,7 @@ function taskTitle(description) {
   const points=Array.from(line), short=points.length>TITLE_POINTS?points.slice(0,TITLE_POINTS-1).join('').trimEnd()+'…':line;
   return short?'MCP · '+short:'MCP task';
 }
-function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,client=()=>null,releases=new Map(),closeTab=async()=>{},models=async()=>[],reloadWindow,accessMode=()=>'workspace',retainTurn=()=>{},sent=()=>{}}) {
+function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,client=()=>null,releases=new Map(),closeTab=async()=>{},closeSavedTab=async()=>false,models=async()=>[],reloadWindow,accessMode=()=>'workspace',retainTurn=()=>{},sent=()=>{}}) {
   const turnOptions=task=>({includeIde:false,taskId:task.taskId,projectDirectory:task.projectDirectory,requiredConnection:task.connection,outputSchema:reportSchema,
     ...(task.model?{modelSelection:{model:task.model,effort:task.effort,fast:false}}:task.effort?{modelSelection:{effort:task.effort}}:{})});
   // Only questions from the task's current run count; older unanswered quizzes in the chat are history.
@@ -77,7 +77,9 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
     // Closes the editor tab of a finished task; the saved chat stays and a continuation reopens it.
     async closeChat(task) {
       const s=sessions.get(task.sessionKey);
-      if(!s || !s.panel)return false;
+      // Tabs restored after a window reload stay unloaded until shown; close those through VS Code's tab list.
+      if(!s)return !!await closeSavedTab(task.sessionKey);
+      if(!s.panel)return false;
       if(s.busy || s.sendingTask || adapter.pending(task).length)throw Error('The task chat is still active.');
       await closeTab(s);
       return true;
@@ -222,4 +224,13 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
   };
   return adapter;
 }
-module.exports={executor,reportSchema,report,taskTitle};
+// The final structured report of an MCP turn is JSON for the client; in the chat it is shown as readable text.
+function reportMarkdown(text,language) {
+  let value;
+  try { value=JSON.parse(text); } catch { return null; }
+  if(!value || typeof value.result!=='string' || !['changedFiles','checks','remainingIssues'].every(key=>Array.isArray(value[key])))return null;
+  const ru=language!=='en';
+  const list=(title,items)=>items.length?'\n\n**'+title+'**\n'+items.map(item=>'- '+String(item)).join('\n'):'';
+  return value.result+list(ru?'Изменённые файлы':'Changed files',value.changedFiles)+list(ru?'Проверки':'Checks',value.checks)+list(ru?'Что осталось':'Remaining issues',value.remainingIssues);
+}
+module.exports={executor,reportSchema,report,taskTitle,reportMarkdown};

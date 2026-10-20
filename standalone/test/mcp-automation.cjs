@@ -99,6 +99,19 @@ async function main(){
       const running={id:'synthetic-thread',busy:true,loaded:true,items:[]};notification(running,{method:'thread/closed',params:{threadId:'synthetic-thread'}});
       assert.equal(running.loaded,true);running.busy=false;notification(running,{method:'thread/closed',params:{threadId:'synthetic-thread'}});assert.equal(running.loaded,false);
     }
+    // Restored-but-unloaded tabs are closed through the saved-tab path; the report renders as readable text.
+    {
+      const closedSaved=[];
+      const restored=executor({connections:{selection:()=>connection},sessions:new Map(),store:{session:()=>null},create:()=>{throw Error('Unexpected create');},
+        send:async()=>{},resume:async()=>{},handle:async()=>{},pending:new Map(),save:async()=>{},alive:()=>true,
+        closeSavedTab:async key=>{closedSaved.push(key);return true;}});
+      assert.equal(await restored.closeChat({sessionKey:'synthetic-restored-tab',chatId:'synthetic'}),true);
+      assert.deepEqual(closedSaved,['synthetic-restored-tab']);
+      const {reportMarkdown}=require('../runtime/mcp-executor.cjs');
+      assert.equal(reportMarkdown(JSON.stringify({result:'Synthetic done',changedFiles:['synthetic.txt'],checks:['Synthetic check'],remainingIssues:[]}),'en'),
+        'Synthetic done\n\n**Changed files**\n- synthetic.txt\n\n**Checks**\n- Synthetic check');
+      assert.equal(reportMarkdown('Plain synthetic text','ru'),null);assert.equal(reportMarkdown('{"result":1}','ru'),null);
+    }
     console.log('MCP automation: run-scoped questions, closed chats stay closed, retried replies, multi-turn reports, safe titles, cancel during retryable start and recovered-turn slots passed.');
   }finally{for(const item of open)item.dispose();fs.rmSync(root,{recursive:true,force:true});}
 }

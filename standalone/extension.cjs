@@ -27,7 +27,7 @@ const { Connections } = require('./runtime/connections.cjs');
 const taskDirectory = require('./runtime/task-directory.cjs');
 const { McpTasks } = require('./runtime/mcp-tasks.cjs');
 const mcpBridgeTransport = require('./runtime/mcp-bridge.cjs');
-const { executor: mcpExecutor } = require('./runtime/mcp-executor.cjs');
+const { executor: mcpExecutor, reportMarkdown: mcpReportMarkdown } = require('./runtime/mcp-executor.cjs');
 const {activateCompanions}=require('./runtime/connection-companions.cjs');
 const mcpPanelState=require('./runtime/mcp-panel.cjs');
 const { ProjectFiles } = require("./runtime/files.cjs");
@@ -279,6 +279,17 @@ function activate(context) {
             send,
             resume,handle,pending:pendingRequests,save,alive:()=>!disposed && !!mcpBridge,
             closeTab,
+            // Only a restored tab that hosts exactly this chat and is unambiguous by title is closed.
+            async closeSavedTab(key){
+              const saved=store.session(key);
+              if(!saved?.name)return false;
+              const hosts=fs.readdirSync(store.directory).filter(name=>/^host-[\w-]+\.json$/.test(name)).map(name=>store.host(name.slice(5,-5))).filter(host=>host?.keys?.includes(key));
+              if(hosts.length!==1 || hosts[0].keys.length!==1)return false;
+              const tabs=vscode.window.tabGroups.all.flatMap(group=>group.tabs).filter(tab=>tab.input instanceof vscode.TabInputWebview &&
+                String(tab.input.viewType).includes('rundix.session') && tab.label===tabTitle(saved.name));
+              if(tabs.length!==1)return false;
+              return vscode.window.tabGroups.close(tabs[0]);
+            },
             // Lets the agent client apply an installed update itself; busy chats are protected unless forced.
             reloadWindow(force){
               if(!force && [...sessions.values()].some(s=>s.busy || s.sendingTask || s.compacting))
@@ -473,7 +484,7 @@ function activate(context) {
           items: s.items.map((item) => ({
             id: item.id,
             type: item.type,
-            text: s.preflight?.enabled&&item.type==='agentMessage'?preflight.display(itemText(item)):itemText(item),
+            text: s.preflight?.enabled&&item.type==='agentMessage'?preflight.display(itemText(item)):(s.mcpTask&&item.type==='agentMessage'&&mcpReportMarkdown(itemText(item),locale.language))||itemText(item),
             // The webview sees display text, so the host decides from raw items whether a quiz was answered.
             ...(item.type==='agentMessage' && asyncQuestions.questions(item).length ? {asyncAnswered:asyncQuestions.hasReply(s.items,item.id)} : {}),
             images:messageImages(item,pastedImageRoot,file=>host.panel.webview.asWebviewUri(vscode.Uri.file(file)).toString()),

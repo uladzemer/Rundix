@@ -321,7 +321,7 @@ class ServiceProvider extends EventEmitter {
     })();
     try { return await this.#authenticating; } finally { this.#authenticating = null; }
   }
-  async prepareTurn(task, {mode = 'admit'} = {}) {
+  async prepareTurn(task, {mode = 'admit', timeoutMs} = {}) {
     if (!['admit', 'probe'].includes(mode) || !task || !['taskId', 'spaceId', 'attemptId'].every(key => typeof task[key] === 'string' && task[key])) throw actionRequired('PROVIDER_PROTOCOL_INVALID');
     if (this.#preparing || this.#idle || this.#configurationPending) return unavailable('BUSY_ACTIVE', true);
     if(this.#lost || this.#recovery || this.#cliRestarting)throw Object.assign(actionRequired('PROVIDER_UNAVAILABLE'),{retryable:true});
@@ -340,7 +340,7 @@ class ServiceProvider extends EventEmitter {
       const fence = {...base, admission:{selectionRevision:this.#selectionRevision}};
       // The transaction's binding is checked separately; admission belongs only
       // to the prepare envelope, never active-turn refresh.
-      const result = await this.#call('prepareTurn', {...task, waitId, mode, interactiveClientAvailable:false}, {fence, idle, transaction, selection:true});
+      const result = await this.#call('prepareTurn', {...task, waitId, mode, interactiveClientAvailable:false}, {fence, idle, transaction, selection:true,timeoutMs});
       if (!this.#waits.has(waitId)) return {kind:'cancelled', waitId};
       if (result.kind === 'ready') {
         if (result.accountRevision !== this.#account?.binding.accountRevision || result.authGrantId !== this.#account?.leaseId ||

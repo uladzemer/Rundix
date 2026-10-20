@@ -135,6 +135,16 @@ question/approval answers return through the same service task. The window never
 resumes that thread locally. Composer and question drafts survive failed sends,
 tab recreation and window reload. Closing a finished task asks subscribed tabs
 to persist their drafts before closing; closing a tab alone does not cancel work.
+Structured final reports render as readable Markdown in service task chats.
+Copy copies that displayed Markdown (including its lists), rather than the
+original report JSON; MCP responses and saved report data retain their structure.
+Definite pre-dispatch cold-start failures, including a thrown `BUSY_ACTIVE`,
+requeue with “Waiting for the Codex connection to become ready”. They allow at
+most three attempts within two minutes of submission (or an explicit
+continuation). Exhaustion ends with `action_required` and recoverable unsent
+input; it never silently repeats a dispatched turn. Provider admission outcomes
+reporting `BUSY_ACTIVE` instead use the existing `waiting_limit` / `active_turns`
+availability wait, independently of the cold-start retry budget.
 Large display items are shortened with an explicit notice; earlier messages are
 read through bounded CLI history pages owned by the service. Legacy 0.3.x MCP
 history is copied, verified and moved to a backup after a cutover marker. It is

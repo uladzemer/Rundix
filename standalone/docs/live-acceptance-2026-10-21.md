@@ -215,3 +215,84 @@ service-owned Codex with the ephemeral flag. Auth size/mtime still matched after
 shutdown. Final read-only document/image review reported zero confirmed findings;
 `git diff --check` passed. Changes and screenshot were committed locally with the
 requested co-author trailer; no push or publication was performed.
+
+## N8 independent-review follow-up
+
+Addressed the review of `62a78b5` / `72d7f6e` in a new local change.
+Provider account notifications are deferred only when the headless host opts in.
+Window-mode tests deliver both `account/updated` and `account/login/completed`
+mid-bootstrap and verify limits reset, account/limits/catalog refresh and the
+successful-login chat reload still run. Headless tests verify deferral.
+
+Cold readiness now has a durable maximum of three attempts and a two-minute
+budget from task submission, renewed for an explicit continuation. Bootstrap,
+authentication and metadata waits honor the remaining budget; admission RPCs
+also receive it, and an expired reserved grant is released before dispatch.
+Exhaustion ends in terminal `error` / `action_required`, with recoverable unsent
+input and no automatic model replay. Progress says “Waiting for the Codex
+connection to become ready”. Thrown `BUSY_ACTIVE` is covered as a transient
+pre-dispatch retry; provider availability outcomes retain their separate
+`waiting_limit` / `active_turns` behavior. `docs/mcp.md` documents both cases
+and that service-chat Copy copies displayed Markdown, preserving structured
+JSON in saved/API reports.
+
+Synthetic checks cover permanent failure stopping after three attempts,
+temporary failure recovering, elapsed-budget exhaustion, a hung bootstrap
+ending without dispatch, and actual CLI cancellation after a delayed ACK crosses
+the readiness deadline. Read-only review found that the budget initially also
+blocked post-dispatch interrupts; it is now disabled at the dispatch boundary.
+The cancellation test was strengthened to exercise that path, and removing the
+fix made it fail on the missing interrupt. Focused second review found no
+remaining confirmed runtime defect; its test-evidence concern was addressed
+by this mutation check. No reviewer accessed live accounts or owner data.
+An additional author check found that long quota/active-turn waits must renew
+the bootstrap budget when availability wakes the task, rather than at wait
+entry. A focused synthetic regression covers a wait exceeding two budgets;
+the final full validation and live runs below include that correction.
+
+Final validation:
+
+- `npm.cmd test`: 55 suites, 63 real-root guards, PASS in 128 s. An earlier
+  run hit a temporary E2E-directory cleanup `EPERM`; the complete final run passed.
+- All six isolated host suites passed after the final runtime change:
+  `mcp-host` 14 s, `startup-host` 8 s, `local-auth-host` 7 s,
+  `reconnect-host` 7 s, `service-mode-host` 10 s, `host` 10 s.
+- `npm.cmd run test:browser`: all three scripts passed, including RU/EN,
+  light/dark and narrow/wide service chat. No rendering source changed here.
+- `npm.cmd run package` and actual ZIP audit passed: 139 entries, correct
+  identity/README/icons, and byte-matching affected packaged runtime/UI sources.
+
+Two final fresh live `claude -p` sessions used a temporary strict MCP configuration
+and a new temporary synthetic Git repository. Each session submitted one
+read-only task, waited, fetched its structured report and closed it. Captures
+retain tool names, states and booleans; assistant/chat text was discarded.
+
+| Cold start | Duration | Result |
+| --- | --- | --- |
+| 1 | 25 s | completed, report returned, closed, zero refusals |
+| 2 | 25 s | completed, report returned, closed, zero refusals |
+
+Before the additional long-provider-wait correction, two preliminary cold
+Claude runs also passed (29/30 s). Their tasks were closed and the last service
+exited through its normal idle policy before final guard-protected validation.
+Final runs used fresh requestIds, so persisted task deduplication could not
+substitute an earlier result.
+
+The two starts used distinct verified installed service-main processes, with
+one service instance at a time. Only the first, already idle test-owned process
+was force-stopped to make the second start cold. Process ancestry confirmed one
+service-owned Codex and the presence of its ephemeral credential-store flag.
+Fixed diagnostics recorded two service starts, four successful authentications,
+two deferred bootstrap notifications and two ready admissions, with no
+auth/admission/read-failure or `host_error` codes. Personal auth size/mtime
+matched after both sessions; contents were never read. The owner's Code window,
+bridge, settings and Claude configuration were not changed. The PATH Node
+launcher and production service root were retained with full access, parallelism
+3 and the managed Codex CLI.
+
+The final instance exited gracefully through the unchanged five-minute idle
+policy: `cli_stopped`, then `service_stopped`, without `host_error`. Discovery
+was removed; no installed service-main or isolated test-profile Code process
+remained. Auth size/mtime still matched after shutdown. The production root
+was retained. `git diff --check` passed; fixes, regressions and this log were
+committed locally with the requested co-author trailer, without push.

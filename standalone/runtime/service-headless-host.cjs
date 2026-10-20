@@ -13,7 +13,7 @@ const {parseStrict} = require('./service-json.cjs');
 const {boundedRead, actionRequired} = require('./service-provider-config.cjs');
 
 const {plainSettings}=require('./service-settings.cjs');
-const {startupFailure}=require('./service-readiness.cjs');
+const {startupFailure,attempt,ready,remaining,dispatched}=require('./service-readiness.cjs');
 function boundedLogger(root) {
   const directory = path.join(root, 'diagnostics'); fs.mkdirSync(directory, {recursive:true, mode:0o700});
   const file = index => path.join(directory, 'service-' + index + '.log');
@@ -66,7 +66,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     constructor(options) { super(); this.options = options; this.executable = options.executable; this.listeners = []; }
     async start() {
       settings.assertValid();
-      try {await provider.start();}catch(error){throw startupFailure(error,'provider');}
+      try {await ready(()=>provider.start());}catch(error){throw startupFailure(error,'provider');}
       const cli = provider.cli || provider.createCli(this.options); this.cli = cli;
       const on = (event, handler) => { cli.on(event, handler); this.listeners.push([event, handler]); };
       on('notification', message => {
@@ -90,20 +90,20 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       });
       on('disconnected', message => this.emit('disconnected', message));
       on('protocolError', message => this.emit('protocolError', message));
-      try {return await cli.start();}catch(error){throw startupFailure(error,'cli');}
+      try {return await ready(()=>cli.start());}catch(error){throw startupFailure(error,'cli');}
     }
     async request(method, params = {}, timeoutMs) {
       if (!this.cli || disposed) throw actionRequired('PROVIDER_UNAVAILABLE');
       if (method !== 'turn/start') {
-        try {return await this.cli.request(method, params, timeoutMs);}
+        try {return await ready(()=>this.cli.request(method, params, timeoutMs));}
         catch(error) {logger({code:error?.reason==='connection_changed'?'cli_read_binding_changed':'cli_read_failed'});throw error;}
       }
       const task = taskForThread(params.threadId);
       if (!task || runs.has(params.threadId)) throw Object.assign(actionRequired('BUSY_ACTIVE'), {notSent:true, deliveryUncertain:false});
       let outcome;
       try {outcome = await provider.prepareTurn({taskId:task.taskId, spaceId:task.space || 'unbound',
-        attemptId:randomUUID(), runId:randomUUID(), ...(task.waitId ? {waitId:task.waitId} : {})});}
-      catch(error) {logger({code:error?.code==='AUTH_REQUIRED'?'provider_admission_auth_required':'provider_admission_failed'});throw Object.assign(error,{notSent:true,deliveryUncertain:false});}
+        attemptId:randomUUID(), runId:randomUUID(), ...(task.waitId ? {waitId:task.waitId} : {})},{timeoutMs:remaining()});}
+      catch(error) {logger({code:error?.code==='AUTH_REQUIRED'?'provider_admission_auth_required':'provider_admission_failed'});throw Object.assign(startupFailure(error,'admission'),{notSent:true,deliveryUncertain:false});}
       if (outcome.kind !== 'ready') {
         logger({code:outcome.code==='AUTH_REQUIRED'?'provider_admission_auth_required':'provider_admission_failed'});
         const wait = providerWait(outcome);
@@ -111,10 +111,12 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
           {notSent:true, deliveryUncertain:false, providerWait:wait, retryable:outcome.code === 'BUSY_ACTIVE'});
       }
       logger({code:'provider_admission_ready'});
+      try{remaining();}catch(error){provider.releaseReserved(outcome.grant);throw error;}
       if (task.cancelRequested || disposed) { provider.releaseReserved(outcome.grant); throw Object.assign(actionRequired(), {notSent:true, deliveryUncertain:false}); }
       const row = {threadId:params.threadId, taskId:task.taskId, grant:outcome.grant, completed:new Set()}; runs.set(params.threadId, row);
       delete task.providerFailureCode;
       try {
+        dispatched();
         const result = await provider.dispatchTurn(outcome.grant, params); row.turnId = result.turn.id;
         delete task.waitId; task.waitingLimit = null;
         if (row.completed.has(row.turnId)) finishRun(row, row.turnId);
@@ -136,6 +138,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     }
   }
   core = createSessionCore({paths:{storage:root}, workspaceState, settings, logger:coreLogger, clock,
+    deferProviderNotifications:true,
     onDeferredProviderRefresh:()=>logger({code:'provider_account_refresh_deferred'}),
     trusted:() => true, events:{changed:noop, sessionChanged:onSessionChanged, treeChanged:noop, notify:noop, completed:noop},
     hasChat:() => true, isActive:() => false, activeSession:() => null, openChat:noop, loadSelected:noop,
@@ -146,7 +149,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
   core.connections.register('rundix.service', {id:'service-provider', label:'Service provider',
     authenticate:async () => {
       logger({code:'provider_auth_started'});
-      try {const result=await provider.authenticate();logger({code:'provider_auth_ready'});return result;}
+      try {const result=await ready(()=>provider.authenticate());logger({code:'provider_auth_ready'});return result;}
       catch(error) {logger({code:'provider_auth_failed'});throw startupFailure(error,'authentication');}
     }, configure:async () => {throw actionRequired('CLIENT_REQUIRED');}});
   if (core.connections.selection().id === 'local') core.connections.select('service-provider');
@@ -161,6 +164,9 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       return settings(key,fallback);
     }, clock, transport,
     ui:{hasChat:() => false}, taskOptions:{...taskOptions,archiveLog:logger}, decorateAdapter:adapter => {
+      const start=adapter.start;
+      adapter.readinessBudget=true;
+      adapter.start=(task,input,checkpoint=()=>{})=>attempt(task,checkpoint,()=>start(task,input,checkpoint));
       const assertConnection=adapter.assertConnection;
       adapter.assertConnection=(...args)=>{settings.assertValid();return assertConnection(...args);};
       adapter.cancelWait = task => provider.cancelWait({taskId:task.taskId, spaceId:task.space, waitId:task.waitId});

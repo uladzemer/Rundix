@@ -283,7 +283,8 @@ class McpTasks {
           task.continuations ||= [];
           if(task.continuations.length>=20)throw fail('limit', 'Too many queued continuations.');
           task.continuations.push(args.clarification);
-        } else {task.nextInput=args.clarification; task.state='queued'; task.error=null; task.cancelRequested=false; delete task.waitId;task.waitingLimit=null;}
+        } else {task.nextInput=args.clarification; task.state='queued'; task.error=null; task.cancelRequested=false; delete task.waitId;task.waitingLimit=null;
+          if(this.adapter.readinessBudget){delete task.serviceReadiness;task.readinessOrigin=Date.now();}}
         task.progress='Continuation queued';
       } else {
         // The active attempt is handled by start()/reconciliation; only queued
@@ -372,7 +373,8 @@ class McpTasks {
             else if (status.done) {
               task.state=status.cancelled?'cancelled':status.failed?'error':'completed';
               task.progress='Turn finished'; task.report=status.report; task.recoveryRequired=false;
-              if(task.state==='completed' && task.continuations?.length){task.nextInput=task.continuations.shift();task.state='queued';task.progress='Continuation queued';}
+              if(task.state==='completed' && task.continuations?.length){task.nextInput=task.continuations.shift();task.state='queued';task.progress='Continuation queued';
+                if(this.adapter.readinessBudget){delete task.serviceReadiness;task.readinessOrigin=Date.now();}}
               else this.release(task);
             } else { task.state=status.pending?'waiting_approval':'running'; task.progress=status.progress || task.progress; }
           });
@@ -451,7 +453,7 @@ class McpTasks {
       }
       // Nothing was sent (another turn holds the connection or credentials): wait and start again.
       if(error?.retryable && !task.cancelRequested){
-        task.state='queued';task.recoveryRequired=false;task.progress='Waiting to start: the connection is busy with another turn';
+        task.state='queued';task.recoveryRequired=false;task.progress=error.serviceReadiness ? error.progress : 'Waiting to start: the connection is busy with another turn';
         task.blockedUntil=Date.now()+5000;directories.release(this.directoryStore,task.projectDirectory,task.taskId);this.save(task);return;
       }
       if(error?.notSent){

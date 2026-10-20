@@ -47,6 +47,10 @@ function audit(file) {
     }
     offset += 46 + nameLength + extraLength + commentLength;
   }
+  // Stage-1 headless foundation stays out of the public extension until host wiring is reviewed.
+  for (const module of ['service-endpoint','service-ipc','service-process','service-lifecycle']) {
+    assert(!names.has(`extension/runtime/${module}.cjs`), 'Unwired headless module shipped');
+  }
   for (const required of ['extension/extension.cjs', 'extension/package.json', 'extension/readme.md', 'extension/changelog.md',
     'extension/runtime/mcp-server.cjs', 'extension/runtime/mcp-bridge.cjs', 'extension/runtime/mcp-tasks.cjs',
     'extension/runtime/account-lifecycle.cjs',

@@ -14,6 +14,7 @@ function seed(source,id,directory,{state='completed'}={}){
     operations:[{requestId:'synthetic-request-'+id}],createdAt:1,progress:'Synthetic legacy progress',continuations:['Synthetic queued input'],unsentInputs:[{id:'synthetic-unsent',text:'Synthetic unsent input'}]});
   sessions.saveSession({key:sessionKey,id:chatId,mcpTask:true,cwd:directory,items:[{id:'synthetic-item-'+id,type:'agentMessage',text:'Synthetic legacy transcript'}]});
 }
+async function blocked(migration,source,state){await migration.sync({force:true});assert.equal(migration.status(canonical(source)).state,state);}
 if(process.argv[2]==='--crash'){
   const migration=createMigration({root:process.argv[3],hooks:{afterCopy(){process.exit(17);}}});
   void migration.sync().catch(()=>process.exit(18));
@@ -28,8 +29,8 @@ async function main(){
     seed(source,'synthetic-a',a);seed(source,'synthetic-b',b);seed(source,'synthetic-unknown',path.join(a,'synthetic-deleted'));
     old.saveSession({key:'synthetic-manual',id:'synthetic-manual-chat',items:[{id:'synthetic-manual-item',type:'userMessage',content:[{type:'text',text:'Synthetic manual chat'}]}]});
     registerRoot(serviceRoot,source);migration=createMigration({root:serviceRoot});
-    const oldBridge=old.acquire('mcp-bridge');await assert.rejects(migration.sync(),{code:'legacy_owner_active'});assert(fs.existsSync(sourceTasks));oldBridge();
-    const oldTurn=old.acquire('synthetic-chat-synthetic-a');await assert.rejects(migration.sync(),{code:'legacy_owner_active'});oldTurn();await migration.close();
+    const oldBridge=old.acquire('mcp-bridge');await blocked(migration,source,'busy');assert(fs.existsSync(sourceTasks));oldBridge();
+    const oldTurn=old.acquire('synthetic-chat-synthetic-a');await blocked(migration,source,'busy');oldTurn();await migration.close();
     // A real child exits mid-copy. The next owner reaps only its dead file lease.
     const crash=spawnSync(process.execPath,[__filename,'--crash',serviceRoot],{windowsHide:true,stdio:'pipe',timeout:10000});assert.equal(crash.status,17);
     assert(fs.existsSync(sourceTasks));assert(!fs.existsSync(path.join(source,'mcp','service-migration.json')));
@@ -68,9 +69,9 @@ async function main(){
     const interrupted=createMigration({root:nextRoot,hooks:{afterMarker(){throw Error('Synthetic marker crash');}}});
     await assert.rejects(interrupted.sync(),/Synthetic marker crash/);await interrupted.close();assert(fs.existsSync(path.join(nextSource,'mcp','tasks')));
     const resumed=createMigration({root:nextRoot});await resumed.sync();assert(!fs.existsSync(path.join(nextSource,'mcp','tasks')));await resumed.close();
-    // Live/unverified old execution is never inferred dead merely from an absent bridge.
+    // A stale running record is interrupted only after bridge and thread leases are acquired.
     const activeRoot=path.join(base,'service-active'),activeSource=path.join(base,'legacy-active');fs.mkdirSync(activeRoot);fs.mkdirSync(activeSource);seed(activeSource,'synthetic-active',a,{state:'running'});registerRoot(activeRoot,activeSource);
-    const blocked=createMigration({root:activeRoot});await assert.rejects(blocked.sync(),{code:'legacy_owner_active'});assert(fs.existsSync(path.join(activeSource,'mcp','tasks')));await blocked.close();
+    const stale=createMigration({root:activeRoot});await stale.sync();assert.equal(stale.visible(sa,[canonical(a)])[0].interrupted,true);await stale.close();
     const make=name=>{const directory=path.join(base,name);fs.mkdirSync(directory);return directory;};
     const concurrentRoot=make('service-concurrent'),first=make('legacy-first'),second=make('legacy-second');seed(first,'synthetic-first',a);seed(second,'synthetic-second',b);registerRoot(concurrentRoot,first);
     let unblock,copied;const gate=new Promise(resolve=>unblock=resolve),reached=new Promise(resolve=>copied=resolve);
@@ -85,25 +86,45 @@ async function main(){
     resumeClose();await Promise.all([inFlight,closing]);const afterClose=closingStore.acquire('mcp-bridge');afterClose();
     const changedRoot=make('service-changed'),changedSource=make('legacy-changed');seed(changedSource,'synthetic-original',a);registerRoot(changedRoot,changedSource);
     const changed=createMigration({root:changedRoot,hooks:{afterCopy(){seed(changedSource,'synthetic-added',a);}}});
-    await assert.rejects(changed.sync(),{code:'migration_conflict'});assert(fs.existsSync(path.join(changedSource,'mcp','tasks')));assert(!fs.existsSync(path.join(changedSource,'mcp','service-migration.json')));await changed.close();
+    await blocked(changed,changedSource,'needs_repair');assert(fs.existsSync(path.join(changedSource,'mcp','tasks')));assert(!fs.existsSync(path.join(changedSource,'mcp','service-migration.json')));await changed.close();
     const repaired=createMigration({root:changedRoot});await repaired.sync();assert.equal(repaired.visible(sa,[canonical(a)]).length,2);await repaired.close();
     // A completed receipt must verify both copied history and the retained backup.
     const changedId=fs.readdirSync(path.join(changedRoot,'legacy')).find(name=>/^[a-f0-9]{64}$/.test(name));
     const copiedFile=path.join(changedRoot,'legacy',changedId,'task-synthetic-original.json'),copiedBytes=fs.readFileSync(copiedFile);
     fs.writeFileSync(copiedFile,'{"syntheticCorruption":true}');
-    const corruptCopy=createMigration({root:changedRoot});await assert.rejects(corruptCopy.sync(),{code:'migration_conflict'});await corruptCopy.close();
+    const corruptCopy=createMigration({root:changedRoot});await blocked(corruptCopy,changedSource,'needs_repair');await corruptCopy.close();
     fs.writeFileSync(copiedFile,copiedBytes);
     const backupFile=path.join(changedSource,'mcp','backup-'+changedId,'tasks','mcp-task-synthetic-original.json'),backupBytes=fs.readFileSync(backupFile);
     fs.writeFileSync(backupFile,'{"syntheticBackupCorruption":true}');
-    const corruptBackup=createMigration({root:changedRoot});await assert.rejects(corruptBackup.sync(),{code:'migration_conflict'});await corruptBackup.close();
+    const corruptBackup=createMigration({root:changedRoot});await blocked(corruptBackup,changedSource,'needs_repair');await corruptBackup.close();
     fs.writeFileSync(backupFile,backupBytes);
     const verifiedAgain=createMigration({root:changedRoot});await verifiedAgain.sync();assert.equal(verifiedAgain.visible(sa,[canonical(a)]).length,2);await verifiedAgain.close();
     // A task must never turn an ordinary manual session into imported MCP history.
     const manualRoot=make('service-manual'),manualSource=make('legacy-manual');seed(manualSource,'synthetic-manual-reference',a);registerRoot(manualRoot,manualSource);
     const manualStore=new SessionStore(path.join(manualSource,'sessions-v1')),manualFile=manualStore.file('session','synthetic-session-synthetic-manual-reference');
     const manualSession=JSON.parse(fs.readFileSync(manualFile,'utf8'));manualSession.mcpTask=false;fs.writeFileSync(manualFile,JSON.stringify(manualSession));
-    const manualImport=createMigration({root:manualRoot});await assert.rejects(manualImport.sync(),{code:'migration_conflict'});await manualImport.close();
+    const manualImport=createMigration({root:manualRoot});await blocked(manualImport,manualSource,'needs_repair');await manualImport.close();
     assert(fs.existsSync(path.join(manualSource,'mcp','tasks')));assert(!fs.existsSync(path.join(manualSource,'mcp','service-migration.json')));
+    // One unavailable root cannot prevent IPC or another root's history.
+    const mixedRoot=make('service-mixed'),busySource=make('legacy-busy'),badSource=make('legacy-bad'),goneSource=make('legacy-gone'),healthySource=make('legacy-healthy');
+    seed(busySource,'synthetic-busy',a);seed(badSource,'synthetic-bad',a);seed(healthySource,'synthetic-healthy',b);
+    fs.writeFileSync(path.join(badSource,'mcp','tasks','mcp-task-synthetic-bad.json'),'{');
+    for(const directory of [busySource,badSource,goneSource,healthySource])registerRoot(mixedRoot,directory);
+    fs.rmdirSync(goneSource);
+    const busyLease=new SessionStore(path.join(busySource,'sessions-v1')).acquire('mcp-bridge'),mixedData=require('./service-fixture.cjs').fixture(mixedRoot);
+    let mixedService,mixedClient;try{
+      mixedService=await require('../runtime/service-main.cjs').runService({root:mixedRoot,hostOptions:mixedData.hostOptions});
+      mixedClient=new ServiceWindowClient({root:mixedRoot,legacyRoot:busySource,trusted:true,workspaceFolders:[pathToFileURL(a).href]});await mixedClient.start();
+      assert.equal(mixedClient.legacyStatus.state,'busy');assert.equal(mixedClient.snapshots.get(sa).tasks.length,0);
+      assert(!JSON.parse(fs.readFileSync(path.join(mixedRoot,'legacy-roots.json'),'utf8')).roots.includes(goneSource));
+      const other=new ServiceWindowClient({root:mixedRoot,legacyRoot:badSource,trusted:true,workspaceFolders:[pathToFileURL(b).href]});
+      try{await other.start();assert.equal(other.legacyStatus.state,'needs_repair');assert.equal(other.snapshots.get(sb).tasks.length,1);}finally{other.close();}
+    }finally{mixedClient?.close();await mixedService?.shutdown();await mixedData.close();busyLease();}
+    const retryRoot=make('service-retry'),retrySource=make('legacy-retry');seed(retrySource,'synthetic-retry',a);registerRoot(retryRoot,retrySource);
+    let now=0,copies=0;
+    const retrying=createMigration({root:retryRoot,clock:()=>now,hooks:{afterCopy(){if(++copies===1)throw Object.assign(Error('Synthetic temporary rename failure'),{code:'EBUSY'});}}});
+    await retrying.sync();assert.equal(retrying.status(canonical(retrySource)).state,'retry_later');
+    await retrying.sync();assert.equal(copies,1,'Backoff prevents an immediate retry');now=2000;await retrying.sync();assert.equal(retrying.status(canonical(retrySource)).state,'ready');await retrying.close();
     console.log('PASS legacy migration: real mid-copy process crash, idempotent verify/marker/backup, live bridge/turn gates, lifetime lease, read-only inferred/unknown spaces, A/B isolation and no queued execution.');
   }finally{await migration?.close();clients.forEach(client=>client.close());await service?.shutdown();assert.equal(path.dirname(base),os.tmpdir());assert(path.basename(base).startsWith('rundix-migration-synthetic-'));fs.rmSync(base,{recursive:true,force:true});}
 }

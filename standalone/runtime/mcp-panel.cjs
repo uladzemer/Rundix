@@ -25,7 +25,7 @@ function serviceSnapshot({client,language,installed,selectedSpaceId,error,taskCh
   const spaceId=spaces.some(space=>space.spaceId===selectedSpaceId)?selectedSpaceId:spaces[0]?.spaceId || null;
   const projection=client?.snapshots.get(spaceId);
   return {language,serviceMode:true,bridgeRunning:!!client?.peer && !client.peer.closed,
-    configurationAvailable:!!installed,spaces,spaceId,error:error || null,
+    configurationAvailable:!!installed,spaces,spaceId,error:error || null,legacyStatus:client?.legacyStatus,
     tasks:projection?.tasks || [],totalTasks:projection?.totalTasks || 0,hasMoreHistory:!!projection?.hasMoreHistory,
     taskChatsAvailable};
 }

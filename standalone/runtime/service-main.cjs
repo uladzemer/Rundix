@@ -15,7 +15,7 @@ async function runService(options = {}) {
     migration=require('./service-migration.cjs').createMigration({root:locations(options).directory,...options.migrationOptions});
     await migration.sync();
     host = await createHeadlessHost({...options.hostOptions, root:locations(options).directory, generation:endpoint.generation,onSessionChanged:rpc.sessionChanged,
-      beforeAdmission:async()=>{await migration.sync();migration.assertReady();},
+      beforeAdmission:async()=>{await migration.sync();},
       taskOptions:{...options.hostOptions?.taskOptions, scope:rpc.scope, signal:rpc.signal, changed:rpc.changed}});
     rpc.attach(host, endpoint.generation,migration); poller = createLimitPoller({host, ...options.pollerOptions});
     let disposal,hostStopped=false,retry;

@@ -38,9 +38,13 @@ class ServiceWindowClient extends EventEmitter {
           local.length !== this.localSpaces.length || local.some(space => !this.localSpaces.some(own => own.spaceId === space.spaceId)) ||
           received.some(space=>space.kind==='legacy' && !/^legacy:[a-f0-9]{64}$/.test(space.spaceId)))
         throw failure('protocol_incompatible');
-      this.spaces=received;
+      this.spaces=received;this.legacyStatus=peer.binding.legacyStatus;
       this.peer = peer;
       peer.on('event', (method, params) => {
+        if(this.peer===peer && method==='legacy.changed'){
+          this.legacyStatus=params.status;this.emit('changed');
+          if(params.status?.state==='ready')peer.close();return;
+        }
         if(this.peer===peer && method==='chat.changed'){
           if(params?.schemaVersion!==1 || !this.spaces.some(space=>space.spaceId===params.spaceId))return peer.close();
           this.emit('chatChanged',params);return;

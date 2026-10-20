@@ -29,6 +29,9 @@ function windowBinding(binding) {
 
 function createWindowRpc({generation, tasks,core,migration}) {
   const peers = new Set(), revisions = new Map(), chatRevisions=new Map();
+  migration?.onChanged((source,status)=>{for(const peer of peers)if(source===undefined || peer.windowBinding.legacyRoot===source){
+    try{peer.send({method:'legacy.changed',params:{status}});}catch{peer.close();}
+  }});
   const revision = spaceId => revisions.get(spaceId) || 0;
   function changed(spaceId) {
     revisions.set(spaceId, revision(spaceId) + 1);
@@ -39,7 +42,7 @@ function createWindowRpc({generation, tasks,core,migration}) {
   }
   async function hello(params, peer) {
     const binding = windowBinding(params.binding);
-    if(params.binding.legacyRoot)await migration?.register(params.binding.legacyRoot);
+    if(params.binding.legacyRoot)binding.legacyRoot=await migration?.register(params.binding.legacyRoot);
     for(const space of migration?.spaces(binding.folders) || [])binding.spaces.set(space.spaceId,space);
     if(peer.closed || peer.signal.aborted)throw failure('service_unavailable');
     peer.windowBinding = binding; peer.subscriptions = new Map();peer.chats=new Map(); peers.add(peer);
@@ -49,7 +52,7 @@ function createWindowRpc({generation, tasks,core,migration}) {
       peer.subscriptions.clear();
       peer.chats.clear();
     });
-    return {bindingId:binding.bindingId, spaces:[...binding.spaces.values()], toolSchemaVersion:1,
+    return {legacyStatus:migration?.status(binding.legacyRoot),bindingId:binding.bindingId, spaces:[...binding.spaces.values()], toolSchemaVersion:1,
       capabilities:['tasks.v1', 'limitWait.v1', 'spaceSnapshot.v1','taskChat.v1']};
   }
   function bound(params, peer) {
@@ -68,10 +71,10 @@ function createWindowRpc({generation, tasks,core,migration}) {
     // Restored/crash-duplicate active records take precedence over the archive.
     for (const task of serviceTasks.archive?.records() || []) if (!serviceTasks.tasks.has(task.taskId)) include(task);
     const legacy=migration?.visible(spaceId,peer.windowBinding.folders) || [];
-    for(const row of legacy)include({...row.task,taskId:row.taskId,space:spaceId,legacy:true,readOnly:true});
+    for(const row of legacy)include({...row.task,...(row.interrupted?{state:'error',recoveryRequired:true}:{}),taskId:row.taskId,space:spaceId,legacy:true,readOnly:true});
     const result = {generation, schemaVersion:1, spaceId, viewRevision:revision(spaceId),
       tasks:page.map(task => ({...(task.legacy?{taskId:task.taskId,title:String(task.description || '').slice(0,160),state:task.state,progress:task.progress,
-        chatId:task.chatId || null,projectDirectory:task.projectDirectory,unsentInputCount:task.unsentInputs?.length || 0,pendingRequests:0,recoveryRequired:false}:serviceTasks.summary(task)),
+        chatId:task.chatId || null,projectDirectory:task.projectDirectory,unsentInputCount:task.unsentInputs?.length || 0,pendingRequests:0,recoveryRequired:!!task.recoveryRequired}:serviceTasks.summary(task)),
         readOnly:!!task.readOnly,report:projection.report(task.report),closed:!!task.closedAt,
         actionRequired:task.providerFailureCode || (task.error?.startsWith('action_required') ? 'provider_unavailable' : null)})),
       chats:page.filter(task => task.chatId).map(task => ({taskId:task.taskId, chatId:task.chatId,

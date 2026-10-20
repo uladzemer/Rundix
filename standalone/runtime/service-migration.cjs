@@ -47,13 +47,15 @@ async function copy(file,value){
   await atomic(file,value);
 }
 function contains(folders,directory){return folders.some(folder=>{const relative=path.relative(folder,directory);return !relative || relative!=='..' && !relative.startsWith('..'+path.sep) && !path.isAbsolute(relative);});}
-function createMigration({root,hooks={}}){
-  const store=new SessionStore(root),leases=new Map(),imports=new Map(),ready=new Set(),bridges=new Map();let syncing,closed=false;
+function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
+  const store=new SessionStore(root),leases=new Map(),imports=new Map(),ready=new Set(),bridges=new Map(),statuses=new Map(),listeners=new Set(),pendingRegistrations=new Map();let syncing,closed=false,timer;
+  const status=source=>statuses.get(source) || statuses.get(undefined) || {state:source?'pending':'ready'};
+  function publish(source,value){statuses.set(source,value);for(const listener of listeners)listener(source,value);}
   async function finish(source,sourceId,records){
     if(!bridges.has(source))bridges.set(source,await require('./mcp-bridge.cjs').serve({directory:path.join(source,'mcp'),call:()=>{
       throw Object.assign(Error('Replace the Rundix MCP entry with the service launcher and restart Claude MCP.'),{code:'adapter_upgrade_required'});
     }}));
-    imports.set(sourceId,records);ready.add(source);
+    imports.set(sourceId,records);ready.add(source);publish(source,{state:'ready'});
   }
   async function importRoot(source){
     const canonicalSource=canonical(source),canonicalTarget=canonical(root);
@@ -89,17 +91,16 @@ function createMigration({root,hooks={}}){
         const sourceFile=path.join(tasksDirectory,name),task=await read(sourceFile);
         if(!key(task.taskId) || task.taskId!==name.slice(9,-5) || !key(task.sessionKey) || typeof task.projectDirectory!=='string' || !path.isAbsolute(task.projectDirectory) || task.projectDirectory.includes('\0'))throw failure('migration_conflict');
         if(!['queued','running','waiting_approval','waiting_limit','completed','error','cancelled'].includes(task.state) || !Array.isArray(task.operations))throw failure('migration_conflict');
-        if(['running','waiting_approval'].includes(task.state) || task.recoveryRequired || task.needsReconcile)throw failure('legacy_owner_active');
         let session=null;const sessionFile=sourceStore.file('session',task.sessionKey);
         if(await exists(sessionFile)){
           session=await read(sessionFile);
           if(session.key!==task.sessionKey || task.chatId && session.id!==task.chatId || !Array.isArray(session.items) || session.mcpTask!==true)throw failure('migration_conflict');
-          if(session.lastTurnStatus==='inProgress')throw failure('legacy_owner_active');
           if(session.id){if(!key(session.id))throw failure('migration_conflict');try{sessionLeases.push(sourceStore.acquire(session.id));}catch{throw failure('legacy_owner_active');}}
         }else if(task.chatId)throw failure('migration_conflict');
         let inferred=null,directory=path.normalize(task.projectDirectory);if(process.platform==='win32')directory=directory.toLowerCase();
         try{inferred=resolveSpace(directory).spaceId;directory=canonical(directory);}catch{}
-        const row={schemaVersion:1,sourceId,taskId:'legacy-'+sourceId+'-'+task.taskId,projectDirectory:directory,inferredSpace:inferred,task,session};
+        const interrupted=['running','waiting_approval'].includes(task.state) || !!task.recoveryRequired || !!task.needsReconcile || session?.lastTurnStatus==='inProgress';
+        const row={schemaVersion:1,sourceId,taskId:'legacy-'+sourceId+'-'+task.taskId,projectDirectory:directory,inferredSpace:inferred,task,session,...(interrupted?{interrupted:true}:{})};
         const target=path.join(root,'legacy',sourceId,'task-'+task.taskId+'.json');await copy(target,row);
         records.push(row);checks.push({file:sourceFile,hash:digest(task)});if(session)checks.push({file:sessionFile,hash:digest(session)});
         await hooks.afterCopy?.(records.length);
@@ -123,13 +124,33 @@ function createMigration({root,hooks={}}){
       await finish(source,sourceId,records);
     }finally{for(const release of sessionLeases)release();}
   }
-  async function sync(){
+  async function sync({force=false}={}){
     if(closed)throw failure('migration_conflict');if(syncing)return syncing;
-    syncing=(async()=>{for(;;){const pending=roots(store).filter(source=>!ready.has(source));if(!pending.length)return;for(const source of pending)await importRoot(source);}})().catch(error=>{
-      if(['legacy_owner_active','migration_conflict'].includes(error.code))throw error;
-      if(hooks.afterCopy || hooks.afterVerify || hooks.afterMarker)throw error;
-      throw failure('migration_conflict');
-    }).finally(()=>{syncing=null;});return syncing;
+    syncing=(async()=>{
+      for(const [identity,source] of pendingRegistrations)if(force || !(status(identity).retryAt>clock())){
+        try{registerRoot(root,source);pendingRegistrations.delete(identity);statuses.delete(identity);}
+        catch(error){const attempt=(status(identity).attempt || 0)+1;publish(identity,{state:['EPERM','EACCES','EBUSY'].includes(error.code)?'retry_later':'needs_repair',code:'migration_conflict',attempt,retryAt:clock()+Math.min(60000,retryMs*2**Math.min(attempt-1,6))});}
+      }
+      const visited=new Set();
+      for(;;){const pending=roots(store).filter(source=>!visited.has(source) && !ready.has(source) && (force || !(status(source).retryAt>clock())));if(!pending.length)return;
+        for(const source of pending){visited.add(source);try{await importRoot(source);}catch(error){
+          if((hooks.afterCopy || hooks.afterVerify || hooks.afterMarker) && !error.code)throw error;
+          let missing=false;try{await fsp.lstat(source);}catch(check){missing=check.code==='ENOENT';}
+          if(missing){
+            try{const release=store.acquire('legacy-roots');try{store.write('legacy','roots',{schemaVersion:1,roots:roots(store).filter(value=>value!==source)});}finally{release();}
+              leases.get(source)?.();leases.delete(source);publish(source,{state:'vanished'});continue;
+            }catch(drop){error=drop;}
+          }
+          const attempt=(status(source).attempt || 0)+1;
+          const busy=error.code==='legacy_owner_active',transient=['EPERM','EBUSY','EACCES','ENOENT'].includes(error.code);
+          publish(source,{state:busy?'busy':transient?'retry_later':'needs_repair',code:busy?'legacy_owner_active':transient?'legacy_retry_later':'migration_conflict',attempt,
+            retryAt:clock()+Math.min(60000,retryMs*2**Math.min(attempt-1,6))});
+        }}
+      }
+    })().catch(error=>{
+      if((hooks.afterCopy || hooks.afterVerify || hooks.afterMarker) && !error.code)throw error;
+      publish(undefined,{state:'needs_repair',code:'migration_conflict',retryAt:clock()+60000});
+    }).finally(()=>{syncing=null;clearTimeout(timer);if(!closed){timer=setTimeout(()=>void sync().catch(()=>{}),retryMs);timer.unref?.();}});return syncing;
   }
   function assertReady(){if(closed || roots(store).some(source=>!ready.has(source)))throw failure('legacy_owner_active');}
   const all=()=>[...imports.values()].flat();
@@ -138,12 +159,18 @@ function createMigration({root,hooks={}}){
   function chat(spaceId,id,folders,generation){
     const row=visible(spaceId,folders).find(row=>row.taskId===id);if(!row)throw failure('unknown_task');
     return {generation,schemaVersion:1,viewRevision:0,spaceId,taskId:id,owner:'legacy',readOnly:true,chatId:row.task.chatId || null,
-      title:('MCP · '+row.task.description).slice(0,167),state:row.task.state,progress:row.task.progress,closed:false,pendingRequests:[],
+      title:('MCP · '+row.task.description).slice(0,167),state:row.interrupted?'error':row.task.state,recoveryRequired:!!row.interrupted,progress:row.task.progress,closed:false,pendingRequests:[],
       ...projection.transcript(row.session?.items || []),cursor:null};
   }
-  return {sync,assertReady,spaces,visible,chat,
-    async register(source){source=registerRoot(root,source);while(!ready.has(source))await sync();},
-    async close(){closed=true;await syncing?.catch(()=>{});for(const bridge of bridges.values())bridge.dispose();bridges.clear();for(const release of leases.values())release();leases.clear();},
+  return {sync,assertReady,spaces,visible,chat,status,onChanged(listener){listeners.add(listener);return ()=>listeners.delete(listener);},
+    async register(source){
+      if(typeof source!=='string' || !path.isAbsolute(source) || source.includes('\0'))throw failure('migration_conflict');
+      let identity=path.normalize(source);if(process.platform==='win32')identity=identity.toLowerCase();
+      try{identity=canonical(source);registerRoot(root,identity);await sync();}
+      catch(error){if(error.code!=='ENOENT')pendingRegistrations.set(identity,source);publish(identity,{state:error.code==='ENOENT'?'vanished':['EPERM','EACCES','EBUSY'].includes(error.code)?'retry_later':'needs_repair',code:'migration_conflict',retryAt:clock()+retryMs});}
+      return identity;
+    },
+    async close(){closed=true;clearTimeout(timer);await syncing?.catch(()=>{});for(const bridge of bridges.values())bridge.dispose();bridges.clear();for(const release of leases.values())release();leases.clear();listeners.clear();},
   };
 }
 function legacyBridgeRoot(root,file){

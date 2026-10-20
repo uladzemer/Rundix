@@ -40,7 +40,7 @@ function createTaskRpc({providerOptions = {}} = {}) {
         // Ownership precedes provider/connection lookup, including mutation replay.
         if (params.arguments.taskId !== undefined) host.mcp.tasks.get(params.arguments.taskId);
         if (params.name === 'submit_task') await readProviderConfigAsync(providerOptions);
-        if(params.name==='submit_task' || params.name==='continue_task' && !params.arguments.approval){await migration?.sync();migration?.assertReady();}
+        if(params.name==='submit_task' || params.name==='continue_task' && !params.arguments.approval){await migration?.sync();}
         if (context.signal.aborted || peer.signal.aborted) return null;
         if (params.name === 'reload_window') throw failure('unsupported');
         const value = await host.mcp.tasks.call(params.name, params.arguments);

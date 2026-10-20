@@ -32,6 +32,8 @@
     const header=element('header');header.append(element('h1',t('title')),element('p',t('subtitle'),'eyebrow'));root.append(header);
     if(state.serviceMode){
       root.append(element('p',state.language==='ru'?'Задачи выполняются в фоновом сервисе. Закрытие окна не останавливает их.':'Tasks run in the background service. Closing this window leaves them running.','service-note'));
+      if(state.legacyStatus && !['ready','vanished'].includes(state.legacyStatus.state))root.append(element('p',
+        (state.language==='ru'?'Импорт старой истории: ':'Legacy history import: ')+({busy:state.language==='ru'?'старое окно занято; повтор позже':'legacy owner busy; retry later',retry_later:state.language==='ru'?'временная ошибка; повтор позже':'temporary failure; retry later',needs_repair:state.language==='ru'?'данные требуют восстановления':'data needs repair',pending:state.language==='ru'?'ожидается':'pending'}[state.legacyStatus.state] || state.legacyStatus.state),'legacy-status notice'));
       const controls=element('section',undefined,'connection');
       const actions=element('div',undefined,'actions');
       actions.append(button(t('start'),'start',{},state.bridgeRunning),button(t('stop'),'stop',{},!state.bridgeRunning),button(t('config'),'configuration',{},!state.configurationAvailable),button(t('refresh'),'refresh',{},!state.bridgeRunning));

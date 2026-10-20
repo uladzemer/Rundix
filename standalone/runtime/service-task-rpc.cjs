@@ -1,7 +1,7 @@
 const {AsyncLocalStorage} = require('node:async_hooks');
 const {randomUUID} = require('node:crypto');
 const {resolveSpace} = require('./service-space.cjs');
-const {readProviderConfig} = require('./service-provider-config.cjs');
+const {readProviderConfigAsync} = require('./service-provider-config.cjs');
 const budget = (name, args) => ['wait_task', 'wait_tasks'].includes(name)
   ? (Number.isInteger(args?.waitSeconds) ? Math.max(1, Math.min(1500, args.waitSeconds)) : 600) * 1000 + 15000 : 12000;
 const TOOLS = new Set(['submit_task', 'get_task', 'wait_task', 'wait_tasks', 'list_tasks', 'continue_task', 'cancel_task', 'close_task', 'list_models', 'reload_window']);
@@ -27,7 +27,8 @@ function createTaskRpc({providerOptions = {}} = {}) {
         if (!params.arguments || typeof params.arguments !== 'object' || Array.isArray(params.arguments)) throw failure('invalid_argument');
         // Ownership precedes provider/connection lookup, including mutation replay.
         if (params.arguments.taskId !== undefined) host.mcp.tasks.get(params.arguments.taskId);
-        if (params.name === 'submit_task') readProviderConfig(providerOptions);
+        if (params.name === 'submit_task') await readProviderConfigAsync(providerOptions);
+        if (context.signal.aborted || peer.signal.aborted) return null;
         if (params.name === 'reload_window') throw failure('unsupported');
         const value = await host.mcp.tasks.call(params.name, params.arguments);
         if (context.signal.aborted || peer.signal.aborted) return null;

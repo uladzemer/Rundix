@@ -17,7 +17,9 @@ async function main() {
   try {
     const project = path.join(root, 'synthetic-project'); fs.mkdirSync(project);
     fs.writeFileSync(path.join(root, 'settings.json'), JSON.stringify({mcpMaxParallelTasks:2, mcpAccessMode:'manual'}));
-    assert.equal(plainSettings(root)('mcpMaxParallelTasks'), 2);
+    const liveSettings=plainSettings(root);assert.equal(liveSettings('mcpMaxParallelTasks'),2);
+    fs.writeFileSync(path.join(root,'settings.json'),JSON.stringify({mcpMaxParallelTasks:1,mcpAccessMode:'manual'}));
+    assert.equal(liveSettings('mcpMaxParallelTasks'),1,'Service rereads user safety settings');
     const installed = install(root);
     host = await createHeadlessHost({root, generation:'synthetic-service', resolveCli:async () => process.execPath,
       providerOptions:{configPath:installed.configPath, verifyPrivate:() => {}, spawnProcess:launch,

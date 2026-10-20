@@ -12,19 +12,7 @@ const {findCli} = require('./transport.cjs');
 const {parseStrict} = require('./service-json.cjs');
 const {boundedRead, actionRequired} = require('./service-provider-config.cjs');
 
-function plainSettings(root) {
-  let value;
-  try { value = parseStrict(boundedRead(path.join(root, 'settings.json'), 65536)); }
-  catch (error) { if (error.code === 'ENOENT') value = {}; else throw Object.assign(Error('Service settings are unavailable.'), {code:'storage_unavailable'}); }
-  const allowed = ['mcpAccessMode', 'mcpMaxParallelTasks', 'mcpThreadConfig', 'cliPath'];
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !allowed.includes(key)) ||
-      (value.mcpAccessMode !== undefined && !['manual', 'workspace', 'auto', 'full'].includes(value.mcpAccessMode)) ||
-      (value.mcpMaxParallelTasks !== undefined && (!Number.isInteger(value.mcpMaxParallelTasks) || value.mcpMaxParallelTasks < 1 || value.mcpMaxParallelTasks > 5)) ||
-      (value.cliPath !== undefined && (typeof value.cliPath !== 'string' || !path.isAbsolute(value.cliPath))) ||
-      (value.mcpThreadConfig !== undefined && (!value.mcpThreadConfig || typeof value.mcpThreadConfig !== 'object' || Array.isArray(value.mcpThreadConfig))))
-    throw Object.assign(Error('Service settings are invalid.'), {code:'storage_unavailable'});
-  return (key, fallback) => value[key] ?? fallback;
-}
+const {plainSettings}=require('./service-settings.cjs');
 function boundedLogger(root) {
   const directory = path.join(root, 'diagnostics'); fs.mkdirSync(directory, {recursive:true, mode:0o700});
   const file = index => path.join(directory, 'service-' + index + '.log');

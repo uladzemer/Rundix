@@ -21,8 +21,13 @@ async function main() {
     assert(path.isAbsolute(first.configuration.mcpServers.rundix.command));
     assert.deepEqual(first.configuration.mcpServers.rundix.args, [path.join(root, 'bin', 'mcp-server.cjs'), '--service']);
     const second = installLauncher({root});
-    assert.equal(first.launcher, second.launcher); assert.notEqual(registration(root).entryPath, saved.entryPath);
+    assert.equal(first.launcher, second.launcher); assert.equal(registration(root).entryPath, saved.entryPath);assert.equal(fs.readdirSync(path.join(root,'versions')).length,1,'Reuse identical runtime');
     assert(fs.existsSync(saved.entryPath), 'Retain the running runtime');
+    for(let index=0;index<4;index++)fs.mkdirSync(path.join(root,'versions','0.0.0-synthetic-'+index));
+    fs.writeFileSync(path.join(root,'bridge.json'),'{}');installLauncher({root});
+    assert.equal(fs.readdirSync(path.join(root,'versions')).length,5,'Published owner prevents pruning');
+    fs.unlinkSync(path.join(root,'bridge.json'));installLauncher({root});
+    assert.equal(fs.readdirSync(path.join(root,'versions')).length,3,'Idle installation prunes obsolete copies');
     const rpc = createTaskRpc();
     rpc.attach({mcp:{tasks:{call:async (_name, args) => ({space:rpc.scope(), requestId:args.requestId})}}});
     endpoint = await startService({root, ipc:{hello:rpc.hello}, call:rpc.call}); await endpoint.ready();

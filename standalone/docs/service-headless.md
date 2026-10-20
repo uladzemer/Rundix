@@ -327,12 +327,12 @@ provider implementation, credential storage and rotation stay outside this repo.
 In `service` mode this window never starts its MCP bridge/executor or selects a
 window companion for MCP. Manual chats retain their existing connection API.
 The panel displays a background-service note and configuration controls; task
-projection belongs to 3b. Stop in this panel disables its launcher controls;
+projection belongs to 3b. The Stop MCP command disables this window's launcher controls;
 it does not interrupt service tasks or other clients. The service exits when idle.
 
 Start MCP installs a stable `<serviceRoot>/bin/mcp-server.cjs` shim, an atomic
 private `installation.json`, and a versioned installed runtime copy under
-`versions/`. Existing versions are retained while an owner may still use them.
+`versions/`. Identical installed runtimes are reused by content hash. While an owner is published no versions are pruned; idle installations keep the current runtime and two recent copies.
 Registration names absolute `nodePath`, `entryPath`, `adapterPath`; workspace input
 cannot select an executable. Replace only the Rundix Claude MCP entry with the
 configuration shown by the window and restart the adapter. No automatic edit of
@@ -453,3 +453,21 @@ S2 is an explicit owner decision: projectDirectory may execute outside the launc
 space, including another repository. Tasks belong to the submitting adapter's
 space; execution cwd is not an authorization boundary. This permits cross-repo
 work and must be considered when enabling a service provider for MCP clients.
+
+
+## User safety settings and installation lifecycle (C1/C6)
+
+In service mode the window atomically writes only globalValue of mcpAccessMode,
+mcpThreadConfig, mcpMaxParallelTasks and cliPath into serviceRoot/settings.json
+on Start MCP and configuration changes. Unset values are omitted, restoring
+service defaults; workspace overrides are never copied. The service validates
+and rereads the file for settings queries. Changes affect subsequent task
+preparation; cliPath takes effect on the next CLI connection, never by swapping
+an active turn's process. Concurrent windows use last complete atomic write.
+
+Launcher installation runs in a bounded worker, outside the Extension Host event
+loop, and reuses the same complete content-addressed runtime across activations
+and Start/Stop cycles. Installation is serialized; interrupted copies complete
+before registration. Idle pruning holds the startup guard and retains recent
+versions; published owners prevent pruning. Provider-config ACL/digest validation
+also runs in a worker so PowerShell cannot block service ping/task IPC.

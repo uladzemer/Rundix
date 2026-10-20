@@ -104,4 +104,21 @@ function readProviderConfig({configPath = configLocation(), verifyPrivate = priv
     throw actionRequired();
   }
 }
-module.exports = {readProviderConfig, configLocation, actionRequired, boundedRead, digest};
+function readProviderConfigAsync(options = {}) {
+  if (options.verifyPrivate) return Promise.resolve().then(() => readProviderConfig(options));
+  const {Worker} = require('node:worker_threads');
+  return new Promise((resolve, reject) => {
+    // Never serialize credentials, environment or injected functions.
+    const worker = new Worker(__filename, {workerData:{providerConfig:{configPath:options.configPath}}});
+    const timer = setTimeout(() => {worker.terminate();reject(actionRequired('PROVIDER_UNAVAILABLE'));}, 60000);
+    worker.once('message', value => {clearTimeout(timer);value.error ? reject(actionRequired(value.error)) : resolve(value.result);});
+    worker.once('error', () => {clearTimeout(timer);reject(actionRequired());});
+    worker.once('exit', code => {if(code){clearTimeout(timer);reject(actionRequired());}});
+  });
+}
+module.exports = {readProviderConfig, readProviderConfigAsync, configLocation, actionRequired, boundedRead, digest};
+const {isMainThread, workerData, parentPort} = require('node:worker_threads');
+if (!isMainThread && workerData?.providerConfig) {
+  try {parentPort.postMessage({result:readProviderConfig(workerData.providerConfig)});}
+  catch(error) {parentPort.postMessage({error:error.reason === 'action_required' ? error.code : 'PROVIDER_CONFIG_INVALID'});}
+}

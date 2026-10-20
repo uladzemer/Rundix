@@ -3,7 +3,7 @@ const {spawn} = require('node:child_process');
 const path = require('node:path');
 const {randomUUID} = require('node:crypto');
 const {ProviderPeer, rpcError} = require('./service-provider-rpc.cjs');
-const {readProviderConfig, configLocation, boundedRead, digest, actionRequired} = require('./service-provider-config.cjs');
+const {readProviderConfigAsync, configLocation, boundedRead, digest, actionRequired} = require('./service-provider-config.cjs');
 const {DEADLINES, CAPABILITIES, helloParams, callbackOwner, UNAVAILABLE_CODES, equal, knownOutcome} = require('./service-provider-contract.cjs');
 const {ServiceAppServer} = require('./service-cli.cjs');
 
@@ -35,6 +35,7 @@ class ServiceProvider extends EventEmitter {
   #configurationPending = null;
   #providerGeneration = randomUUID(); #cli = null;
   #dispatchAuthorization = null;
+  #launching = false;
   constructor({serviceGeneration, ...options} = {}) {
     super();
     if (typeof serviceGeneration !== 'string' || !serviceGeneration) throw actionRequired();
@@ -49,11 +50,16 @@ class ServiceProvider extends EventEmitter {
   get busy() { return this.#parents.size > 0 || this.#turns.size > 0 || !!this.#idle || !!this.#configurationPending; }
   get accountGrant() { return this.#account ? structuredClone(this.#account) : null; }
   async start() {
-    if (this.#disposed || (this.#lost && this.#start)) throw actionRequired('PROVIDER_PROCESS_UNCERTAIN');
-    if (this.#start) return this.#start;
-    this.#config = readProviderConfig(this.#options);
-    const authority = this.authority;
+    if (this.#disposed) throw actionRequired('PROVIDER_PROCESS_UNCERTAIN');
+    if (this.#start) {
+      if(this.#lost && !this.#launching)throw actionRequired('PROVIDER_PROCESS_UNCERTAIN');
+      return this.#start;
+    }
+    this.#launching = true;
     this.#start = (async () => {
+      this.#config = await readProviderConfigAsync(this.#options);
+      if(this.#disposed)throw actionRequired('PROVIDER_PROCESS_UNCERTAIN');
+      const authority = this.authority;
       const child = (this.#options.spawnProcess || spawn)(this.#options.nodePath || process.execPath, [this.#config.entryPath],
         {cwd:path.dirname(this.#config.entryPath), env:providerEnvironment(this.#options.env || process.env),
           shell:false, windowsHide:true, stdio:['pipe', 'pipe', 'pipe']});
@@ -72,7 +78,8 @@ class ServiceProvider extends EventEmitter {
           result.providerId !== this.#config.provider.id || result.providerVersion !== this.#config.provider.version ||
           !Array.isArray(result.capabilities) || !CAPABILITIES.every(name => result.capabilities.includes(name))) throw actionRequired('PROVIDER_INCOMPATIBLE');
       return this;
-    })().catch(error => { this.#lose(); throw error?.reason === 'action_required' ? error : actionRequired('PROVIDER_UNAVAILABLE'); });
+    })().catch(error => { this.#lose(); throw error?.reason === 'action_required' ? error : actionRequired('PROVIDER_UNAVAILABLE'); })
+      .finally(()=>{this.#launching=false;});
     return this.#start;
   }
   createCli(options = {}) {

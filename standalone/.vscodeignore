@@ -87,3 +87,4 @@
 !runtime/service-adapter.cjs
 !runtime/service-launcher.cjs
 !runtime/service-environment.cjs
+!runtime/service-settings.cjs

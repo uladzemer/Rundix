@@ -18,13 +18,17 @@ async function main() {
     const provider = new ServiceProvider({serviceGeneration:'synthetic-service', configPath, verifyPrivate:() => {},
       spawnProcess:launch, createCli:options => new ServiceAppServer({...options, executable:process.execPath, cwd:directory,
         env:{...process.env, CODEX_HOME:directory}, spawnProcess:(_exe, _argv, opts) => launch(process.execPath, [path.join(__dirname, 'fake-service-cli.cjs')], opts)})});
-    providers.push(provider); await provider.start(); const cli = provider.createCli(); await cli.start();
+    providers.push(provider); const before=children.length;await Promise.all([provider.start(),provider.start()]);assert.equal(children.length,before+1,'Concurrent startup shares validation and child'); const cli = provider.createCli(); await cli.start();
     let selection = 1;
     return {provider, cli, directory, configure:scenario => provider.configureByClient({clientId:'synthetic-client', operationId:'synthetic-operation',
       expectedSelectionRevision:selection++, action:'synthetic', payload:{scenario}})};
   }
   const task = (id, waitId) => ({taskId:id, spaceId:'synthetic-space', attemptId:'synthetic-attempt-' + id, runId:'synthetic-run-' + id, ...(waitId ? {waitId} : {})});
   try {
+    const lateDir=path.join(root,'late-disposal');fs.mkdirSync(lateDir);const lateConfig=install(lateDir);
+    let lateSpawn=0;
+    const late=new ServiceProvider({serviceGeneration:'synthetic-late',configPath:lateConfig.configPath,verifyPrivate:()=>{},spawnProcess(){lateSpawn++;throw Error('Disposed provider must not launch');}});
+    const pendingStart=late.start();await late.dispose();await assert.rejects(pendingStart,{reason:'action_required'});assert.equal(lateSpawn,0);
     await assert.rejects(new ServiceProvider({serviceGeneration:'synthetic-service', configPath:path.join(root, 'missing.json')}).start(), {code:'PROVIDER_NOT_CONFIGURED', reason:'action_required'});
     const {provider, cli, configure} = await create('normal');
     await assert.rejects(cli.request('turn/start'), {code:'connection_unavailable'});

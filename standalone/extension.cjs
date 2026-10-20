@@ -150,6 +150,19 @@ function activate(context) {
   // Global user setting only. An activation owns one mode; changes apply on reload.
   const serviceMode=vscode.workspace.getConfiguration('rundix').inspect('mcpService')?.globalValue==='service';
   let serviceInstallation=null;
+  let serviceSettingsWrite=Promise.resolve();
+  function syncServiceSettings() {
+    const settings=require('./runtime/service-settings.cjs');
+    const config=vscode.workspace.getConfiguration('rundix');
+    const snapshot=Object.fromEntries(settings.KEYS.map(key=>[key,{globalValue:config.inspect(key)?.globalValue}]));
+    serviceSettingsWrite=serviceSettingsWrite.catch(()=>{}).then(()=>settings.writeServiceSettings(
+      serviceInstallation?.root || require('./runtime/service-endpoint.cjs').locations().directory,key=>snapshot[key]));
+    return serviceSettingsWrite;
+  }
+  if(serviceMode)context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event=>{
+    if(require('./runtime/service-settings.cjs').KEYS.some(key=>event.affectsConfiguration('rundix.'+key)))
+      void syncServiceSettings().catch(()=>vscode.window.showErrorMessage('Background service settings could not be saved. Start MCP again before submitting tasks.'));
+  }));
   let mcpEditor=null, mcpPanelBusy=false;
   const mcpRecords=()=>serviceMode?[]:mcpHost.tasks?[...mcpHost.tasks.tasks.values()]:mcpPanelState.readRecords(path.join(context.globalStorageUri.fsPath,'mcp','tasks'));
   async function connectMcpPool() {
@@ -276,7 +289,8 @@ function activate(context) {
   async function startMcp() {
     if(!serviceMode)return mcpHost.start();
     if(!vscode.workspace.isTrusted)throw Error('Workspace trust is required.');
-    serviceInstallation ||= require('./runtime/service-launcher.cjs').installLauncher();
+    serviceInstallation ||= await require('./runtime/service-launcher.cjs').installLauncherAsync();
+    await syncServiceSettings();
     await context.globalState.update('mcpEnabled',true);
     return serviceInstallation.launcher;
   }

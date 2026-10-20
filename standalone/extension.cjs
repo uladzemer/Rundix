@@ -1429,17 +1429,43 @@ function activate(context) {
     const input = buildInput(text, attached, options.includeIde!==false && s.prefs.ide && lastEditor?.document.uri.scheme==='file'
       ? {path:lastEditor.document.uri.fsPath,text:lastEditor.document.getText(lastEditor.selection).slice(0,20000)} : null);
     const sessionRelease = store.acquire(s.id), releaseDirectory=directoryLease;
-    const release = () => {sessionRelease();releaseDirectory?.();};
+    const client=server, connection=activeConnection, threadId=s.id, previousTurnId=s.turnId;
+    let unresolved=true, startPending=true, startUncertain=false, released=false, observed=null;
+    const current=()=>server===client && activeConnection===connection && s.id===threadId;
+    const release = () => {
+      // Disconnect cleanup cannot turn an unanswered mutation into a clean failure.
+      if(unresolved || (startPending || startUncertain) && observed?.status==='inProgress' || released)return;
+      released=true;sessionRelease();releaseDirectory?.();
+      client.removeListener?.('notification',observeTurn);
+      client.removeListener?.('disconnected',observeDisconnect);
+      if(turnLeases.get(threadId)===release)turnLeases.delete(threadId);
+    };
+    const observeTurn=message=>{
+      const p=message.params;
+      if(!current() || p?.threadId!==threadId || !p.turn?.id || p.turn.id===previousTurnId ||
+        !['turn/started','turn/completed'].includes(message.method))return;
+      if(observed && observed.id!==p.turn.id)return;
+      observed={id:p.turn.id,status:message.method==='turn/started'?'inProgress':p.turn.status};
+      unresolved=false;
+      s.busy=message.method==='turn/started';s.turnId=s.busy?p.turn.id:null;
+      if(!s.busy){s.lastTurnStatus=p.turn.status;release();}
+    };
+    // The Codex process is gone, so no turn of this request can still run: free the chat.
+    // The pending request still rejects as deliveryUncertain, so queued input is never replayed.
+    const observeDisconnect=()=>{unresolved=false;startPending=false;startUncertain=false;observed=null;release();};
+    client.on?.('notification',observeTurn);
+    client.on?.('disconnected',observeDisconnect);
     directoryLease=null;
     turnLeases.set(s.id, release);
     s.error = null;
     s.stopRequested=false;
     s.busy = true;
+    s.turnId = null;
     s.turnModel = selection.model;
     s.turnStartedAt=Date.now();
     publish(s);
     try {
-      const result = await server.request("turn/start", {
+      const result = await client.request("turn/start", {
         threadId: s.id,
         serviceTierForTurn:serviceTier,
         input,
@@ -1463,14 +1489,41 @@ function activate(context) {
           },
         },
       });
-      if (s.busy) s.turnId = result.turn.id;
-      if(s.busy && s.stopRequested)await server.request('turn/interrupt',{threadId:s.id,turnId:result.turn.id});
+      startPending=false;unresolved=false;
+      observed ||= {id:result.turn.id,status:s.busy?'inProgress':'completed'};
+      if(!s.busy)release();
+      if (current() && s.busy) s.turnId = result.turn.id;
+      if(current() && s.busy && s.stopRequested)await client.request('turn/interrupt',{threadId,turnId:result.turn.id});
       const consumed=new Set(attached.map(file=>file.id));s.attachments=s.attachments.filter(file=>!consumed.has(file.id));
       return {turnId:result.turn.id};
     } catch (error) {
-      release();
-      turnLeases.delete(s.id);
-      s.busy = false;
+      startPending=false;
+      if(!observed && error.deliveryUncertain===false){
+        unresolved=false;release();
+        if(current())s.busy=false;
+      }else{
+        // Unknown errors are conservative too: never automatically resend input.
+        startUncertain=true;
+        error.deliveryUncertain=true;
+        if(!observed && current()){
+          try{
+            const turns=await client.request('thread/turns/list',{
+              threadId,limit:1,sortDirection:'desc',itemsView:'summary',
+            },5000);
+            // A notification wins over a stale list response, as does a new owner.
+            if(!observed && current() && turnLeases.get(threadId)===release && Array.isArray(turns.data)){
+              const turn=turns.data[0];
+              if(turn?.status==='inProgress'){
+                observed={id:turn.id,status:turn.status};unresolved=false;
+                s.busy=true;s.turnId=turn.id;
+              }else if(!turn || ['completed','interrupted','failed'].includes(turn.status)){
+                // A successful, ordered query confirms there is no active turn.
+                unresolved=false;s.busy=false;s.turnId=null;release();
+              }
+            }
+          }catch{ /* Failed reconciliation keeps ownership until a turn notification. */ }
+        }
+      }
       throw error;
     } finally {
       publish(s);
@@ -1501,17 +1554,35 @@ function activate(context) {
     await applyMode(s,id);
   }
   async function queueFollowUp(s,text,attachments){
+    if(s.queueMutation)throw Error(locale.t('Дождитесь сохранения очереди.'));
     const releaseQueue=acquireQueuedSession(s,key=>store.acquire(key));
+    let finishEnqueue;
+    s.queueEnqueue=new Promise(resolve=>{finishEnqueue=resolve;});
+    s.queueMutation=true;s.queueDrainDeferred=false;
     try {
       assertQueueCurrent(s,store.session(s.key));
-      s.followUps ||= [];
-      if(s.followUps.length>=20)throw Error(locale.t('В очереди уже 20 сообщений.'));
+      const queue=s.followUps || [];
+      if(queue.length>=20)throw Error(locale.t('В очереди уже 20 сообщений.'));
       const item={id:randomUUID(),text,attachments:[...attachments],
         modelSelection:typeof s.model==='string'?{model:s.model,effort:s.effort,fast:s.prefs.fast===true}:undefined};
-      s.followUps.push(item);
-      const consumed=new Set(attachments.map(file=>file.id));s.attachments=s.attachments.filter(file=>!consumed.has(file.id));
-      await save(s);publish(s);return item;
-    } finally {releaseQueue();}
+      const consumed=new Set(attachments.map(file=>file.id)), draft=s.draft, previousRecord=s.persistedRecord;
+      const snapshot={...s,followUps:[...queue,item],attachments:s.attachments.filter(file=>!consumed.has(file.id)),
+        draft:draft===text?'':draft};
+      try{await save(snapshot);}catch(error){
+        if(snapshot.persistedRecord===previousRecord)throw error;
+        // The local atomic record is authoritative even if the VS Code cache failed.
+        output.appendLine('[queue] workspace-state-update-failed');
+      }
+      s.followUps=snapshot.followUps;s.persistedRecord=snapshot.persistedRecord;
+      s.attachments=s.attachments.filter(file=>!consumed.has(file.id));
+      if(s.draft===draft)s.draft=snapshot.draft;
+      publish(s);return item;
+    } finally {
+      const deferred=s.queueDrainDeferred;
+      s.queueMutation=false;s.queueDrainDeferred=false;s.queueEnqueue=null;finishEnqueue();releaseQueue();
+      if(deferred && !s.busy && !s.queuePaused && !s.error)
+        void drainFollowUps(s).catch(error=>{s.error=error.message;publish(s);});
+    }
   }
   async function steer(s,text,attachments){
     if(!s.id || !s.turnId || s.compacting)return false;
@@ -1538,8 +1609,17 @@ function activate(context) {
         await applyPendingMode(s);
         const result=await send(s,item.text,item.attachments,{modelSelection:item.modelSelection});
         if(result?.waitUntil)throw Error(locale.t('Очередь ожидает сброса лимитов. Повторите отправку позже.'));
+        // Enqueue may be persisting a snapshot containing this in-flight item.
+        await s.queueEnqueue;
         s.followUps=s.followUps.filter(row=>row.id!==item.id);await save(s);publish(s);
-      }catch(error){s.error=error.message;throw error;}finally{
+      }catch(error){
+        if(error.deliveryUncertain){
+          await s.queueEnqueue;
+          const queued=s.followUps.find(row=>row.id===item.id);
+          if(queued){queued.deliveryUncertain=true;await save(s);}
+        }
+        s.error=error.message;throw error;
+      }finally{
         s.followUpSending=false;publish(s);
         if(!s.busy && s.lastTurnStatus==='completed' && !s.stopRequested && s.followUps?.length && !s.error)
           setTimeout(()=>void drainFollowUps(s).catch(error=>{s.error=error.message;publish(s);}),0);
@@ -1734,12 +1814,15 @@ function activate(context) {
         s.followUpSending=true;publish(s);
         try{
           if(await steer(s,item.text,item.attachments)){
+            await s.queueEnqueue;
             s.followUps=s.followUps.filter(row=>row.id!==item.id);
             await save(s);
           }
         }catch(error){
           // A lost response may already have delivered this input. Never replay it automatically.
-          item.deliveryUncertain=true;await save(s);throw error;
+          await s.queueEnqueue;
+          const queued=s.followUps.find(row=>row.id===item.id);
+          if(queued){queued.deliveryUncertain=true;await save(s);}throw error;
         }finally{
           s.followUpSending=false;publish(s);
           if(!s.busy && s.lastTurnStatus==='completed' && !s.stopRequested && !item.deliveryUncertain)
@@ -1788,7 +1871,6 @@ function activate(context) {
       // Follow-ups wait by default; steering is an explicit action on a pending message.
       if(s.busy || s.followUpSending || s.followUps?.length || msg.action==='enqueue'){
         await queueFollowUp(s,msg.text,[...s.attachments]);
-        s.draft='';await save(s);publish(s);
         await s.panel?.webview.postMessage({type:'sent',key:s.key});
         if(!s.busy)await drainFollowUps(s);
         return;

@@ -50,6 +50,7 @@ async function read(file){
   }
   finally{await handle.close();}
 }
+async function committed(file){try{return await read(file);}catch(error){if(error.code==='ENOENT')throw failure('migration_conflict');throw error;}}
 async function exists(file){try{await fsp.lstat(file);return true;}catch(error){if(error.code==='ENOENT')return false;throw error;}}
 async function atomic(file,value){
   await fsp.mkdir(path.dirname(file),{recursive:true,mode:0o700});const temp=file+'.'+randomUUID()+'.tmp';
@@ -79,7 +80,7 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
     if(!leases.has(source)){try{leases.set(source,sourceStore.acquire('mcp-bridge'));}catch{throw failure('legacy_owner_active');}}
     const mcp=path.join(source,'mcp'),active=path.join(mcp,'tasks'),receipts=path.join(root,'migrations');
     const receiptFile=path.join(receipts,sourceId+'.json'),markerFile=path.join(mcp,'service-migration.json');
-    const previous=await exists(receiptFile)?await read(receiptFile):null;
+    const previous=await exists(receiptFile)?await committed(receiptFile):null;
     const backupFor=g=>path.join(mcp,'backup-'+sourceId+(g?'-g'+g:''),'tasks');
     const targetFor=(g,id)=>path.join(root,'legacy',sourceId,...(g?['g'+g]:[]),'task-'+id+'.json');
     const generationOf=receipt=>receipt.generation || 0;
@@ -92,8 +93,8 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
       const records=[];
       for(const entry of manifest.records){
         if(!key(entry.taskId))throw failure('migration_conflict');
-        const row=await read(targetFor(generation,entry.taskId));
-        if(digest(row)!==entry.hash || row.sourceId!==sourceId || digest(await read(path.join(backup,'mcp-task-'+entry.taskId+'.json')))!==digest(row.task))throw failure('migration_conflict');
+        const row=await committed(targetFor(generation,entry.taskId));
+        if(digest(row)!==entry.hash || row.sourceId!==sourceId || digest(await committed(path.join(backup,'mcp-task-'+entry.taskId+'.json')))!==digest(row.task))throw failure('migration_conflict');
         records.push(describe(row,targetFor(generation,entry.taskId)));
       }
       return records;
@@ -102,25 +103,33 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
     // replaced after the next generation has been copied and verified.
     const histories=await exists(receipts)?(await fsp.readdir(receipts)).filter(name=>name.startsWith(sourceId+'-g') && /^.+-g[0-9]+\.json$/.test(name)) : [];
     histories.sort((a,b)=>Number(a.match(/-g([0-9]+)\.json$/)[1])-Number(b.match(/-g([0-9]+)\.json$/)[1]));
-    for(const file of histories){const receipt=await read(path.join(receipts,file));if(receipt.phase!=='cutover')throw failure('migration_conflict');saved.push(...await verified(receipt));}
+    if(!previous && (histories.length || await exists(markerFile) || await exists(backupFor(0))))throw failure('migration_conflict');
+    if(previous){const generation=generationOf(previous);if(!Number.isSafeInteger(generation) || generation<0 || generation>histories.length || histories.length>generation+(previous.phase==='cutover'?1:0))throw failure('migration_conflict');}
+    for(let index=0;index<histories.length;index++){
+      const file=histories[index],receipt=await committed(path.join(receipts,file));
+      if(file!==sourceId+'-g'+index+'.json' || generationOf(receipt)!==index || receipt.phase!=='cutover' || previous && index===generationOf(previous) && digest(receipt)!==digest(previous))throw failure('migration_conflict');
+      saved.push(...await verified(receipt));
+    }
     let generation=previous?generationOf(previous):0;
     if(previous?.phase==='cutover'){
-      const marker=await read(markerFile);if(marker.manifestHash!==digest(previous.manifest))throw failure('migration_conflict');
+      const marker=await committed(markerFile);if(marker.manifestHash!==digest(previous.manifest))throw failure('migration_conflict');
       saved.push(...await verified(previous));
       if(!await exists(active)){await finish(source,sourceId,selected(saved));return;}
       await copy(path.join(receipts,sourceId+'-g'+generation+'.json'),previous);
       generation++;
     }else if(previous && previous.phase!=='verified')throw failure('migration_conflict');
+    if(previous?.phase==='verified' && generation>0)await committed(markerFile);
     const backup=backupFor(generation);
     if(previous?.phase==='verified' && await exists(backup)){
       // Crash after rename: finish this generation before considering a newly
       // recreated active directory. Session changes cannot alter copied history.
-      const rows=await verified(previous),marker=await read(markerFile);
+      const rows=await verified(previous),marker=await committed(markerFile);
       if(marker.manifestHash!==digest(previous.manifest))throw failure('migration_conflict');
       await atomic(receiptFile,{...previous,phase:'cutover'});saved.push(...rows);
       await finish(source,sourceId,selected(saved));return;
     }
     if(await exists(backup))throw failure('migration_conflict');
+    if(previous?.phase==='verified' && !await exists(active) && previous.manifest?.records?.length)throw failure('migration_conflict');
     const hasActive=await exists(active),names=hasActive?(await fsp.readdir(active)).filter(name=>/^mcp-task-[\w-]+\.json$/.test(name)).sort():[];
     if(names.length>1000)throw failure('migration_conflict');
     const records=[],checks=[],sessionLeases=[];
@@ -184,7 +193,8 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
       }
       for(const source of ready){try{await fsp.lstat(source);if(await exists(path.join(source,'mcp','tasks')))ready.delete(source);}catch{ready.delete(source);}}
       const visited=new Set();
-      for(;;){const pending=roots(store).filter(source=>!visited.has(source) && !ready.has(source) && (force || !(status(source).retryAt>clock())));if(!pending.length)return;
+      for(;;){const configured=roots(store);if(statuses.delete(undefined))for(const listener of listeners)listener(undefined,{state:'ready'});
+        const pending=configured.filter(source=>!visited.has(source) && !ready.has(source) && (force || !(status(source).retryAt>clock())));if(!pending.length)return;
         for(const source of pending){visited.add(source);try{await importRoot(source);}catch(error){
           if((hooks.afterCopy || hooks.afterVerify || hooks.afterMarker) && !error.code)throw error;
           let missing=false;try{await fsp.lstat(source);}catch(check){missing=check.code==='ENOENT';}

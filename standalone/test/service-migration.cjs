@@ -203,6 +203,13 @@ async function main(){
     assert.equal(registry.status(canonical(registrySource)).state,'needs_repair');
     fs.writeFileSync(path.join(registryRoot,'legacy-roots.json'),JSON.stringify({schemaVersion:1,roots:[]}));await registry.sync({force:true});
     assert.equal(registry.status(canonical(registrySource)).state,'ready');assert.equal(registry.visible(sa,[canonical(a)]).length,1,'Pending first registration retries after registry repair');await registry.close();
+    assert.equal(registry.status(undefined).state,'ready','Successful registry pass clears the global failure fallback');
+    const additiveId=fs.readdirSync(path.join(additiveRoot,'legacy')).find(name=>/^[a-f0-9]{64}$/.test(name));
+    for(const file of [path.join(additiveRoot,'legacy',additiveId,'task-synthetic-repeat.json'),path.join(additiveSource,'mcp','service-migration.json'),path.join(additiveRoot,'migrations',additiveId+'-g0.json'),path.join(additiveRoot,'migrations',additiveId+'.json')]){
+      const hidden=file+'.synthetic-held';fs.renameSync(file,hidden);const missing=createMigration({root:additiveRoot});
+      try{await missing.sync();assert.equal(missing.status(canonical(additiveSource)).state,'needs_repair','Missing committed record/marker/history/receipt requires repair');}
+      finally{await missing.close();fs.renameSync(hidden,file);}
+    }
     console.log('PASS legacy migration: real mid-copy process crash, idempotent verify/marker/backup, live bridge/turn gates, lifetime lease, read-only inferred/unknown spaces, A/B isolation and no queued execution.');
   }finally{await migration?.close();clients.forEach(client=>client.close());await service?.shutdown();assert.equal(path.dirname(base),os.tmpdir());assert(path.basename(base).startsWith('rundix-migration-synthetic-'));fs.rmSync(base,{recursive:true,force:true});}
 }

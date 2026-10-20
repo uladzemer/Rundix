@@ -30,7 +30,7 @@ function windowBinding(binding) {
 function createWindowRpc({generation, tasks,core,migration}) {
   const peers = new Set(), revisions = new Map(), chatRevisions=new Map();
   migration?.onChanged((source,status)=>{for(const peer of peers)if(source===undefined || peer.windowBinding.legacyRoot===source){
-    try{peer.send({method:'legacy.changed',params:{generation,status}});}catch{peer.close();}
+    try{peer.send({method:'legacy.changed',params:{generation,status:source===undefined?migration.status(peer.windowBinding.legacyRoot):status}});}catch{peer.close();}
   }});
   const revision = spaceId => revisions.get(spaceId) || 0;
   function changed(spaceId) {

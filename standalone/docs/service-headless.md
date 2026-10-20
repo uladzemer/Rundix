@@ -237,9 +237,54 @@ The shapes marked **still incompatible** are integration blockers for the real
 companion; the synthetic service/provider tests do not prove cross-repository
 interoperability. This checkpoint does not modify the companion repository.
 
+## Headless host (item 2)
+
+`service-main.cjs` acquires the existing IPC singleton before creating the host.
+Only the winner constructs `service-headless-host.cjs`, `createSessionCore` and
+`createMcpHost`. The root comes from `service-endpoint.locations` (test override
+isolates discovery and endpoint). At this checkpoint task RPC is deliberately
+unsupported until space-bound dispatch in item 3; there is no unscoped network
+task API or HTTP bridge. The Node entry is not yet installed or launched by the
+extension/adapter. Window mode remains unchanged.
+
+The host reads bounded plain `settings.json` under the service root with only
+`mcpAccessMode`, `mcpMaxParallelTasks`, `mcpThreadConfig`, `cliPath`. KV records
+live in `state/` through atomic SessionStore writes, sessions in `sessions-v1`,
+and current McpTasks records in `mcp/tasks`. Provider configuration stays at its
+separate user-level path. Existing McpTasks recovery semantics are retained.
+
+Core transport delegates to `ServiceProvider` and its `ServiceAppServer` facade;
+both children start lazily. Each turn maps its thread to the service-owned task,
+receives a fresh provider admit and exact grant, then dispatches through the
+driver. Completion-before-ACK is buffered before releasing the exact turn grant.
+If ACK is lost, driver-observed typed start and matching completion can prove
+terminal without replay. Unmatched completion is ignored before changing run
+identity, including an old completion buffered before dispatch rejects.
+Refresh stays owned by the driver, never duplicated by core request handlers.
+No editor/IDE selection, tab, notification or completion UI is invoked. Reload
+reports unsupported; closing a terminal headless task reports no UI tab closed.
+
+Diagnostics accept only fixed event codes plus numeric timestamps, never raw
+messages/paths/chat/auth records, and rotate at 1 MiB across three files. Idle
+exit counts IPC work, clients, all nonterminal tasks, recovery and provider work;
+it cannot dispose a busy host. A connected client resets the idle period.
+
+`test/service-headless-host.cjs` uses real core/executor/driver with a framed
+synthetic provider child and `fake-headless-cli.cjs`, checks report/continuation,
+same chat ID, no-UI close/reload, settings/KV/session files, safe diagnostics,
+singleton loser and real-IPC connected-client/idle exit. It runs in `npm test`.
+These modules remain excluded from the VSIX until service mode is integrated.
+
+Review of item 2 used three read-only rounds. The reviewer reproduced a retained
+grant after lost ACK, then stale-event poisoning and a buffered timing variant.
+The final author fix validates typed terminal candidates immediately through the
+driver, retains bounded ACK candidates, and never overwrites confirmed identity
+with an unvalidated event. Both 5 ms and 80/120 ms stale-event/ACK regressions pass.
+This last correction was author-verified after round 3; it is not represented as
+an independent approval of the final diff. Further review was not requested.
+
 ## Remaining work for 3a
 
-Service main/headless host and integration of the provider/CLI driver with core,
 space-bound IPC hello/dispatch and all task mutations,
 durable intents/recovery, limit waits/poller, demand start/stable launcher,
 experimental user-only setting, and the service/two-space end-to-end suite.

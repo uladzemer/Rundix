@@ -9,7 +9,7 @@ const bridgeTransport = require('./mcp-bridge.cjs');
 // session data only; storageRoot is the existing global storage directory.
 function createMcpHost({core, storageRoot, settings=()=>undefined, trusted=()=>false,
   clock={setTimeout, clearTimeout}, ui={}, version, transport=bridgeTransport,
-  spaceOf=task=>task.space, taskFilter=()=>true}) {
+  spaceOf=task=>task.space, taskFilter=()=>true, taskOptions={}, decorateAdapter=adapter=>adapter}) {
   const {sessions, store, connections, threadReleases, turnLeases} = core;
   let tasks=null, bridge=null, lease=null, starting=null, launcher=null;
   const adapter=executor({connections,sessions,store,
@@ -75,7 +75,7 @@ function createMcpHost({core, storageRoot, settings=()=>undefined, trusted=()=>f
         try{launcher=transport.installLauncher(root,version);}
         catch{launcher=path.join(__dirname,'mcp-server.cjs');}
         tasks=new McpTasks({store:new SessionStore(path.join(root,'tasks')),directoryStore:store,
-          adapter,maxParallel:()=>settings('mcpMaxParallelTasks') ?? 3,spaceOf,taskFilter});
+          ...taskOptions,adapter:decorateAdapter(adapter),maxParallel:()=>settings('mcpMaxParallelTasks') ?? 3,spaceOf,taskFilter});
         bridge=await transport.serve({directory:root,call:(name,args)=>{
           if(!trusted())throw Object.assign(Error('Trust the VS Code workspace that runs the Rundix MCP bridge.'),{code:'workspace_untrusted'});
           return tasks.call(name,args);

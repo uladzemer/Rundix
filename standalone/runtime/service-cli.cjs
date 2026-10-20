@@ -8,7 +8,7 @@ const {AppServer} = require('./transport.cjs');
 
 const METHODS = new Set(['model/list', 'config/read', 'account/read',
   'account/rateLimits/read', 'thread/start', 'thread/resume', 'thread/read',
-  'thread/turns/list', 'thread/items/list', 'thread/name/set', 'turn/start',
+  'thread/turns/list', 'thread/items/list', 'thread/name/set', 'thread/unsubscribe', 'turn/start',
   'turn/steer', 'turn/interrupt', 'thread/compact/start']);
 const MODEL_METHODS = new Set(['turn/start', 'turn/steer', 'thread/compact/start']);
 const PROVIDER_METHODS = new Set(['account/login/start', 'account/read', 'account/rateLimits/read']);

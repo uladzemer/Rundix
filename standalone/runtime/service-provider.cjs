@@ -84,6 +84,15 @@ class ServiceProvider extends EventEmitter {
         });
       }
     });
+    cli.on('notification', message => {
+      const turnId = message.params?.turn?.id;
+      if (typeof turnId !== 'string') return;
+      for (const grant of this.#turns.values()) {
+        if (grant.threadId !== message.params?.threadId) continue;
+        if (message.method === 'turn/started' && (!grant.observedTurnId || grant.observedTurnId === turnId)) grant.observedTurnId = turnId;
+        if (message.method === 'turn/completed' && grant.observedTurnId === turnId) grant.observedCompleted = turnId;
+      }
+    });
     cli.on('disconnected', () => {
       // CLI exit is not inferred from a disconnect. Active/uncertain grants stay
       // reserved until terminal() or the verified restart barrier completes.
@@ -292,7 +301,7 @@ class ServiceProvider extends EventEmitter {
     const owned = this.#turns.get(grant?.leaseId);
     if (!owned || !equal(owned, grant) || owned.state !== 'reserved' || owned.validUntil <= Date.now() ||
         !equal(identity(owned.binding), identity(this.#cli?.binding)) || !this.#cli.authenticated || this.#lost) throw rpcError('STALE_FENCE');
-    owned.state = 'dispatching';
+    owned.state = 'dispatching'; owned.threadId = params.threadId;
     try {
       let pending;
       try {
@@ -301,6 +310,7 @@ class ServiceProvider extends EventEmitter {
       } finally { this.#dispatchAuthorization = null; }
       const result = await pending;
       if (!result?.turn?.id || typeof result.turn.id !== 'string') throw actionRequired('PROVIDER_PROTOCOL_INVALID');
+      if (this.#turns.get(owned.leaseId) !== owned) return result; // Typed terminal arrived before ACK.
       if (this.#lost) { owned.turnId = result.turn.id; throw Object.assign(actionRequired('PROVIDER_UNAVAILABLE'), {deliveryUncertain:true}); }
       owned.state = 'active'; owned.turnId = result.turn.id;
       this.#event('turnStarted', {taskId:owned.taskId, spaceId:owned.spaceId, runId:owned.runId,
@@ -314,7 +324,8 @@ class ServiceProvider extends EventEmitter {
   }
   terminal({turnLeaseId, taskId, runId, turnId, trigger = 'terminal'}) {
     const grant = this.#turns.get(turnLeaseId);
-    if (!grant || grant.taskId !== taskId || grant.runId !== runId || grant.turnId !== turnId || !['terminal', 'confirmedCliExit'].includes(trigger)) throw rpcError('STALE_FENCE');
+    const matchesTurn = grant && (grant.turnId === turnId || !grant.turnId && grant.observedTurnId === turnId && grant.observedCompleted === turnId);
+    if (!grant || grant.taskId !== taskId || grant.runId !== runId || !matchesTurn || !['terminal', 'confirmedCliExit'].includes(trigger)) throw rpcError('STALE_FENCE');
     this.#event('turnTerminal', {taskId, spaceId:grant.spaceId, runId, turnId, turnLeaseId, trigger});
     this.#turns.delete(turnLeaseId); this.#revoke(grant); this.emit('idle');
   }

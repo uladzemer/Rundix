@@ -1,0 +1,72 @@
+// Synthetic v2 companion fixture. Copied to an isolated versioned install by
+// tests, alongside the shared framed transport. No pool, broker or auth files.
+const {ProviderPeer, rpcError} = require('./service-provider-rpc.cjs');
+const {CAPABILITIES} = require('./service-provider-contract.cjs');
+let scenario = 'ready', accountGrant = null;
+let releasePrepare;
+let statusChecks = 0;
+const counts = {authenticate:0, prepareTurn:0, handleRequest:0, turnStarted:0, turnTerminal:0};
+const peer = new ProviderPeer({readable:process.stdin, writable:process.stdout, call:async (method, params, context) => {
+  if (method === 'hello') return {version:{major:2, minor:0}, providerId:'synthetic-provider', providerVersion:'1.0.0', capabilities:CAPABILITIES};
+  if (method === 'configureByClient') {
+    scenario = params.payload?.scenario || 'ready';
+    if (scenario === 'pending-config') return {kind:'pending', operationId:params.operationId};
+    return {kind:'configured', selectionRevision:params.expectedSelectionRevision + 1};
+  }
+  if (method === 'authenticate') {
+    counts.authenticate++;
+    if (scenario === 'auth-required') return {kind:'unavailable', code:'AUTH_REQUIRED', retryable:false, retryAfterMs:0, messageKey:'synthetic.auth'};
+    let fence = context.fence, effectiveBinding;
+    if (scenario === 'reconnect') {
+      const {result} = await peer.request('cli/reconnect', {parentRequestId:context.id, owner:fence.binding.leaseId, binding:fence.binding}, fence, 5000);
+      effectiveBinding = result.binding; fence = {...fence, binding:effectiveBinding};
+    }
+    if (scenario !== 'no-login') {
+      await peer.request('cli/request', {parentRequestId:scenario === 'stale-parent' ? 'retired-parent' : context.id,
+        owner:scenario === 'stale-owner' ? 'foreign-owner' : fence.binding.leaseId, binding:fence.binding,
+        method:scenario === 'logout' ? 'account/logout' : 'account/login/start',
+        params:{type:'chatgptAuthTokens', accessToken:'SYNTHETIC_NOT_A_CREDENTIAL', chatgptAccountId:'synthetic-account', chatgptPlanType:'plus'}}, fence, 5000);
+    }
+    return {kind:'authenticated', accountRevision:fence.binding.accountRevision || 1, ...(effectiveBinding ? {effectiveBinding} : {})};
+  }
+  if (method === 'prepareTurn') {
+    counts.prepareTurn++;
+    if (scenario === 'refresh-barrier' && params.taskId === 'refresh-prepare') await new Promise(resolve => {releasePrepare = resolve;});
+    if (scenario === 'slow') await new Promise(resolve => setTimeout(resolve, 80));
+    if (scenario === 'wait') return {kind:'waitUntil', waitId:params.waitId, resetAt:Date.now() + 30000, reason:'low_remaining'};
+    if (scenario === 'unknown-limits') return {kind:'unavailable', code:'LIMITS_UNKNOWN', retryable:true, retryAfterMs:500, messageKey:'synthetic.limits'};
+    if (scenario === 'needs-decision') return {kind:'needsDecision', decisionId:'synthetic-decision', reason:'low_remaining', options:['wait', 'cancel'], resetAt:null};
+    if (scenario === 'auth-required') return {kind:'unavailable', code:'AUTH_REQUIRED', retryable:false, retryAfterMs:0, messageKey:'synthetic.auth'};
+    if (scenario === 'change-account-old-revision' || scenario === 'change-account-new-revision') {
+      const oldGrant = accountGrant.leaseId;
+      const {result} = await peer.request('cli/request', {parentRequestId:context.id, owner:context.fence.binding.leaseId, binding:context.fence.binding,
+        method:'account/login/start', params:{type:'chatgptAuthTokens', accessToken:'SYNTHETIC_NOT_A_CREDENTIAL', chatgptAccountId:'synthetic-other-account'}}, context.fence, 5000);
+      return {kind:'ready', accountRevision:scenario === 'change-account-old-revision' ? context.fence.binding.accountRevision : result.nextAccountRevision,
+        authGrantId:scenario === 'change-account-old-revision' ? oldGrant : result.authGrantId,
+        limitsSnapshotId:'synthetic-limits', checkRevision:1, validUntil:Date.now() + 60000};
+    }
+    return {kind:'ready', accountRevision:context.fence.binding.accountRevision,
+      authGrantId:scenario === 'bad-grant' ? 'unknown-grant' : accountGrant?.leaseId,
+      limitsSnapshotId:'synthetic-limits', checkRevision:1, validUntil:Date.now() + 60000};
+  }
+  if (method === 'handleRequest') {
+    counts.handleRequest++;
+    releasePrepare?.(); releasePrepare = null;
+    return {kind:'cliResponse', requestId:params.request.id,
+      response:{accessToken:'SYNTHETIC_REFRESH_NOT_A_CREDENTIAL', chatgptAccountId:scenario === 'refresh-other-account' ? 'synthetic-other-account' : 'synthetic-account', chatgptPlanType:'plus'}};
+  }
+  if (method === 'cancelWait') return {kind:'cancelled', waitId:params.waitId};
+  if (method === 'status') {
+    if (scenario === 'pending-config') return {kind:++statusChecks < 2 ? 'pending' : 'succeeded', operationId:params.operationId};
+    if (scenario === 'bad-status') return {status:'ready', accessToken:'SYNTHETIC_NOT_A_CREDENTIAL'};
+    return {status:'ready', counts};
+  }
+  if (method === 'dispose') return {kind:'disposed'};
+  throw rpcError('METHOD_NOT_SUPPORTED');
+}});
+peer.on('event', (method, params) => {
+  if (method === 'lease/grant' && params.grant.kind === 'account') accountGrant = params.grant;
+  if (method === 'turnStarted') counts.turnStarted++;
+  if (method === 'turnTerminal') counts.turnTerminal++;
+});
+peer.on('closed', () => { process.exitCode = 0; });

@@ -6,7 +6,10 @@ const output = value => process.stdout.write(JSON.stringify(value) + '\n');
 readline.createInterface({input:process.stdin}).on('line', line => {
   const message = JSON.parse(line);
   if (message.id === undefined) return;
+  if (!message.method && message.id === 'synthetic-refresh-request') { methods.push('synthetic-refresh-answered'); return; }
   methods.push(message.method);
+  if (message.method === 'thread/read' && message.params.threadId === 'synthetic-refresh')
+    output({id:'synthetic-refresh-request', method:'account/chatgptAuthTokens/refresh', params:{reason:'synthetic-refresh'}});
   let result = {};
   if (message.method === 'account/login/start') {
     if (message.params.chatgptAccountId === 'synthetic-reject') {

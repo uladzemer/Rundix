@@ -39,6 +39,10 @@ class ServiceAppServer extends EventEmitter {
   #authUncertain = false;
   #exit = null;
   #ready = false;
+  #requests = new Map();
+  #claimedRequests = new Set();
+  #confirmedAccountId = null;
+  #turnAuthorizer = null;
   constructor({authority, executable, cwd, env = process.env, spawnProcess, configArgs = []} = {}) {
     super();
     if (!authority || !safeRevision(authority.configRevision) ||
@@ -86,18 +90,23 @@ class ServiceAppServer extends EventEmitter {
         } finally { clearTimeout(timer); }
       }
       if (this.#epoch !== epoch) throw unavailable('connection_changed');
-      this.invalidateProvider(); this.#authUncertain = false; this.#ready = false;
+      this.invalidateProvider(); this.#authUncertain = false; this.#ready = false; this.#confirmedAccountId = null;
       cli = new AppServer(this.#options); this.#cli = cli;
       this.#binding = {appServerId:randomUUID(), appServerGeneration:randomUUID(),
         accountRevision:0, leaseId:randomUUID(), leaseRevision:1};
       cli.on('disconnected', () => {
         if (this.#cli !== cli) return;
-        this.invalidateProvider(); this.#ready = false; this.#cli = null; this.#starting = null;
+        this.invalidateProvider(); this.#requests.clear(); this.#claimedRequests.clear(); this.#ready = false; this.#cli = null; this.#starting = null;
         this.emit('disconnected', 'CLI disconnected. Reconnect the provider.');
       });
       cli.on('protocolError', () => { if (this.#cli === cli) this.emit('protocolError', 'CLI protocol error.'); });
       for (const event of ['notification', 'request']) cli.on(event, message => {
-        if (this.#cli === cli) this.emit(event, message);
+        if (this.#cli !== cli) return;
+        if (event === 'request') this.#requests.set(String(message.id), message);
+        if (event === 'notification' && message.method === 'serverRequest/resolved') {
+          this.#requests.delete(String(message.params?.requestId)); this.#claimedRequests.delete(String(message.params?.requestId));
+        }
+        this.emit(event, message);
       });
       const result = await cli.start();
       if (this.#cli !== cli || this.#epoch !== epoch) throw unavailable('connection_changed');
@@ -105,7 +114,7 @@ class ServiceAppServer extends EventEmitter {
       return result;
     })().catch(error => {
       if (this.#epoch === epoch) {
-        this.invalidateProvider(); this.#ready = false; this.#cli = null; this.#starting = null; cli?.dispose();
+        this.invalidateProvider(); this.#requests.clear(); this.#claimedRequests.clear(); this.#ready = false; this.#cli = null; this.#starting = null; cli?.dispose();
       }
       if (error.code === 'recovery_required') throw error;
       throw rejected(error);
@@ -127,32 +136,44 @@ class ServiceAppServer extends EventEmitter {
     if (!METHODS.has(method)) return Promise.reject(Object.assign(Error('CLI method is unsupported.'), {code:'METHOD_NOT_SUPPORTED', deliveryUncertain:false}));
     if (!this.#ready) throw unavailable();
     if (MODEL_METHODS.has(method) && !this.#authenticated) return Promise.reject(unavailable());
+    if (MODEL_METHODS.has(method)) {
+      try { this.#turnAuthorizer?.({method, params}); }
+      catch (error) { throw Object.assign(error, {deliveryUncertain:false}); }
+    }
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 90000) return Promise.reject(unavailable());
     const fence = this.fence;
     const result = await this.#request(this.#cli, method, params, timeoutMs);
     if (!sameFence(fence, this.fence)) throw Object.assign(unavailable('connection_changed'), {deliveryUncertain:true});
     return result;
   }
-  async authenticateProvider(callback, {leaseId, leaseRevision, timeoutMs = 70000} = {}) {
-    if (!this.#ready || !this.#cli || !this.#binding || this.#auth || this.#authUncertain || typeof callback !== 'function' ||
+  installTurnAuthorizer(authorize) {
+    if (this.#turnAuthorizer || typeof authorize !== 'function') throw unavailable();
+    this.#turnAuthorizer = authorize;
+  }
+  beginProviderTransaction({leaseId, leaseRevision, timeoutMs = 90000} = {}) {
+    if (!this.#ready || !this.#cli || !this.#binding || this.#auth || this.#authUncertain ||
         typeof leaseId !== 'string' || !leaseId || !safeRevision(leaseRevision) || leaseRevision < 1 ||
-        !Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 70000) throw unavailable();
-    this.#authenticated = false;
+        !Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 90000) throw unavailable();
     this.#binding = {...this.#binding, leaseId, leaseRevision};
-    const cli = this.#cli, fence = this.fence;
-    const auth = {active:true, loggedIn:false, loginPending:0}; this.#auth = auth;
-    let timer;
+    const cli = this.#cli, fence = this.fence, deadline = Date.now() + timeoutMs;
+    const auth = {active:true, loggedIn:false, loginPending:0, mutated:false, completed:false, accountId:null, changedAccount:false}; this.#auth = auth;
     const current = () => auth.active && this.#auth === auth && this.#cli === cli && sameFence(this.fence, fence);
-    const deadline = Date.now() + timeoutMs;
+    const invalidated = new Promise((_, reject) => { auth.abort = () => reject(unavailable('connection_changed')); });
+    invalidated.catch(() => {});
     const request = async (method, params = {}, budget = 70000) => {
       if (!current()) throw unavailable('connection_changed');
       if (!PROVIDER_METHODS.has(method) || (method === 'account/login/start' && params.type !== 'chatgptAuthTokens'))
         throw Object.assign(Error('CLI method is unsupported.'), {code:'METHOD_NOT_SUPPORTED', deliveryUncertain:false});
+      if (method === 'account/login/start' && (!['accessToken', 'chatgptAccountId'].every(key => typeof params[key] === 'string' && !!params[key]))) throw unavailable();
       if (!Number.isFinite(budget) || budget <= 0 || budget > 70000) throw unavailable();
       const remaining = Math.min(budget, deadline - Date.now());
       if (remaining <= 0) throw unavailable();
       const loginRequest = method === 'account/login/start';
-      if (loginRequest) auth.loginPending++;
+      if (loginRequest) {
+        auth.loginPending++; auth.mutated = true; this.#authenticated = false;
+        auth.accountId = params.chatgptAccountId;
+        auth.changedAccount ||= params.chatgptAccountId !== this.#confirmedAccountId;
+      }
       let result;
       try { result = await this.#request(cli, method, params, remaining); }
       catch (error) {
@@ -160,46 +181,86 @@ class ServiceAppServer extends EventEmitter {
         throw error;
       } finally { if (loginRequest) auth.loginPending--; }
       if (!current()) throw unavailable('connection_changed');
-      if (method === 'account/login/start') {
+      if (loginRequest) {
         if (result?.type !== 'chatgptAuthTokens') throw unavailable();
-        auth.loggedIn = true;
+        auth.loggedIn = true; auth.accountId = params.chatgptAccountId;
       }
       return result;
     };
+    return {
+      fence:structuredClone(fence), request, invalidated, current,
+      get loggedIn() { return auth.loggedIn; },
+      complete:result => {
+        if (!current() || !auth.loggedIn || result?.kind !== 'authenticated' || !sameFence(result.fence, fence) ||
+            ![fence.binding.accountRevision, fence.binding.accountRevision + 1].includes(result.accountRevision) ||
+            !safeRevision(result.accountRevision) || result.accountRevision < 1 || auth.loginPending) throw unavailable();
+        if (auth.changedAccount && result.accountRevision !== fence.binding.accountRevision + 1)
+          throw Object.assign(unavailable(), {code:'INVALID_REVISION_STEP'});
+        this.#binding = {...this.#binding, accountRevision:result.accountRevision};
+        this.#confirmedAccountId = auth.accountId;
+        this.#authenticated = true; auth.completed = true;
+        return {kind:'authenticated', accountRevision:result.accountRevision};
+      },
+      close:() => {
+        if (this.#auth === auth && this.#cli === cli) {
+          if (auth.loginPending) this.#authUncertain = true;
+          if (auth.mutated && !auth.completed) this.#authenticated = false;
+          this.#auth = null;
+        }
+        auth.active = false;
+      },
+    };
+  }
+  async authenticateProvider(callback, options = {}) {
+    const timeoutMs = options.timeoutMs ?? 70000;
+    if (typeof callback !== 'function' || timeoutMs > 70000) throw unavailable();
+    const transaction = this.beginProviderTransaction({...options, timeoutMs});
+    let timer;
     try {
-      const timeout = new Promise((_, reject) => {
-        auth.abort = () => reject(unavailable('connection_changed'));
-        timer = setTimeout(() => {
-          if (auth.loginPending && this.#cli === cli) this.#authUncertain = true;
-          auth.active = false; reject(unavailable());
-        }, timeoutMs);
-      });
-      // Defer the callback so synchronous failures take the same cleanup path.
-      const result = await Promise.race([Promise.resolve().then(() => callback({fence:structuredClone(fence), request})), timeout]);
-      if (!current() || !auth.loggedIn || result?.kind !== 'authenticated' || !sameFence(result.fence, fence) ||
-          ![fence.binding.accountRevision, fence.binding.accountRevision + 1].includes(result.accountRevision) ||
-          !safeRevision(result.accountRevision) || result.accountRevision < 1 || auth.loginPending) throw unavailable();
-      this.#binding = {...this.#binding, accountRevision:result.accountRevision};
-      this.#authenticated = true;
-      return {kind:'authenticated', accountRevision:result.accountRevision};
+      const result = await Promise.race([
+        Promise.resolve().then(() => callback({fence:transaction.fence, request:transaction.request})),
+        transaction.invalidated,
+        new Promise((_, reject) => { timer = setTimeout(() => reject(unavailable()), timeoutMs); }),
+      ]);
+      return transaction.complete(result);
     } catch {
-      if (this.#auth === auth && this.#cli === cli) this.#authenticated = false;
+      if (transaction.current()) this.invalidateProvider();
       throw unavailable();
-    } finally {
-      if (auth.loginPending && this.#cli === cli) this.#authUncertain = true;
-      clearTimeout(timer); auth.active = false;
-      if (this.#auth === auth) this.#auth = null;
-    }
+    } finally { clearTimeout(timer); transaction.close(); }
+  }
+  useAccountGrant({leaseId, leaseRevision, accountRevision, appServerGeneration}) {
+    if (!this.#authenticated || this.#auth || appServerGeneration !== this.#binding?.appServerGeneration ||
+        accountRevision !== this.#binding.accountRevision || typeof leaseId !== 'string' || !leaseId ||
+        !safeRevision(leaseRevision) || leaseRevision < 1) throw unavailable();
+    this.#binding = {...this.#binding, leaseId, leaseRevision};
+    return this.fence;
+  }
+  claimProviderRequest(request) {
+    const id = String(request?.id);
+    if (!this.#ready || this.#requests.get(id) !== request || this.#claimedRequests.has(id) ||
+        request.method !== 'account/chatgptAuthTokens/refresh') return false;
+    this.#claimedRequests.add(id); return true;
+  }
+  respondProvider(id, result, fence) {
+    const request = this.#requests.get(String(id));
+    if (!this.#cli || !request || !this.#claimedRequests.has(String(id)) || request.method !== 'account/chatgptAuthTokens/refresh' ||
+        !sameFence(fence, this.fence) || (!this.#authenticated && !this.#auth?.active)) throw unavailable('connection_changed');
+    const expectedAccount = this.#auth?.mutated ? this.#auth.accountId : this.#confirmedAccountId;
+    if (!expectedAccount || result?.chatgptAccountId !== expectedAccount) throw Object.assign(unavailable(), {code:'AUTH_REVOKED'});
+    this.#requests.delete(String(id)); this.#claimedRequests.delete(String(id));
+    return this.#cli.respond(id, result);
   }
   respond(id, result, error) {
     if (!this.#cli) return false;
     // A negative reply can always release a pending request. Positive replies
     // require a confirmed binding; external refresh routing is a later v2 seam.
-    if (!error && !this.#authenticated) throw unavailable();
+    if (!error && (!this.#authenticated || this.#requests.get(String(id))?.method === 'account/chatgptAuthTokens/refresh')) throw unavailable();
+    this.#requests.delete(String(id));
+    this.#claimedRequests.delete(String(id));
     return this.#cli.respond(id, result, error);
   }
   dispose() {
-    this.invalidateProvider(); this.#ready = false; this.#epoch++;
+    this.invalidateProvider(); this.#requests.clear(); this.#claimedRequests.clear(); this.#confirmedAccountId = null; this.#ready = false; this.#epoch++;
     const cli = this.#cli; this.#cli = null; this.#starting = null;
     cli?.dispose();
   }

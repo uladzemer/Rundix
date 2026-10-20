@@ -28,6 +28,7 @@
   "configuration.mcpAccessMode.manual": "Вручную: чтение без изменений; запись требует разрешения.",
   "configuration.mcpAccessMode.auto": "Подтверждать за меня: запросы разрешений проверяет автоматическая проверка Codex.",
   "configuration.mcpAccessMode.full": "Полный доступ: файлы и сеть, включая действия вне проекта, без запросов разрешений.",
+  "configuration.mcpMaxParallelTasks.description": "Сколько задач Claude Code через MCP могут одновременно выполнять ходы Codex (1–5). Задачи одного проекта или git worktree всегда идут по очереди; для параллельной работы используйте отдельные worktree.",
   "configuration.activityMotion.description": "Анимировать индикатор активности и менять его подписи в конце переписки.",
   "configuration.activityMotion.auto": "Учитывать системную настройку уменьшения анимации.",
   "configuration.activityMotion.on": "Включить анимацию активности даже при системном уменьшении анимации.",

@@ -7,7 +7,7 @@ const MAX = 1024 * 1024;
 const UNAVAILABLE = 'Rundix MCP bridge is not running. In VS Code run "Rundix: Start MCP bridge and show Claude configuration" or press Start in the Rundix MCP panel, then retry; reuse the same requestId for mutations.';
 // Long polls keep the socket open for their wait budget plus a margin for the final snapshot.
 function budget(name, args) {
-  if (name !== 'wait_task') return 12000;
+  if (name !== 'wait_task' && name !== 'wait_tasks') return 12000;
   const seconds = Number.isInteger(args?.waitSeconds) ? Math.min(Math.max(args.waitSeconds, 1), 1500) : 600;
   return seconds * 1000 + 15000;
 }

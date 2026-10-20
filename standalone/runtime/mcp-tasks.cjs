@@ -4,7 +4,7 @@ const {randomUUID, createHash} = require('node:crypto');
 const directories = require('./task-directory.cjs');
 const active = new Set(['queued', 'running', 'waiting_approval']);
 const states = ['queued','running','waiting_approval','completed','error','cancelled'];
-const MAX_WAIT_SECONDS = 1500;
+const MAX_WAIT_SECONDS = 1500, MAX_PARALLEL = 5;
 // Errors with a code are expected outcomes whose message is safe to return to the MCP client.
 function fail(code, message) { return Object.assign(Error(message), {code}); }
 function string(value, name, limit = 100000) {
@@ -24,8 +24,8 @@ function directoryFilter(value) {
   try { return directories.canonical(value); } catch { return process.platform==='win32' ? value.toLowerCase() : value; }
 }
 class McpTasks {
-  constructor({store, adapter, directoryStore = store}) {
-    this.store = store; this.directoryStore=directoryStore; this.adapter = adapter; this.tasks = new Map(); this.waiters = new Set(); this.executing = false; this.closed = false;
+  constructor({store, adapter, directoryStore = store, maxParallel = () => 1}) {
+    this.store = store; this.directoryStore=directoryStore; this.adapter = adapter; this.maxParallel = maxParallel; this.tasks = new Map(); this.waiters = new Set(); this.starting = new Set(); this.launches = new Set(); this.executing = false; this.closed = false;
     for (const name of fs.readdirSync(store.directory).filter(n => /^mcp-task-[\w-]+\.json$/.test(n))) {
       const task = store.read('mcp-task', name.slice(9, -5));
       if (!task?.taskId || task.taskId!==name.slice(9,-5) || !Array.isArray(task.operations) || typeof task.projectDirectory!=='string' || !states.includes(task.state)) throw Error('MCP task storage is unreadable.');
@@ -38,6 +38,7 @@ class McpTasks {
     this.store.write('mcp-task', task.taskId, task);
     for (const waiter of this.waiters) waiter.check();
   }
+  limit() { const value = Number(this.maxParallel()); return Number.isInteger(value) && value >= 1 ? Math.min(value, MAX_PARALLEL) : 1; }
   get(id) { const task = this.tasks.get(id); if (!task) throw fail('unknown_task', 'Unknown taskId'); return task; }
   view(task, brief = false) {
     const report = task.report;
@@ -104,6 +105,22 @@ class McpTasks {
       this.waiters.add(waiter);
     });
   }
+  // Wakes on the first of several tasks that needs attention, so a client running tasks in parallel waits once.
+  waitAny(args) {
+    if (!Array.isArray(args.taskIds) || !args.taskIds.length || args.taskIds.length > 50 || new Set(args.taskIds).size !== args.taskIds.length) throw fail('invalid_argument', 'Invalid taskIds');
+    if (args.brief !== undefined && typeof args.brief !== 'boolean') throw fail('invalid_argument', 'Invalid brief');
+    const seconds = args.waitSeconds ?? 600;
+    if (!Number.isInteger(seconds) || seconds < 1 || seconds > MAX_WAIT_SECONDS) throw fail('invalid_argument', 'Invalid waitSeconds');
+    const tasks = args.taskIds.map(id => this.get(id));
+    const result = timedOut => ({settled:tasks.filter(settled).map(t=>this.view(t, args.brief)), waiting:tasks.filter(t=>!settled(t)).map(t=>t.taskId), timedOut});
+    if (tasks.some(settled) || this.closed) return result(false);
+    return new Promise(resolve => {
+      const finish = timedOut => { clearTimeout(timer); this.waiters.delete(waiter); resolve(result(timedOut)); };
+      const waiter = {check:()=>{ if (tasks.some(settled)) finish(false); }, close:()=>finish(true)};
+      const timer = setTimeout(()=>finish(true), seconds*1000);
+      this.waiters.add(waiter);
+    });
+  }
   call(name, args = {}) {
     if (this.closed) throw fail('bridge_stopped', 'MCP executor is closed.');
     if (name === 'get_task') {
@@ -111,6 +128,7 @@ class McpTasks {
       return this.view(this.get(args.taskId), args.brief);
     }
     if (name === 'wait_task') return this.wait(args);
+    if (name === 'wait_tasks') return this.waitAny(args);
     if (name === 'list_tasks') return this.list(args);
     if (name === 'submit_task') return this.operation(args.requestId, name, args, op => {
       connected(this.adapter);
@@ -182,8 +200,10 @@ class McpTasks {
     change();
     if (observed() !== before) this.save(task);
   }
-  block(task, reason) { this.update(task, ()=>{ task.progress=reason; }); return 'blocked'; }
+  // Blocked tasks are re-probed at most once a second, even while other tasks keep the scheduler busy.
+  block(task, reason) { task.blockedUntil=Date.now()+1000; this.update(task, ()=>{ task.progress=reason; }); return 'blocked'; }
   async prepare(task) {
+    if (task.blockedUntil > Date.now()) return 'blocked';
     try { this.adapter.assertConnection(task); }
     catch { return this.block(task, 'Waiting for the selected companion connection; inspect the Rundix MCP panel'); }
     // Recovery only observes the old chat; it never resubmits its old input.
@@ -211,7 +231,8 @@ class McpTasks {
     this.executing=true;
     try {
       for (const task of this.tasks.values()) {
-        if (['running','waiting_approval'].includes(task.state)) {
+        // A task still being started is owned by its start() call until that returns.
+        if (['running','waiting_approval'].includes(task.state) && !this.starting.has(task.taskId)) {
           let status;
           try { status = await this.adapter.status(task); }
           catch { if (this.closed) return; task.state='error';task.recoveryRequired=true;task.needsReconcile=true;task.error='Chat status unavailable. Restore the connection and explicitly continue after inspecting the chat.';this.save(task);continue; }
@@ -228,15 +249,20 @@ class McpTasks {
           });
         }
       }
-      if ([...this.tasks.values()].some(t=>['running','waiting_approval'].includes(t.state))) return;
+      // Up to maxParallel turns run at once; directory leases keep one turn per project/worktree.
+      let capacity = this.limit() - [...this.tasks.values()].filter(t=>['running','waiting_approval'].includes(t.state)).length;
       // A blocked task must not stall tasks for other directories; order within one directory is preserved.
       const blocked = new Set();
       for (const task of [...this.tasks.values()].filter(t=>t.state==='queued').sort((a,b)=>a.createdAt-b.createdAt)) {
+        if (capacity <= 0) break;
         if (blocked.has(task.projectDirectory)) continue;
         const outcome = await this.prepare(task);
         // start() releases the fresh reservation itself if the executor closed meanwhile.
-        if (outcome === 'ready') { await this.start(task); return; }
-        if (this.closed || outcome === 'stopped') return;
+        // Starting can wait for a quota reset; it runs alongside the scheduler so other tasks keep being observed.
+        if (outcome === 'ready') { capacity--; this.launch(task); continue; }
+        if (this.closed) return;
+        // A live recovered turn or a pending cancellation still occupies a slot.
+        if (outcome === 'stopped') { capacity--; blocked.add(task.projectDirectory); continue; }
         if (outcome === 'blocked') { blocked.add(task.projectDirectory); continue; }
       }
     } finally {
@@ -247,6 +273,12 @@ class McpTasks {
       else if (tasks.some(t=>t.state==='queued')) this.schedule(1000);
     }
   }
+  idle() { return Promise.all([...this.launches]); }
+  launch(task) {
+    this.starting.add(task.taskId);
+    const started = this.start(task).catch(()=>{}).finally(()=>{ this.starting.delete(task.taskId); this.schedule(); });
+    this.launches.add(started); void started.finally(()=>this.launches.delete(started));
+  }
   async start(task) {
     if (this.closed) { directories.release(this.directoryStore,task.projectDirectory,task.taskId); return; }
     task.state='running'; task.progress='Starting existing Codex executor'; task.recoveryRequired=true; task.awaitingPreparation=false; this.save(task);
@@ -255,10 +287,15 @@ class McpTasks {
         '\n\nFinish with a report containing result, changed files, checks performed and remaining issues.',()=>this.save(task));
       delete task.nextInput;
       task.chatId=this.adapter.chatId(task); this.save(task);
-    } catch {
+    } catch (error) {
       if(task.cancelRequested && task.awaitingPreparation){
         task.state='cancelled';task.recoveryRequired=false;task.progress='Cancelled before model execution';
         directories.release(this.directoryStore,task.projectDirectory,task.taskId);this.save(task);return;
+      }
+      // Nothing was sent (another turn holds the connection or credentials): wait and start again.
+      if(error?.retryable && !task.cancelRequested){
+        task.state='queued';task.recoveryRequired=false;task.progress='Waiting to start: the connection is busy with another turn';
+        task.blockedUntil=Date.now()+5000;directories.release(this.directoryStore,task.projectDirectory,task.taskId);this.save(task);return;
       }
       task.state='error'; task.progress='Execution stopped'; task.error='Execution could not be confirmed. Inspect the chat before continuing; input was not retried.';
       task.needsReconcile=true;

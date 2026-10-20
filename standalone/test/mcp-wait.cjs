@@ -53,11 +53,11 @@ async function main(){
     let [tasks,stub]=fresh('wait');
     const first=tasks.call('submit_task',{...base,requestId:'synthetic-wait-1',projectDirectory:projectA});
     let resolved=null;const waiting=tasks.call('wait_task',{taskId:first.taskId,waitSeconds:30}).then(v=>{resolved=v;});
-    await tasks.tick();assert.equal(tasks.get(first.taskId).state,'running');
-    await tasks.tick();const revision=tasks.get(first.taskId).revision;await tasks.tick();await tasks.tick();
+    await tasks.tick();await tasks.idle();assert.equal(tasks.get(first.taskId).state,'running');
+    await tasks.tick();await tasks.idle();const revision=tasks.get(first.taskId).revision;await tasks.tick();await tasks.idle();await tasks.tick();await tasks.idle();
     assert.equal(tasks.get(first.taskId).revision,revision,'Unchanged polling must not save');
     await new Promise(r=>setImmediate(r));assert.equal(resolved,null,'Running is not settled');
-    stub.done=true;await tasks.tick();await waiting;
+    stub.done=true;await tasks.tick();await tasks.idle();await waiting;
     assert.equal(resolved.state,'completed');assert.equal(resolved.timedOut,false);assert.equal(resolved.report.result,'Synthetic result');
     const immediate=await tasks.call('wait_task',{taskId:first.taskId});assert.equal(immediate.state,'completed');
     const newer=await tasks.call('wait_task',{taskId:first.taskId,afterRevision:immediate.revision,waitSeconds:1});assert.equal(newer.timedOut,true,'afterRevision waits for a newer settled state');
@@ -67,24 +67,24 @@ async function main(){
     // A replayed no-op cancellation must not cancel a later turn.
     tasks.call('cancel_task',{taskId:first.taskId,requestId:'synthetic-noop-cancel'});
     tasks.call('continue_task',{taskId:first.taskId,requestId:'synthetic-follow',clarification:'Synthetic follow-up'});
-    await tasks.tick();assert.equal(tasks.get(first.taskId).state,'running');
+    await tasks.tick();await tasks.idle();assert.equal(tasks.get(first.taskId).state,'running');
     tasks.call('cancel_task',{taskId:first.taskId,requestId:'synthetic-noop-cancel'});
     assert.equal(stub.cancels,0);assert.notEqual(tasks.get(first.taskId).cancelRequested,true);
-    stub.done=true;await tasks.tick();
+    stub.done=true;await tasks.tick();await tasks.idle();
 
     // A rejected approval reports its failure on replay instead of looking applied.
-    stub.done=false;tasks.call('continue_task',{taskId:first.taskId,requestId:'synthetic-follow-2',clarification:'Synthetic second follow-up'});await tasks.tick();
-    stub.requests=[{id:'synthetic-approval',method:'item/commandExecution/requestApproval'}];await tasks.tick();
+    stub.done=false;tasks.call('continue_task',{taskId:first.taskId,requestId:'synthetic-follow-2',clarification:'Synthetic second follow-up'});await tasks.tick();await tasks.idle();
+    stub.requests=[{id:'synthetic-approval',method:'item/commandExecution/requestApproval'}];await tasks.tick();await tasks.idle();
     const asking=await tasks.call('wait_task',{taskId:first.taskId,waitSeconds:5});assert.equal(asking.state,'waiting_approval');
-    stub.requests=[...stub.requests,{id:'synthetic-approval-2',method:'item/fileChange/requestApproval'}];await tasks.tick();
+    stub.requests=[...stub.requests,{id:'synthetic-approval-2',method:'item/fileChange/requestApproval'}];await tasks.tick();await tasks.idle();
     const second=await tasks.call('wait_task',{taskId:first.taskId,afterRevision:asking.revision,waitSeconds:2});
     assert.equal(second.timedOut,false,'A new pending request must wake afterRevision waiters');assert.equal(second.pendingRequests.length,2);
-    stub.requests=stub.requests.slice(0,1);await tasks.tick();
+    stub.requests=stub.requests.slice(0,1);await tasks.tick();await tasks.idle();
     stub.answer=async()=>{throw Error('Synthetic rejection');};
     const approval={taskId:first.taskId,requestId:'synthetic-approval-answer',approval:{id:'synthetic-approval',decision:'accept'}};
     await assert.rejects(tasks.call('continue_task',approval),e=>e.code==='approval_rejected');
     assert.throws(()=>tasks.call('continue_task',approval),e=>e.code==='approval_rejected');
-    stub.requests=[];stub.done=true;await tasks.tick();
+    stub.requests=[];stub.done=true;await tasks.tick();await tasks.idle();
 
     // Compact listing with filters and a stable cursor.
     tasks.call('submit_task',{...base,requestId:'synthetic-list-2',projectDirectory:projectB});
@@ -102,11 +102,11 @@ async function main(){
     const store=tasks.directoryStore;directories.reserve(store,projectA,'synthetic-other-owner');
     const blocked=tasks.call('submit_task',{...base,requestId:'synthetic-blocked',projectDirectory:projectA});
     const free=tasks.call('submit_task',{...base,requestId:'synthetic-free',projectDirectory:projectB});
-    await tasks.tick();
+    await tasks.tick();await tasks.idle();
     assert.equal(tasks.get(free.taskId).state,'running');assert.equal(tasks.get(blocked.taskId).state,'queued');
     assert.match(tasks.get(blocked.taskId).progress,/project directory/);
     const timed=await tasks.call('wait_task',{taskId:blocked.taskId,waitSeconds:1});assert.equal(timed.timedOut,true);assert.equal(timed.state,'queued');
-    stub.done=true;await tasks.tick();directories.release(store,projectA,'synthetic-other-owner');
+    stub.done=true;await tasks.tick();await tasks.idle();directories.release(store,projectA,'synthetic-other-owner');
     tasks.dispose();
 
     // A stopped executor must not start a turn after an await completes.
@@ -129,7 +129,7 @@ async function main(){
     [tasks,stub]=fresh('live-recovery',adapter({async status(task){return task.taskId===liveId?{done:false}:{done:true};}}));
     liveId=tasks.call('submit_task',{...base,requestId:'synthetic-live',projectDirectory:projectA}).taskId;tasks.get(liveId).recoveryRequired=true;
     tasks.call('submit_task',{...base,requestId:'synthetic-behind-live',projectDirectory:projectB});
-    await tasks.tick();assert.equal(stub.starts,0,'No second turn while a recovered turn is active');
+    await tasks.tick();await tasks.idle();assert.equal(stub.starts,0,'No second turn while a recovered turn is active');
     tasks.dispose();
 
     // Coded errors, long polls and the shell waiter through the real bridge.
@@ -138,7 +138,7 @@ async function main(){
     await assert.rejects(request(bridge.descriptor,'get_task',{taskId:'synthetic-missing'}),e=>e.code==='unknown_task' && /Unknown taskId/.test(e.message));
     await assert.rejects(request(path.join(root,'synthetic-missing-bridge.json'),'get_task',{taskId:'x'}),e=>e.code==='bridge_unavailable' && /Start MCP bridge/.test(e.message));
     const remote=await request(bridge.descriptor,'submit_task',{...base,requestId:'synthetic-remote',projectDirectory:projectB});
-    await tasks.tick();
+    await tasks.tick();await tasks.idle();
     setTimeout(()=>{stub.done=true;void tasks.tick();},16500).unref();
     const long=await request(bridge.descriptor,'wait_task',{taskId:remote.taskId,waitSeconds:30});
     assert.equal(long.state,'completed','A wait longer than the old 12 s/15 s limits must survive');
@@ -161,7 +161,7 @@ async function main(){
     assert.equal(installLauncher(path.join(root,'launcher'),'9.9.9-synthetic'),launcher);
     assert.equal(JSON.parse(fs.readFileSync(path.join(path.dirname(launcher),'version.json'))).version,'9.9.9-synthetic');
     const listed=execFileSync(process.execPath,['-e','const s=require(process.argv[1]);process.stdout.write(String(s.tools.length))',launcher],{encoding:'utf8',windowsHide:true});
-    assert.equal(listed,'6');
+    assert.equal(listed,'7');
     const cliBrief=JSON.parse((await execFileAsync(process.execPath,[launcher,'--bridge',bridge.descriptor,'--wait',remote.taskId,'--timeout','30','--brief'],{encoding:'utf8',windowsHide:true,timeout:35000})).stdout.trim());
     assert.equal(cliBrief.state,'completed');assert.deepEqual(cliBrief.reportSummary,reportSummary);assert.equal(Object.hasOwn(cliBrief,'report'),false);
     console.log('MCP wait: settled long polls, revision stability, replay-safe cancel/approval, compact listing, brief reports, queue fairness, stop safety, coded errors, shell waiter and stable launcher passed.');

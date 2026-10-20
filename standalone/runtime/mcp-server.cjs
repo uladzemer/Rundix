@@ -8,6 +8,7 @@ const tools=[
   ['submit_task','Queue a Codex task through the selected Rundix companion. Reuse requestId on retries.',{requestId:text,description:text,projectDirectory:text,acceptanceCriteria:text,model:text,effort:text},['requestId','description','projectDirectory','acceptanceCriteria']],
   ['get_task','Read status, progress, chatId, revision, final report and pending permission requests. Set brief:true to replace report with a compact reportSummary; default false returns the full report.',{taskId:text,brief:{type:'boolean',default:false}},['taskId']],
   ['wait_task','Block until the task needs attention (completed, error, cancelled or waiting_approval) or waitSeconds elapse, then return the same snapshot as get_task plus timedOut. Set brief:true for a compact reportSummary instead of report (default false). Use instead of polling get_task. Pass afterRevision from a previous snapshot to wait for a newer settled state. To wait in the background instead, run the launcher with --wait <taskId> [--brief] (Rundix docs/mcp.md).',{taskId:text,brief:{type:'boolean',default:false},waitSeconds:{type:'integer',minimum:1,maximum:1500},afterRevision:{type:'integer',minimum:0}},['taskId']],
+  ['wait_tasks','Block until any of the given tasks needs attention (completed, error, cancelled or waiting_approval) or waitSeconds elapse. Returns {settled: snapshots of tasks needing attention, waiting: IDs still queued or running, timedOut}. Use it to supervise parallel tasks; brief:true returns reportSummary instead of report.',{taskIds:{type:'array',items:text,minItems:1,maxItems:50},brief:{type:'boolean',default:false},waitSeconds:{type:'integer',minimum:1,maximum:1500}},['taskIds']],
   ['continue_task','Continue the same chat after completion, or answer a pending permission request. Never infer user consent.',{requestId:text,taskId:text,clarification:text,approval:{type:'object',properties:{id:{type:['string','number']},decision:{type:'string',enum:['accept','decline','cancel']},answers:{type:'object',additionalProperties:{type:'string'}},skip:{type:'boolean'},content:{type:'object'}},required:['id'],additionalProperties:false}},['requestId','taskId']],
   ['cancel_task','Request interruption; call wait_task until cancellation is confirmed.',{requestId:text,taskId:text},['requestId','taskId']],
   ['list_tasks','List compact task summaries (no reports), newest created first. Filter by state or projectDirectory; pass nextCursor as cursor for the next page. Read a full report with get_task.',{limit:{type:'integer',minimum:1,maximum:100},state:{type:'string',enum:states},projectDirectory:text,cursor:text},[]],
@@ -51,7 +52,18 @@ async function wait(descriptor,taskId,seconds,{call=request,output=process.stdou
   while(Date.now()<deadline) {
     const remaining=Math.ceil((deadline-Date.now())/1000);
     try {
-      last=await call(descriptor,'wait_task',{taskId,waitSeconds:Math.max(1,Math.min(remaining,1500)),...(brief ? {brief:true} : {})});
+      const ids=taskId.split(','), options={waitSeconds:Math.max(1,Math.min(remaining,1500)),...(brief ? {brief:true} : {})};
+      if(ids.length>1) {
+        // Several tasks: wake on the first that needs attention; an approval outranks a failure, which outranks success.
+        last=await call(descriptor,'wait_tasks',{taskIds:ids,...options});
+        if(!last.timedOut && last.settled.length){
+          output.write(JSON.stringify(last)+'\n');
+          const states=last.settled.map(t=>t.state);
+          return states.includes('waiting_approval')?2:states.some(state=>exitCodes[state]===3)?3:0;
+        }
+        continue;
+      }
+      last=await call(descriptor,'wait_task',{taskId,...options});
       if(!last.timedOut && Object.hasOwn(exitCodes,last.state)){output.write(JSON.stringify(last)+'\n');return exitCodes[last.state];}
     } catch(error) {
       if(error.code!=='bridge_unavailable'){output.write(JSON.stringify({error:error.message,code:error.code || 'rejected'})+'\n');return 1;}
@@ -65,7 +77,7 @@ function argument(name){const index=process.argv.indexOf(name);return index<0?un
 if(require.main===module){
   const descriptor=argument('--bridge'), taskId=argument('--wait'), timeout=Number(argument('--timeout') ?? 3600);
   if(!descriptor || descriptor.startsWith('--') || (process.argv.includes('--wait') && (!taskId || taskId.startsWith('--') || !Number.isInteger(timeout) || timeout<1 || timeout>86400))){
-    process.stderr.write('Usage: node mcp-server.cjs --bridge <bridge.json> [--wait <taskId> [--timeout <seconds>] [--brief]]\n');process.exitCode=1;
+    process.stderr.write('Usage: node mcp-server.cjs --bridge <bridge.json> [--wait <taskId>[,<taskId>...] [--timeout <seconds>] [--brief]]\n');process.exitCode=1;
   }else if(taskId)void wait(descriptor,taskId,timeout,{brief:process.argv.includes('--brief')}).then(code=>{process.exitCode=code;});
   else run(descriptor);
 }

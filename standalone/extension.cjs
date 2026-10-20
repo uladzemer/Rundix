@@ -262,6 +262,7 @@ function activate(context) {
         try{mcpLauncher=mcpBridgeTransport.installLauncher(root,context.extension.packageJSON.version);}
         catch{mcpLauncher=path.join(context.extensionUri.fsPath,'runtime','mcp-server.cjs');}
         mcpTasks=new McpTasks({store:new SessionStore(path.join(root,'tasks')),directoryStore:store,
+          maxParallel:()=>vscode.workspace.getConfiguration('rundix').inspect('mcpMaxParallelTasks')?.globalValue ?? 3,
           adapter:mcpExecutor({connections,sessions,store,create,send,resume,handle,pending:pendingRequests,save,alive:()=>!disposed && !!mcpBridge,
             // Only the user's own settings count: a repository's workspace settings must not grant MCP full access.
             accessMode:()=>vscode.workspace.getConfiguration('rundix').inspect('mcpAccessMode')?.globalValue || 'workspace',
@@ -1282,9 +1283,11 @@ function activate(context) {
     publish(s);
   }
   async function send(s, text, attached=s.attachments, options={}) {
-    if (authBusy) throw Error(locale.t('Дождитесь переключения аккаунта.'));
+    // retryable marks failures that happen before anything is sent and clear up by themselves; MCP tasks wait and retry.
+    if (authBusy) throw Object.assign(Error(locale.t('Дождитесь переключения аккаунта.')),{retryable:true});
     if(s.sendingTask)throw Error(locale.t('Дождитесь обработки уточнений перед согласованием.'));
-    const accountLease = store.acquire('account-credentials');
+    let accountLease;
+    try{accountLease = store.acquire('account-credentials');}catch(error){throw Object.assign(error,{retryable:true});}
     let directoryLease=null, leasedDirectory=null;
     const ensureDirectory=()=>{
       const actual=taskDirectory.canonical(s.cwd || cwd());
@@ -1321,8 +1324,8 @@ function activate(context) {
       const connection = activeConnection;
       const assertCanChange = () => {
         connections.assertCurrent(connection);
-        if ([...sessions.values()].some(session => session.busy || session.compacting)) throw Error('Finish active tasks before changing the connection.');
-        store.assertNoActiveTurns();
+        if ([...sessions.values()].some(session => session.busy || session.compacting)) throw Object.assign(Error('Finish active tasks before changing the connection.'),{retryable:true});
+        try{store.assertNoActiveTurns();}catch(error){throw Object.assign(error,{retryable:true});}
       };
       const decision = await connection.provider.prepareTurn({
         limits: {...limits},

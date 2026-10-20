@@ -1,10 +1,11 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
-const {execFileSync}=require('node:child_process');
+const {execFileSync,execFile}=require('node:child_process');
+const execFileAsync=require('node:util').promisify(execFile);
 const {SessionStore}=require('../runtime/store.cjs');
 const {McpTasks}=require('../runtime/mcp-tasks.cjs');
 const directories=require('../runtime/task-directory.cjs');
 const {serve,request,installLauncher}=require('../runtime/mcp-bridge.cjs');
-const {wait}=require('../runtime/mcp-server.cjs');
+const {wait,tools}=require('../runtime/mcp-server.cjs');
 function adapter(overrides={}) {
   const state={done:false,requests:[],starts:0,cancels:0,answer:async()=>{}};
   return Object.assign(state,{connection:()=>({id:'synthetic-pool'}),assertConnection(){},pending:()=>state.requests,chatId:()=>'synthetic-chat',
@@ -18,6 +19,35 @@ async function main(){
     const projectA=path.join(root,'synthetic-a'),projectB=path.join(root,'synthetic-b');fs.mkdirSync(projectA);fs.mkdirSync(projectB);
     const base={description:'Synthetic task',acceptanceCriteria:'Synthetic check'};
     const fresh=(name,stub=adapter())=>{const t=new McpTasks({store:new SessionStore(path.join(root,name)),adapter:stub});open.push(t);return [t,stub];};
+
+    // Brief snapshots preserve metadata and pending requests without changing the stored report.
+    const report={source:'model_report',result:'Synthetic result '.repeat(3750),changedFiles:['synthetic-a.cjs','synthetic-b.cjs'],checks:['Synthetic check A','Synthetic check B'],remainingIssues:['Synthetic issue']};
+    const reportSummary={source:report.source,resultPreview:report.result.slice(0,500)+'…',resultLength:report.result.length,changedFiles:report.changedFiles,checksCount:2,remainingIssuesCount:1};
+    const [compact,compactStub]=fresh('brief',adapter({async status(){return {done:this.done,report:this.done?report:null};}}));
+    const compactId=compact.call('submit_task',{...base,requestId:'synthetic-brief',projectDirectory:projectA}).taskId;
+    assert.equal(compact.call('get_task',{taskId:compactId,brief:true}).reportSummary,null);
+    assert.equal((await compact.call('wait_task',{taskId:compactId,brief:true,waitSeconds:1})).reportSummary,null);
+    await compact.tick();
+    const briefWaiting=compact.call('wait_task',{taskId:compactId,brief:true,waitSeconds:5});
+    compactStub.done=true;await compact.tick();
+    assert.deepEqual((await briefWaiting).reportSummary,reportSummary);
+    compactStub.requests=[{id:'synthetic-pending',method:'item/commandExecution/requestApproval',params:{command:'synthetic-command',description:'Synthetic permission details'}}];
+    for(const name of ['get_task','wait_task']) {
+      assert.deepEqual(tools.find(t=>t.name===name).inputSchema.properties.brief,{type:'boolean',default:false});
+      const full=await compact.call(name,{taskId:compactId});
+      assert.deepEqual(full.report,report);assert.equal(Object.hasOwn(full,'reportSummary'),false);
+      assert.deepEqual(await compact.call(name,{taskId:compactId,brief:false}),full);
+      const brief=await compact.call(name,{taskId:compactId,brief:true});
+      const {report:omitted,...metadata}=full;
+      assert.deepEqual(brief,{...metadata,reportSummary});assert.equal(Object.hasOwn(brief,'report'),false);
+      assert.deepEqual(brief.pendingRequests,compactStub.requests);
+      assert.throws(()=>compact.call(name,{taskId:compactId,brief:'true'}),e=>e.code==='invalid_argument');
+    }
+    for(const result of ['', 's'.repeat(500)]) {
+      compact.get(compactId).report={...report,result};
+      assert.equal(compact.call('get_task',{taskId:compactId,brief:true}).reportSummary.resultPreview,result);
+    }
+    compact.dispose();
 
     // wait_task resolves on settled states only, and polling does not churn revisions.
     let [tasks,stub]=fresh('wait');
@@ -103,7 +133,7 @@ async function main(){
     tasks.dispose();
 
     // Coded errors, long polls and the shell waiter through the real bridge.
-    [tasks,stub]=fresh('bridge');
+    [tasks,stub]=fresh('bridge',adapter({async status(){return {done:this.done,report:this.done?report:null};}}));
     const bridge=await serve({directory:path.join(root,'bridge-dir'),call:(name,args)=>tasks.call(name,args)});open.push(bridge);
     await assert.rejects(request(bridge.descriptor,'get_task',{taskId:'synthetic-missing'}),e=>e.code==='unknown_task' && /Unknown taskId/.test(e.message));
     await assert.rejects(request(path.join(root,'synthetic-missing-bridge.json'),'get_task',{taskId:'x'}),e=>e.code==='bridge_unavailable' && /Start MCP bridge/.test(e.message));
@@ -117,6 +147,12 @@ async function main(){
     const flaky=async(d,n,a)=>{if(++calls===1)throw Object.assign(Error('down'),{code:'bridge_unavailable'});return request(d,n,a);};
     assert.equal(await wait(bridge.descriptor,remote.taskId,30,{call:flaky,output:sink,pause:async()=>{}}),0);
     assert.equal(JSON.parse(output.trim()).state,'completed');
+    assert.deepEqual(JSON.parse(output.trim()).report,report);
+    output='';
+    const briefCall=async(d,n,a)=>{assert.equal(a.brief,true);return request(d,n,a);};
+    assert.equal(await wait(bridge.descriptor,remote.taskId,30,{call:briefCall,output:sink,brief:true}),0);
+    assert.deepEqual(JSON.parse(output.trim()).reportSummary,reportSummary);
+    assert.equal(Object.hasOwn(JSON.parse(output.trim()),'report'),false);
     output='';assert.equal(await wait(bridge.descriptor,'synthetic-missing',30,{output:sink}),1);assert.equal(JSON.parse(output).code,'unknown_task');
     output='';assert.equal(await wait(path.join(root,'synthetic-missing-bridge.json'),'x',1,{output:sink,pause:ms=>new Promise(r=>setTimeout(r,ms))}),4);
 
@@ -126,7 +162,9 @@ async function main(){
     assert.equal(JSON.parse(fs.readFileSync(path.join(path.dirname(launcher),'version.json'))).version,'9.9.9-synthetic');
     const listed=execFileSync(process.execPath,['-e','const s=require(process.argv[1]);process.stdout.write(String(s.tools.length))',launcher],{encoding:'utf8',windowsHide:true});
     assert.equal(listed,'6');
-    console.log('MCP wait: settled long polls, revision stability, replay-safe cancel/approval, compact listing, queue fairness, stop safety, coded errors, shell waiter and stable launcher passed.');
+    const cliBrief=JSON.parse((await execFileAsync(process.execPath,[launcher,'--bridge',bridge.descriptor,'--wait',remote.taskId,'--timeout','30','--brief'],{encoding:'utf8',windowsHide:true,timeout:35000})).stdout.trim());
+    assert.equal(cliBrief.state,'completed');assert.deepEqual(cliBrief.reportSummary,reportSummary);assert.equal(Object.hasOwn(cliBrief,'report'),false);
+    console.log('MCP wait: settled long polls, revision stability, replay-safe cancel/approval, compact listing, brief reports, queue fairness, stop safety, coded errors, shell waiter and stable launcher passed.');
   }finally{for(const item of open)item.dispose();fs.rmSync(root,{recursive:true,force:true});}
 }
 main().catch(error=>{console.error('MCP wait synthetic checks failed:',error.message);process.exitCode=1;});

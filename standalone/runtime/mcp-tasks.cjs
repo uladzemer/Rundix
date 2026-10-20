@@ -39,10 +39,16 @@ class McpTasks {
     for (const waiter of this.waiters) waiter.check();
   }
   get(id) { const task = this.tasks.get(id); if (!task) throw fail('unknown_task', 'Unknown taskId'); return task; }
-  view(task) {
+  view(task, brief = false) {
+    const report = task.report;
+    const reportFields = brief ? {reportSummary:report ? {
+      source:report.source, resultPreview:report.result.slice(0,500) + (report.result.length > 500 ? '…' : ''),
+      resultLength:report.result.length, changedFiles:report.changedFiles,
+      checksCount:report.checks.length, remainingIssuesCount:report.remainingIssues.length,
+    } : null} : {report:report || null};
     return JSON.parse(JSON.stringify({taskId:task.taskId, state:task.state, progress:task.progress,
       chatId:task.chatId || null, projectDirectory:task.projectDirectory, createdAt:task.createdAt,
-      updatedAt:task.updatedAt, revision:task.revision || 0, report:task.report || null, error:task.error || null,
+      updatedAt:task.updatedAt, revision:task.revision || 0, accessMode:task.accessMode || null, ...reportFields, error:task.error || null,
       queuedContinuations:task.continuations?.length || 0,
       recoveryRequired:recoveryRequired(task), pendingRequests:this.adapter.pending(task)}));
   }
@@ -85,13 +91,14 @@ class McpTasks {
   }
   wait(args) {
     const task = this.get(args.taskId);
+    if (args.brief !== undefined && typeof args.brief !== 'boolean') throw fail('invalid_argument', 'Invalid brief');
     const seconds = args.waitSeconds ?? 600, after = args.afterRevision;
     if (!Number.isInteger(seconds) || seconds < 1 || seconds > MAX_WAIT_SECONDS) throw fail('invalid_argument', 'Invalid waitSeconds');
     if (after !== undefined && (!Number.isInteger(after) || after < 0)) throw fail('invalid_argument', 'Invalid afterRevision');
     const ready = () => settled(task) && (after === undefined || (task.revision || 0) > after);
-    if (ready() || this.closed) return {...this.view(task), timedOut:false};
+    if (ready() || this.closed) return {...this.view(task, args.brief), timedOut:false};
     return new Promise(resolve => {
-      const finish = timedOut => { clearTimeout(timer); this.waiters.delete(waiter); resolve({...this.view(task), timedOut}); };
+      const finish = timedOut => { clearTimeout(timer); this.waiters.delete(waiter); resolve({...this.view(task, args.brief), timedOut}); };
       const waiter = {check:()=>{ if (ready()) finish(false); }, close:()=>finish(true)};
       const timer = setTimeout(()=>finish(true), seconds*1000);
       this.waiters.add(waiter);
@@ -99,7 +106,10 @@ class McpTasks {
   }
   call(name, args = {}) {
     if (this.closed) throw fail('bridge_stopped', 'MCP executor is closed.');
-    if (name === 'get_task') return this.view(this.get(args.taskId));
+    if (name === 'get_task') {
+      if (args.brief !== undefined && typeof args.brief !== 'boolean') throw fail('invalid_argument', 'Invalid brief');
+      return this.view(this.get(args.taskId), args.brief);
+    }
     if (name === 'wait_task') return this.wait(args);
     if (name === 'list_tasks') return this.list(args);
     if (name === 'submit_task') return this.operation(args.requestId, name, args, op => {

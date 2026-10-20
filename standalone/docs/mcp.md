@@ -47,13 +47,15 @@ Every mutation requires a caller-generated, globally unique `requestId` (for exa
 | Tool | Arguments | Result |
 | --- | --- | --- |
 | `submit_task` | `requestId`, `description`, absolute `projectDirectory`, `acceptanceCriteria`; optional `model`, `effort` | A persisted `taskId` and initial snapshot, before model execution |
-| `get_task` | `taskId` | State, progress, `chatId`, canonical directory, timestamps, `revision`, pending requests, report, recovery flag |
-| `wait_task` | `taskId`; optional `waitSeconds` (1–1500, default 600), `afterRevision` | Blocks until the task is settled (`completed`, `error`, `cancelled`, `waiting_approval`) or the time elapses; the `get_task` snapshot plus `timedOut` |
+| `get_task` | `taskId`; optional `brief` (boolean, default false) | State, progress, `chatId`, canonical directory, timestamps, `revision`, `accessMode` of the task chat, pending requests, report (or compact `reportSummary` with `brief:true`), recovery flag |
+| `wait_task` | `taskId`; optional `waitSeconds` (1–1500, default 600), `afterRevision`, `brief` (boolean, default false) | Blocks until the task is settled (`completed`, `error`, `cancelled`, `waiting_approval`) or the time elapses; the `get_task` snapshot plus `timedOut` |
 | `continue_task` | `requestId`, `taskId`, `clarification` (queued during an active turn); or `approval` for a pending request | Same task and same chat; a queued/new turn or approval response |
 | `cancel_task` | `requestId`, `taskId` | Cancellation requested; wait until confirmed |
 | `list_tasks` | optional `limit` (1–100, default 25), `state`, `projectDirectory`, `cursor` | `{tasks, nextCursor}`: compact summaries without reports, newest created first |
 
 `revision` increases whenever the stored task changes. `wait_task` returns immediately for a settled task; pass `afterRevision` from an earlier snapshot to wait for a newer settled state. A queued task blocked by a busy directory or connection stays `queued` with the reason in `progress`, so `wait_task` returns `timedOut:true` until it can run; tasks for other directories keep running.
+
+With `brief:true`, `get_task` and `wait_task` replace `report` with `reportSummary`: `{source, resultPreview, resultLength, changedFiles, checksCount, remainingIssuesCount}`, or `null` when no report exists. The preview contains the first 500 characters of `report.result`, followed by `…` only when truncated; `resultLength` is the full result length. All changed files and complete `pendingRequests` remain available. Omit `brief` or pass `false` to retrieve the full report.
 
 Errors are returned as `<code>: <message>` with an actionable message, for example `bridge_unavailable` (start the bridge in VS Code, then retry with the same `requestId`), `unknown_task`, `invalid_argument`, `invalid_directory`, `request_conflict`, `connection_unavailable`, `approval_not_pending`, `approval_rejected`, `workspace_untrusted`, `limit`. Unexpected failures are reported only as `rejected`.
 
@@ -65,7 +67,7 @@ To keep working while Codex runs, start the launcher as a background shell comma
 node "<extension-storage>/mcp/bin/mcp-server.cjs" --bridge "<extension-storage>/mcp/bridge.json" --wait <taskId> --timeout 3600
 ```
 
-It prints the final snapshot as one JSON line. Exit codes: `0` completed, `2` waiting for approval, `3` error or cancelled, `4` timed out, `1` rejected request. While the bridge is briefly unavailable (for example during a VS Code window reload) it retries every five seconds until the timeout. In Claude Code, run it with background execution so the session is notified when it exits.
+It prints the final snapshot as one JSON line. Add `--brief` to pass `brief:true` to `wait_task` and print the compact report summary. Exit codes: `0` completed, `2` waiting for approval, `3` error or cancelled, `4` timed out, `1` rejected request. While the bridge is briefly unavailable (for example during a VS Code window reload) it retries every five seconds until the timeout. In Claude Code, run it with background execution so the session is notified when it exits.
 
 States: `queued`, `running`, `waiting_approval`, `completed`, `error`, `cancelled`. Progress is descriptive, not an invented percentage. While the companion waits for quota reset, progress identifies the wait and cancellation remains available. Tasks execute serially within the bridge. Per-directory leases also prevent simultaneous turns from ordinary Rundix chats and other windows using the same storage. Real paths resolve symlink aliases; Windows paths compare case insensitively. A lease covers the whole enclosing git worktree, so a chat in a subfolder and a task in the repository root exclude each other; a separate git worktree (its own `.git` file) is independent, even when it is nested inside the repository. Outside git, only the exact directory is leased, so avoid running work in a folder and its subfolder at the same time. A task whose directory was deleted while running needs manual recovery; its lease is released once it is resolved. This does not lock unrelated applications such as Claude's own shell: do not let them edit the same project concurrently.
 

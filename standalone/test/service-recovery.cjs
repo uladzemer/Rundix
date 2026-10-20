@@ -30,9 +30,13 @@ async function main(){
   const adapter=service.host.mcp.tasks.adapter,normalStatus=adapter.status;let failStatus;
   adapter.status=async observed=>observed.taskId===task.taskId?new Promise((_,reject)=>{failStatus=reject;}):normalStatus(observed);
   const checking=service.host.mcp.tasks.tick();await until(()=>failStatus);
+  const originalRelease=service.host.mcp.tasks.release;let releaseFailed=false;
+  service.host.mcp.tasks.release=function(task){originalRelease.call(this,task);if(!releaseFailed){releaseFailed=true;throw Error('Synthetic release failure');}};
+  service.host.provider.on('turnExited',()=>{throw Error('Synthetic downstream listener failure');});
   const generation=service.host.provider.cli.binding.appServerGeneration;
   const cli=data.children.find(value=>value.child.spawnargs.some(arg=>arg.endsWith('fake-headless-cli.cjs'))).child;cli.kill();
   await until(async()=>!(await call(peer,'get_task',{taskId:task.taskId})).recoveryRequired && service.host.provider.activeTurns===0);
+  assert(releaseFailed,'Exit handler survived a release failure');service.host.mcp.tasks.release=originalRelease;
   failStatus(Error('Synthetic stale status failure'));await checking;adapter.status=normalStatus;
   assert.equal(service.host.mcp.tasks.tasks.get(task.taskId).recoveryRequired,false,'Stale status failure cannot undo confirmed exit');
   await until(()=>service.host.provider.cli.authenticated && service.host.provider.cli.binding.appServerGeneration!==generation);
@@ -43,6 +47,11 @@ async function main(){
   await until(()=>service.host.provider.authority.providerGeneration!==providerGeneration);
   await until(()=>service.host.provider.activeTurns===0);
   assert.equal((await call(peer,'get_task',{taskId:lost.taskId})).state,'error');
+  for(let cycle=0;cycle<6;cycle++){
+    await service.host.provider.start();const before=service.host.provider.authority.providerGeneration;
+    data.children.find(value=>value.child.exitCode===null && !value.child.killed && value.child.spawnargs.some(arg=>arg.endsWith('provider-entry.cjs'))).child.kill();
+    await until(()=>service.host.provider.authority.providerGeneration!==before);await service.host.provider.start();
+  }
   const resumed=await submit(peer,'synthetic-explicit-next');await until(()=>service.host.provider.activeTurns===1);
   assert(service.host.provider.cli.authenticated);await call(peer,'cancel_task',{taskId:resumed.taskId,requestId:'synthetic-cancel'});
   await until(()=>service.host.provider.activeTurns===0);
@@ -56,6 +65,13 @@ async function main(){
   const late=net.createConnection(locations({root}).address);late.on('error',()=>{});await pause(50);
   assert.equal(service.endpoint.clients(),0,'Disposed host cannot accept clients after cleanup failure');late.destroy();
   await until(()=>!fs.existsSync(path.join(root,'bridge.json')));service=null;
+  service=await runService({root,hostOptions:data.hostOptions});const fatalPeer=await connect();
+  await submit(fatalPeer,'synthetic-fatal-task');await until(()=>service.host.provider.activeTurns===1);
+  const runtime=new (require('node:events').EventEmitter)(),codes=[];let exits=0;
+  const {installFatalGuards}=require('../runtime/service-fatal.cjs');
+  const removeGuards=installFatalGuards({runtime,log:row=>codes.push(row.code),shutdown:()=>service.shutdown(),exit:code=>{assert.equal(code,1);exits++;}});
+  runtime.emit('uncaughtException',Error('SYNTHETIC_PRIVATE_EXCEPTION'));runtime.emit('unhandledRejection',Error('SYNTHETIC_PRIVATE_REJECTION'));
+  await until(()=>exits===1);assert.deepEqual(codes,['host_error']);assert(!fs.existsSync(path.join(root,'bridge.json')));removeGuards();service=null;
   console.log('PASS service recovery: pre-send input, reserved cleanup, confirmed CLI terminal/re-auth, provider generation restart, no replay and failed idle shutdown rollback.');
  }finally{
   for(const p of peers)p.close();try{await service?.dispose();}catch{}await service?.endpoint.dispose();await data.close();

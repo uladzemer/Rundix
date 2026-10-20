@@ -43,7 +43,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     get(key, fallback) { return kv.read('value', createHash('sha256').update(key).digest('hex'))?.value ?? fallback; },
     async update(key, value) { kv.write('value', createHash('sha256').update(key).digest('hex'), {value}); },
   };
-  const provider = new ServiceProvider({...providerOptions, serviceGeneration:generation});
+  const provider = new ServiceProvider({...providerOptions, serviceGeneration:generation, logger});
   let core, mcp, disposed = false;
   const runs = new Map();
   const noop = () => {};
@@ -162,22 +162,26 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     }
   });
   provider.on('turnExited', ({taskId,turnLeaseId}) => {
+    try {
     const row=[...runs.values()].find(value=>value.taskId===taskId && value.grant.leaseId===turnLeaseId);
     if(!row)return;
     row.exited=true;runs.delete(row.threadId);
     const task=mcp.tasks?.tasks.get(taskId);if(!task)return;
     task.state='error';task.error='Execution stopped after confirmed CLI exit. Continue explicitly after checking the chat.';
-    task.recoveryRequired=false;task.needsReconcile=false;mcp.tasks.release(task);try{mcp.tasks.save(task);}catch{logger({code:'host_error'});}
+    task.recoveryRequired=false;task.needsReconcile=false;
+    try{mcp.tasks.release(task);}catch{logger({code:'host_error'});}
+    mcp.tasks.save(task);
+    }catch{logger({code:'host_error'});}
   });
   try { await mcp.start(); } catch (error) { core.state.disposed = true; throw error; }
   logger({code:'service_started'});
   return {core, mcp, provider, settings, logger,
     busy:() => !disposed && (provider.busy || [...mcp.tasks.tasks.values()].some(task => !['completed', 'error', 'cancelled'].includes(task.state) || task.recoveryRequired)),
-    async dispose() {
+    async dispose({force=false} = {}) {
       if (disposed) return;
-      if (provider.busy || [...mcp.tasks.tasks.values()].some(task => !['completed', 'error', 'cancelled'].includes(task.state) || task.recoveryRequired))
+      if (!force && (provider.busy || [...mcp.tasks.tasks.values()].some(task => !['completed', 'error', 'cancelled'].includes(task.state) || task.recoveryRequired)))
         throw Object.assign(Error('Service has unfinished tasks.'), {code:'service_busy'});
-      await provider.dispose();
+      try{await provider.dispose('serviceShutdown',{force});}catch(error){if(!force)throw error;logger({code:'host_error'});}
       disposed = true; core.state.disposed = true; core.state.server?.dispose(); mcp.dispose(); logger({code:'service_stopped'});
     },
   };

@@ -53,7 +53,9 @@ class ServiceProvider extends EventEmitter {
   async start() {
     if (this.#disposed) throw actionRequired('PROVIDER_PROCESS_UNCERTAIN');
     if (this.#start) {
-      if(this.#lost && !this.#launching)return this.#recover();
+      if(this.#lost && !this.#launching){
+        let timer;try{return await Promise.race([this.#recover(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(actionRequired('PROVIDER_UNAVAILABLE')),7000);})]);}finally{clearTimeout(timer);}
+      }
       return this.#start;
     }
     this.#launching = true;
@@ -79,6 +81,7 @@ class ServiceProvider extends EventEmitter {
       if (!isObject(result) || result.version?.major !== 2 || result.version?.minor !== 0 ||
           result.providerId !== this.#config.provider.id || result.providerVersion !== this.#config.provider.version ||
           !Array.isArray(result.capabilities) || !CAPABILITIES.every(name => result.capabilities.includes(name))) throw actionRequired('PROVIDER_INCOMPATIBLE');
+      this.#attempts=0;clearTimeout(this.#retryTimer);
       return this;
     })().catch(error => { this.#lose(); throw error?.reason === 'action_required' ? error : actionRequired('PROVIDER_UNAVAILABLE'); })
       .finally(()=>{this.#launching=false;});
@@ -121,10 +124,10 @@ class ServiceProvider extends EventEmitter {
       this.#exited.add(binding.appServerGeneration);if(this.#exited.size>32)this.#exited.delete(this.#exited.values().next().value);
       for(const grant of [...this.#turns.values()].filter(grant=>grant.binding.appServerGeneration===binding.appServerGeneration)) {
         const turnId=grant.turnId || grant.observedTurnId || null;
-        this.terminal({turnLeaseId:grant.leaseId,taskId:grant.taskId,runId:grant.runId,turnId,trigger:'confirmedCliExit'});
-        this.emit('turnExited',{taskId:grant.taskId,turnLeaseId:grant.leaseId});
+        try{this.terminal({turnLeaseId:grant.leaseId,taskId:grant.taskId,runId:grant.runId,turnId,trigger:'confirmedCliExit'});}catch{this.#logFailure();}
+        try{this.emit('turnExited',{taskId:grant.taskId,turnLeaseId:grant.leaseId});}catch{this.#logFailure();}
       }
-      for(const grant of [...this.#grants.values()].filter(grant=>grant.binding.appServerGeneration===binding.appServerGeneration))this.#revoke(grant);
+      for(const grant of [...this.#grants.values()].filter(grant=>grant.binding.appServerGeneration===binding.appServerGeneration)){try{this.#revoke(grant);}catch{this.#logFailure();}}
       queueMicrotask(()=>{
         if(this.#disposed || this.#lost || this.#cli!==cli || this.#idle || this.#cliRestarting)return;
         this.#cliRestarting=cli.start().then(()=>this.authenticate('reconnect')).catch(()=>{}).finally(()=>{this.#cliRestarting=null;});
@@ -132,6 +135,7 @@ class ServiceProvider extends EventEmitter {
     });
     return cli;
   }
+  #logFailure(){try{this.#options.logger?.({code:'provider_unavailable'});}catch{}}
   #globalCurrent(fence) {
     return !!fence && !this.#lost && ['serviceGeneration', 'providerGeneration', 'configRevision'].every(key => fence[key] === this.authority[key]);
   }
@@ -148,11 +152,13 @@ class ServiceProvider extends EventEmitter {
     // Do not release turns on provider timeout/disconnect. CLI may still work.
     this.emit('connectionChanged', {reason});
     void this.#cli?.stop().catch(()=>{});
-    if(!this.#disposed && this.#attempts<5) {
-      clearTimeout(this.#retryTimer);
-      this.#retryTimer=setTimeout(()=>{void this.start().catch(()=>{});},Math.min(10000,(this.#options.recoveryBackoffMs ?? 500)*2**this.#attempts));
-      this.#retryTimer.unref?.();
-    }
+    this.#scheduleRecovery();
+  }
+  #scheduleRecovery(){
+    if(this.#disposed || this.#attempts>=5)return;
+    clearTimeout(this.#retryTimer);
+    this.#retryTimer=setTimeout(()=>{void this.#recover().catch(()=>{});},Math.min(10000,(this.#options.recoveryBackoffMs ?? 500)*2**this.#attempts));
+    this.#retryTimer.unref?.();
   }
   #recover() {
     if(this.#recovery)return this.#recovery;
@@ -160,7 +166,6 @@ class ServiceProvider extends EventEmitter {
     this.#recovery=(async()=>{
       clearTimeout(this.#retryTimer);this.#attempts++;
       await oldStart?.catch(()=>{});
-      await new Promise(resolve=>setTimeout(resolve,Math.min(10000,(this.#options.recoveryBackoffMs ?? 500)*2**Math.min(this.#attempts-1,5))));
       if(this.#disposed)throw actionRequired('PROVIDER_UNAVAILABLE');
       await this.#cli?.stop();
       this.#child?.kill();
@@ -172,9 +177,7 @@ class ServiceProvider extends EventEmitter {
       this.#providerGeneration=randomUUID();this.#selectionRevision=1;this.#start=null;
       return this.start();
     })().catch(error=>{
-      if(!this.#disposed && this.#attempts<5) {
-        clearTimeout(this.#retryTimer);this.#retryTimer=setTimeout(()=>{void this.start().catch(()=>{});},Math.min(10000,(this.#options.recoveryBackoffMs ?? 500)*2**this.#attempts));this.#retryTimer.unref?.();
-      }
+      this.#scheduleRecovery();
       throw error;
     }).finally(()=>{this.#recovery=null;});
     return this.#recovery;
@@ -490,12 +493,12 @@ class ServiceProvider extends EventEmitter {
     return {authenticated:result.authenticated, activeTurns:result.activeTurns, preparing:result.preparing,
       ...(result.counts ? {counts:{...result.counts}} : {})};
   }
-  async dispose(trigger = 'serviceShutdown') {
+  async dispose(trigger = 'serviceShutdown', {force=false} = {}) {
     if (this.#disposed) return;
-    if (this.#turns.size || this.#preparing || this.#idle) throw actionRequired('BUSY_ACTIVE');
+    if (!force && (this.#turns.size || this.#preparing || this.#idle)) throw actionRequired('BUSY_ACTIVE');
     this.#disposed = true;clearTimeout(this.#retryTimer);
-    try { if (!this.#lost) await this.#call('dispose', {trigger, mode:'drain'}); } catch {}
-    finally { this.#cli?.dispose(); this.#peer?.close(); this.#child?.kill(); }
+    try { if (!force && !this.#lost) await this.#call('dispose', {trigger, mode:'drain'}); } catch {}
+    finally {try{await this.#cli?.stop();}finally{this.#peer?.close();this.#child?.kill();}}
   }
 }
 module.exports = {ServiceProvider};

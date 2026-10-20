@@ -35,11 +35,21 @@ async function runService(options = {}) {
     idle = idleExit({clients:() => endpoint.clients(), busy:() => endpoint.busy() || host.busy(), onIdle:dispose,
       idleMs:options.idleMs, pollMs:options.pollMs, log:host.logger});
     await endpoint.ready();
-    return {status:'owner', host, endpoint, poller, dispose};
+    const shutdown=async()=>{
+      endpoint.pause();rpc.stop();poller.dispose();idle?.dispose();clearTimeout(retry);
+      try{await host.dispose({force:true});}finally{await endpoint.dispose();}
+    };
+    return {status:'owner', host, endpoint, poller, dispose, shutdown};
   } catch (error) { idle?.dispose(); poller?.dispose(); await endpoint.dispose(); throw error; }
 }
 if (require.main === module) {
   const index = process.argv.indexOf('--service-root');
-  runService({root:index < 0 ? undefined : process.argv[index + 1]}).catch(() => {process.exitCode = 1;});
+  let service;
+  const started=runService({root:index < 0 ? undefined : process.argv[index + 1]}).then(value=>{service=value;return value;});
+  require('./service-fatal.cjs').installFatalGuards({
+    log:value=>{if(service?.host)service.host.logger(value);else process.stderr.write('host_error\n');},
+    shutdown:async()=>{await started.catch(()=>{});await service?.shutdown?.();}
+  });
+  started.catch(()=>{process.exitCode=1;});
 }
 module.exports = {runService};

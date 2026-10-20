@@ -532,3 +532,8 @@ are durable, and active records take precedence after an interrupted move.
 Settings snapshots normalize invalid global values to the window-mode defaults
 and clamp parallelism to the supported range. Atomic-replacement read races retry;
 a failed read retains the last valid snapshot (defaults before the first success).
+
+Confirmed CLI exit cleanup isolates listener/storage failures with fixed diagnostic
+codes. Fatal process errors trigger bounded shutdown without logging exception
+text. Successful provider hello replenishes the recovery budget; scheduled retries
+wait once, while explicit recovery bypasses backoff and waits at most seven seconds.

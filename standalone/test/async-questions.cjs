@@ -27,4 +27,17 @@ const secretSession={};records.remember(secretSession,{id:'b:secret',origin:'blo
 assert.equal(JSON.stringify(secretSession).includes('fixture-private-answer'),false);
 for(let i=0;i<105;i++)records.remember(secretSession,{id:'b:'+i,origin:'blocking',questions:[{id:'q',question:'Question'}],answers:{q:'Answer'}});
 assert.equal(secretSession.questionHistory.length,100);
+// Exercise the host's pending-question policy without creating accounts or sessions.
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
+const host=fs.readFileSync(path.join(__dirname,'../extension.cjs'),'utf8');
+const pendingStart=host.indexOf('  function hasPendingQuestions(s) {');
+const pendingEnd=host.indexOf('  async function setMode(',pendingStart);
+assert(pendingStart>=0 && pendingEnd>pendingStart);
+const pending=vm.runInNewContext('('+host.slice(pendingStart,pendingEnd).trim()+')',{
+ asyncQuestions:require('../runtime/async-questions.cjs'),pendingRequests:new Map(),
+});
+assert.equal(pending({items:[item],asyncQuestionReplies:{[item.id]:'unknown'}}),true);
+assert.equal(pending({items:[item],asyncQuestionReplies:{[item.id]:'unknown'},mcpTask:true}),false);
+assert.equal(pending({items:[item,{type:'userMessage',text:reply}],asyncQuestionReplies:{[item.id]:'unknown'}}),false);
+for(const status of ['sent','skipped','queued'])assert.equal(pending({items:[item],asyncQuestionReplies:{[item.id]:status}}),false);
 console.log('Async questions: structured CLI metadata, correlated replies, validation and historical reply matching passed.');

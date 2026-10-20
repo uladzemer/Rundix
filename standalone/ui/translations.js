@@ -321,6 +321,8 @@
   "Отправляю ответы…": "Sending answers…",
   "Ответы на вопросы": "Question answers",
   "Ответы сохранены": "Answers saved",
+  "Доставка ответов не подтверждена": "Answer delivery was not confirmed",
+  "Доставка ответов не подтверждена. Проверьте чат перед повторным ответом.": "Answer delivery was not confirmed. Check the chat before answering again.",
   "Ожидает ответов": "Awaiting answers",
   "Квиз пропущен": "Quiz skipped",
   "Закрыть и пропустить квиз": "Close and skip quiz",

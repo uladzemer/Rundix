@@ -309,7 +309,9 @@ class WorkbenchMessages {
       }
       if(node.questionLink){
         const history=state.questionHistory?.find(record=>record.id==='a:'+item.id);
-        const status=history?.skipped?WorkbenchI18n.t('Квиз пропущен'):state.asyncQuestionReplies?.[item.id]?WorkbenchI18n.t('Ответы сохранены'):WorkbenchI18n.t('Ожидает ответов');
+        const marker=state.asyncQuestionReplies?.[item.id];
+        const confirmed=globalThis.WorkbenchQuestions.hasReply(state.items,item.id) || marker==='sent' || marker==='skipped';
+        const status=confirmed?(history?.skipped || marker==='skipped'?WorkbenchI18n.t('Квиз пропущен'):WorkbenchI18n.t('Ответы сохранены')):marker==='queued'?WorkbenchI18n.t('Ответы в очереди'):marker==='unknown'?WorkbenchI18n.t('Доставка ответов не подтверждена'):WorkbenchI18n.t('Ожидает ответов');
         node.questionLink.textContent=WorkbenchI18n.t('Ответы на вопросы')+' · '+(item.questions?.length || 0)+' · '+status;
       }
       if (node.copy) node.copy.disabled = !item.text;

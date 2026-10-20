@@ -156,7 +156,7 @@ module.exports=async({page})=>{
  await page.click(panel+' .quiz-option:nth-child(3)');
  await page.click(panel+' .primary');
  assert.ok(await page.evaluate(()=>window.calls.some(call=>call.itemId==='call_multi_panel'&&call.answers['0']==='Notes\nOther')));
- await set({asyncQuestionReplies:{call_multi_panel:'sent'},questionHistory:[{id:'a:call_multi_panel',origin:'async',questions:[{id:'0',question:'Select features',options:[{label:'History'},{label:'Notes'},{label:'Other'}]}],answers:{'0':'Notes\nOther'},status:'sent'}]});
+ await set({asyncQuestionReplies:{call_async_panel:'sent',call_multi_panel:'sent'},questionHistory:[{id:'a:call_multi_panel',origin:'async',questions:[{id:'0',question:'Select features',options:[{label:'History'},{label:'Notes'},{label:'Other'}]}],answers:{'0':'Notes\nOther'},status:'sent'}]});
  assert.ok(await page.$eval(panel,node=>node.hidden));
  await page.click('[data-item-id="call_multi_panel"] .quiz-transcript-open');
  assert.equal(await page.$eval(panel+' input',node=>node.value),'Notes; Other');
@@ -169,4 +169,85 @@ module.exports=async({page})=>{
  await page.waitForFunction(()=>!window.fixture.requests.length);
  await page.evaluate(()=>{window.fixture.items=window.fixture.items.filter(item=>item.id!=='call_multi_panel');window.update();});
  await page.evaluate(()=>{window.fixture.items=window.fixture.items.filter(item=>!['call_async_panel','call_skip_panel'].includes(item.id));window.fixture.prefs.focus=false;window.fixture.questionHistory=[];window.fixture.asyncQuestionReplies={};window.update();});
+ // Persist through the real app: secret fields (including selected options) never enter setState.
+ const fixtureBeforeRecovery=await page.evaluate(()=>({...window.fixture}));
+ await set({requests:[{id:'synthetic-secret-quiz',method:'item/tool/requestUserInput',params:{questions:[
+  {id:'private',question:'Synthetic private answer',isSecret:true,options:[{label:'Synthetic private option'}]},
+  {id:'public',question:'Synthetic public answer'}]}}]});
+ await page.click(panel+' .quiz-multiple');
+ await page.click(panel+' .quiz-option');
+ await page.click(panel+' .quiz-custom-answer summary');
+ await page.type(panel+' input[name="private"]','SYNTHETIC_SECRET_NEVER_PERSIST');
+ await page.click(panel+' .quiz-next');
+ await page.type(panel+' input[name="public"]','Synthetic public draft');
+ assert.ok(await page.evaluate(()=>{
+  const saved=JSON.stringify(window.saved);
+  const entry=window.saved.quizDrafts.find(([key])=>key.includes('synthetic-secret-quiz'));
+  return !saved.includes('SYNTHETIC_SECRET_NEVER_PERSIST') && entry[1].draft.fields[0]===null && entry[1].draft.fields[1].value==='Synthetic public draft';
+ }));
+ // A new panel uses only saved state, as after webview recreation. Refusal retains its draft.
+ assert.ok(await page.evaluate(()=>{
+  const drafts=new Map(window.saved.quizDrafts),state={...window.fixture};
+  let stored;
+  const create=()=>new WorkbenchQuestionPanel(()=>{}, {drafts,onDraft:()=>{stored=JSON.parse(JSON.stringify([...drafts]));}});
+  let dock=create();dock.update(state);
+  const form=dock.views.get('b:synthetic-secret-quiz').form;
+  if(form.querySelector('[name="private"]').value!=='')return false;
+  form.querySelector('[name="private"]').value='SYNTHETIC_REENTERED_SECRET';
+  dock.submit(dock.views.get('b:synthetic-secret-quiz'),{private:'SYNTHETIC_REENTERED_SECRET',public:'Synthetic public draft'});
+  if(!drafts.size)return false;
+  dock.update({...state,error:'Synthetic refusal'});
+  if(dock.views.get('b:synthetic-secret-quiz').busy)return false;
+  dock=create();dock.update(state);
+  if(dock.views.get('b:synthetic-secret-quiz').form.querySelector('[name="public"]').value!=='Synthetic public draft')return false;
+  dock.update({...state,requests:[]});
+  return drafts.size===0 && stored.length===0;
+ }));
+ const uncertain={id:'synthetic-uncertain',type:'agentMessage',questions:[{title:'Synthetic retry choice'}]};
+ await set({requests:[],items:[uncertain],asyncQuestionReplies:{},questionHistory:[]});
+ await page.type(panel+' input','Synthetic retained answer');
+ await page.click(panel+' .primary');
+ await set({asyncQuestionReplies:{'synthetic-uncertain':'unknown'},asyncQuestionSending:'synthetic-uncertain'});
+ assert.ok(await page.$eval(panel+' .primary',node=>node.disabled));
+ await set({asyncQuestionSending:null});
+ assert.equal(await page.$eval(panel+' input',node=>node.value),'Synthetic retained answer');
+ assert.ok(await page.$eval(panel+' .primary',node=>!node.disabled));
+ for(const language of ['ru','en']){
+  await page.evaluate(language=>{WorkbenchI18n.setLanguage(language);window.update();},language);
+  const notice=language==='ru'?'Проверьте чат перед повторным ответом.':'Check the chat before answering again.';
+  assert.ok(await page.$eval('.question-delivery-notice',(node,notice)=>!node.hidden && node.textContent.includes(notice),notice));
+  assert.ok(await page.$eval('[data-item-id="synthetic-uncertain"] .quiz-transcript-open',node=>!node.textContent.includes('Answers saved')&&!node.textContent.includes('Ответы сохранены')));
+  for(const width of [360,700]){
+   await page.setViewport({width,height:850});
+   await page.evaluate(light=>{
+    const colors={'--vscode-editor-background':'#fff','--vscode-editorWidget-background':'#f5f5f5','--vscode-foreground':'#202020','--vscode-input-background':'#fff','--vscode-input-foreground':'#202020','--muted':'#666'};
+    for(const [key,value] of Object.entries(colors)){
+     if(light)document.documentElement.style.setProperty(key,value);else document.documentElement.style.removeProperty(key);
+    }
+   },width===360);
+   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+   await page.screenshot({path:path.join(__dirname,`../.verification/question-unknown-${language}-${width}.png`)});
+  }
+ }
+ await page.evaluate(()=>WorkbenchI18n.setLanguage('ru'));
+ assert.ok(await page.evaluate(()=>{
+  const dock=new WorkbenchQuestionPanel(()=>{});
+  dock.update({...window.fixture,mcpTask:true});
+  return dock.element.hidden;
+ }),'MCP unknown still waits for executor reconciliation');
+ // A stale history record after a failed final save must not override the retry form.
+ await set({questionHistory:[{id:'a:synthetic-uncertain',origin:'async',questions:[{id:'0',question:'Synthetic retry choice',options:[]}],answers:{'0':'Synthetic retained answer'},status:'sent'}]});
+ assert.ok(await page.$eval(panel+' .primary',node=>!node.disabled));
+ await page.click(panel+' .primary');
+ assert.equal(await page.evaluate(()=>window.calls.filter(call=>call.itemId==='synthetic-uncertain').length),2,'Ordinary unknown permits an explicit retry');
+ const reply='<send_user_message_question_reply>\n'+JSON.stringify([{questionItemId:JSON.stringify(['request_user_input_async',uncertain.id,0]),question:'Synthetic retry choice',answer:'Synthetic retained answer'}])+'\n</send_user_message_question_reply>';
+ await set({items:[uncertain,{id:'synthetic-observed',type:'userMessage',text:reply}]});
+ assert.ok(await page.$eval(panel,node=>node.hidden),'Observed transcript reply suppresses retry even with unknown marker');
+ assert.ok(await page.$eval('[data-item-id="synthetic-uncertain"] .quiz-transcript-open',node=>node.textContent.includes('Ответы сохранены')));
+ await page.click('[data-item-id="synthetic-uncertain"] .quiz-transcript-open');
+ assert.ok(await page.$eval('.question-delivery-notice',node=>node.hidden),'Confirmed history clears the uncertainty notice');
+ await set({items:[uncertain]});
+ assert.ok(await page.$eval(panel+' .primary',node=>!node.disabled),'History becoming uncertain again must restore editable state');
+ assert.ok(await page.$eval('.question-delivery-notice',node=>!node.hidden));
+ await set(fixtureBeforeRecovery);
 };

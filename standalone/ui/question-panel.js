@@ -32,7 +32,8 @@
       this.quizSwitcher.append(this.quizSwitcherLabel,this.selector);
       header.insertBefore(this.quizSwitcher,this.toggle);
       this.content=el('div',undefined,'question-panel-content');
-      this.body.append(this.content);this.element.append(header,this.body);
+      this.notice=el('p',undefined,'question-delivery-notice');this.notice.hidden=true;
+      this.body.append(this.notice,this.content);this.element.append(header,this.body);
     }
     expand(open){
       this.body.hidden=!open;this.toggle.setAttribute('aria-expanded',String(open));
@@ -54,7 +55,6 @@
     }
     submit(view,answers,skip=false){
       if(view.record || view.busy)return;
-      this.drafts.delete(JSON.stringify([this.session,view.key]));this.onDraft();
       view.busy=true;view.form.setQuizState({busy:true});this.render();
       this.send(view.action,{...view.target,answers,skip});
     }
@@ -83,13 +83,17 @@
       }
       for(const item of state.items || []){
         const request=item.type==='agentMessage'?root.WorkbenchQuestions.fromAsync(item):null;
-        if(request && !state.asyncQuestionReplies?.[item.id])entries.push({key:'a:'+item.id,request,action:'answerAsync',target:{itemId:item.id}});
+        const marker=state.asyncQuestionReplies?.[item.id];
+        if(request && (!marker || marker==='unknown' && !state.mcpTask) && !root.WorkbenchQuestions.hasReply(state.items,item.id))entries.push({key:'a:'+item.id,request,action:'answerAsync',target:{itemId:item.id},uncertain:marker==='unknown'});
       }
-      for(const record of state.questionHistory || [])entries.push({key:record.id,record,request:{params:{questions:record.questions}}});
+      for(const record of state.questionHistory || []){
+        if(entries.some(entry=>entry.key===record.id))continue;
+        entries.push({key:record.id,record,request:{params:{questions:record.questions}}});
+      }
       const valid=new Set(entries.filter(entry=>!entry.record).map(entry=>entry.key));
       for(const key of this.drafts.keys()){
         const [session,id]=JSON.parse(key);
-        if(session===state.key && !valid.has(id)){this.drafts.delete(key);this.onDraft();}
+        if(session===state.key && id!=='a:'+state.asyncQuestionSending && !valid.has(id)){this.drafts.delete(key);this.onDraft();}
       }
       for(const entry of entries)valid.add(entry.key);
       for(const key of this.views.keys())if(!valid.has(key))this.views.delete(key);
@@ -108,7 +112,7 @@
           });
           this.views.set(entry.key,view);
         }
-        Object.assign(view,entry);
+        Object.assign(view,{record:undefined,uncertain:false},entry);
         view.busy=entry.action==='answerAsync' && !!state.asyncQuestionSending;
         if(entry.record && view.restored!==entry.record){view.form.restoreAnswers(entry.record.answers);view.restored=entry.record;}
         view.form.setQuizState({readOnly:!!entry.record,busy:view.busy});
@@ -138,8 +142,10 @@
       }
       this.selector.value=this.key;this.quizSwitcher.hidden=this.views.size<2;
       this.quizSwitcherLabel.textContent=t('Квизы: {0}').replace('{0}',String(this.views.size))+' ▾';
+      this.notice.hidden=!view.uncertain;
+      this.notice.textContent=t('Доставка ответов не подтверждена. Проверьте чат перед повторным ответом.');
       const count=view.request.params.questions.length;
-      const status=view.record?view.record.status==='queued'?t('Ответы в очереди'):view.record.skipped?t('Квиз пропущен'):t('Ответы сохранены'):view.busy?t('Отправляю ответы…'):t('Ожидает ответов');
+      const status=view.record?view.record.status==='queued'?t('Ответы в очереди'):view.record.skipped?t('Квиз пропущен'):t('Ответы сохранены'):view.busy?t('Отправляю ответы…'):view.uncertain?t('Доставка ответов не подтверждена'):t('Ожидает ответов');
       this.toggle.textContent=t('Ответы на вопросы')+' · '+count+' · '+status;
       this.toggle.title=this.toggle.textContent;
       this.toggle.setAttribute('aria-label',this.toggle.textContent);

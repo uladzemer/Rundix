@@ -164,6 +164,26 @@ const answers={'0':'Synthetic B','1':'Synthetic details answer'};
   ordinary.items.push(question('synthetic-ordinary-deferred'));steerFailure='no active turn';
   await handle(ordinary,{action:'answerAsync',itemId:'synthetic-ordinary-deferred',answers});
   assert.equal(queued,1);assert.equal(ordinary.asyncQuestionReplies['synthetic-ordinary-deferred'],'queued');
+  ordinary.items.push(question('synthetic-ordinary-unknown'));steerFailure='Synthetic timeout';
+  await assert.rejects(()=>handle(ordinary,{action:'answerAsync',itemId:'synthetic-ordinary-unknown',answers}),error=>error.code==='delivery_unknown');
+  assert.equal(ordinary.asyncQuestionReplies['synthetic-ordinary-unknown'],'unknown');
+  steerFailure=null;ordinary.busy=false;sendFailure=true;
+  await assert.rejects(()=>handle(ordinary,{action:'answerAsync',itemId:'synthetic-ordinary-unknown',answers}),/Synthetic send failure/);
+  assert.equal(ordinary.asyncQuestionReplies['synthetic-ordinary-unknown'],'unknown','A refused retry cannot erase earlier uncertainty');
+  sendFailure=false;
+  await handle(ordinary,{action:'answerAsync',itemId:'synthetic-ordinary-unknown',answers});
+  assert.equal(ordinary.asyncQuestionReplies['synthetic-ordinary-unknown'],'sent');
+  await assert.rejects(()=>handle(ordinary,{action:'answerAsync',itemId:'synthetic-ordinary-unknown',answers}),/already been answered/);
+  const observed=question('synthetic-ordinary-observed');
+  ordinary.items.push(observed,{type:'userMessage',text:asyncQuestions.buildReply(observed,answers)});
+  ordinary.asyncQuestionReplies[observed.id]='unknown';
+  const beforeObserved=requests.length;
+  await assert.rejects(()=>handle(ordinary,{action:'answerAsync',itemId:observed.id,answers}),/already been answered/);
+  assert.equal(requests.length,beforeObserved);
+  // The persisted MCP flag blocks direct retries even when the bridge is unavailable.
+  ordinary.mcpTask=true;ordinary.asyncQuestionReplies['synthetic-ordinary-unknown']='unknown';
+  await assert.rejects(()=>handle(ordinary,{action:'answerAsync',itemId:'synthetic-ordinary-unknown',answers}),/already been answered/);
+  delete ordinary.mcpTask;
   console.log('MCP async questions: waiting_approval after completion, continue_task replies/skip, scoped reply turns, failure/cancellation recovery and ordinary chats passed.');
  }finally{tasks?.dispose();fs.rmSync(root,{recursive:true,force:true});}
 })().catch(error=>{console.error(error);process.exitCode=1;});

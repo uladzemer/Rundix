@@ -71,7 +71,13 @@ module.exports=async({browser})=>{
   await page.keyboard.press('Escape');
   await page.click('.question-panel-toggle');
   await page.click('.quiz-form button[type=submit]');
-  assert.equal(await page.evaluate(()=>window.saved.quizDrafts.length),0);
+  assert.equal(await page.evaluate(()=>window.saved.quizDrafts.length),1,'Sending alone must not delete the saved quiz draft');
+  await page.evaluate(()=>{window.fixture.error='Synthetic answer refusal';window.update();});
+  assert.equal(await page.$eval('.quiz-form input',node=>node.disabled),false);
+  const refused=await page.evaluate(()=>window.saved);
+  await load(refused);
+  assert.equal(await page.$eval('.quiz-form input',node=>node.value),'Synthetic custom','Webview recreation after refusal preserves the answer');
+  assert.equal(await page.$eval('.quiz-option',node=>node.getAttribute('aria-checked')),'true');
   await page.evaluate(()=>{window.fixture.requests=[];window.fixture.followUps=[];window.update();});
   assert.equal(await page.evaluate(()=>window.saved.quizDrafts.length),0);
   assert.deepEqual(errors,[]);await page.close();

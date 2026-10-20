@@ -1618,7 +1618,7 @@ function activate(context) {
   function hasPendingQuestions(s) {
     const unanswered = s.items.some(item =>
       asyncQuestions.questions(item).length &&
-      !s.asyncQuestionReplies?.[item.id] &&
+      (!s.asyncQuestionReplies?.[item.id] || s.asyncQuestionReplies[item.id]==='unknown' && !s.mcpTask) &&
       !asyncQuestions.hasReply(s.items, item.id));
     return unanswered || [...pendingRequests.values()].some(request => request.params?.threadId === s.id);
   }
@@ -1912,7 +1912,8 @@ function activate(context) {
       const delivery=require('./runtime/mcp-delivery.cjs');
       if(s.asyncQuestionSending)throw Error('Wait for the question answer to finish sending.');
       const item=s.items.find(item=>item.id===msg.itemId);
-      if(!item || s.asyncQuestionReplies?.[item.id] || asyncQuestions.hasReply(s.items,item.id))throw Error('This question has already been answered or is unavailable.');
+      const previousReply=s.asyncQuestionReplies?.[msg.itemId];
+      if(!item || (s.asyncQuestionReplies?.[item.id] && (s.asyncQuestionReplies[item.id]!=='unknown' || s.mcpTask || typeof msg.sendReply==='function')) || asyncQuestions.hasReply(s.items,item.id))throw Error('This question has already been answered or is unavailable.');
       if(mcpTasks && [...mcpTasks.tasks.values()].some(task=>task.sessionKey===s.key && task.cancelledAsyncItems?.includes(item.id)))throw Error('This question belongs to a cancelled task run.');
       const text=asyncQuestions.buildReply(item,msg.answers,{skip:msg.skip===true});
       // In an MCP task chat, answer through the task so its directory lease, connection and report stay consistent.
@@ -1925,7 +1926,7 @@ function activate(context) {
       s.asyncQuestionSending=item.id;publish(s);
       let attempted=false;
       try{
-        // Persist before any mutating RPC: a crash or lost reply must never enable a duplicate answer.
+        // Persist before any mutating RPC so a crash or lost reply preserves delivery uncertainty.
         s.asyncQuestionReplies={...s.asyncQuestionReplies,[item.id]:'unknown'};
         await save(s);
         let queued=false;
@@ -1950,7 +1951,8 @@ function activate(context) {
       }catch(error){
         s.asyncQuestionReplies={...s.asyncQuestionReplies};
         if(!attempted || delivery.refused(error)){
-          delete s.asyncQuestionReplies[item.id];
+          if(previousReply==='unknown')s.asyncQuestionReplies[item.id]='unknown';
+          else delete s.asyncQuestionReplies[item.id];
           await save(s);throw Object.assign(error,{deliveryOutcome:'rejected'});
         }
         s.asyncQuestionReplies[item.id]='unknown';

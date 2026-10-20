@@ -28,7 +28,12 @@ let menu = null,
   historyQuery = "",
   historyTimer,
   historyGeneration = 0;
-const quizDrafts = new Map(previous.quizDrafts || []);
+const quizDrafts = new Map((previous.quizDrafts || []).flatMap(([key,saved])=>{
+  try{
+    const questions=JSON.parse(saved.signature);
+    return [[key,{...saved,draft:{...saved.draft,fields:questions.map((question,index)=>question.isSecret ? null : saved.draft.fields?.[index])}}]];
+  }catch{return [];}
+}));
 const queuedDrafts = new Map(previous.queuedDrafts || []);
 const approvalDrafts = new Map();
 const pendingSends = new Map();

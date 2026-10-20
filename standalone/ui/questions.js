@@ -94,8 +94,8 @@
       };
       field.addEventListener('input', update);
       fields.push([question.id, field,value,()=>{selected.clear();multiple=false;mode.setAttribute('aria-pressed','false');custom.open=true;}]);
-      draftFields.push({get:()=>({value:field.value,multiple,selected:[...selected],open:custom.open}),
-        set:draft=>{field.value=draft.value || '';multiple=!!draft.multiple;selected.clear();
+      draftFields.push({get:()=>question.isSecret ? null : ({value:field.value,multiple,selected:[...selected],open:custom.open}),
+        set:draft=>{if(question.isSecret)return;field.value=draft.value || '';multiple=!!draft.multiple;selected.clear();
           for(const label of draft.selected || [])selected.add(label);
           custom.open=!!draft.open;mode.setAttribute('aria-pressed',String(multiple));update();}});
       form.append(group);
@@ -149,5 +149,17 @@
       id:String(index),question:question.title,options:(question.options || []).map(label=>({label})),
     }))}};
   }
-  root.WorkbenchQuestions = {create,fromAsync};
+  function hasReply(items,itemId){
+    return (items || []).some(item=>{
+      if(item.type!=='userMessage')return false;
+      const text=item.text || (item.content || []).map(part=>part.text || '').join('\n');
+      const match=/^<send_user_message_question_reply>\s*([\s\S]*?)\s*<\/send_user_message_question_reply>$/.exec(text.trim());
+      if(!match)return false;
+      try{return JSON.parse(match[1]).some(reply=>{
+        const id=JSON.parse(reply.questionItemId);
+        return typeof reply.answer==='string' && Array.isArray(id) && id[0]==='request_user_input_async' && id[1]===itemId;
+      });}catch{return false;}
+    });
+  }
+  root.WorkbenchQuestions = {create,fromAsync,hasReply};
 })(globalThis);

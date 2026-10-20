@@ -9,6 +9,8 @@ function string(value, name, limit = 100000) {
 }
 function stable(value) { return value && typeof value==='object' ? Array.isArray(value)?value.map(stable):Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key])])) : value; }
 function fingerprint(value) { return createHash('sha256').update(JSON.stringify(stable(value))).digest('hex'); }
+// The stored flag also marks an in-flight turn for restart reconciliation; clients only see it once execution stopped.
+function recoveryRequired(task) { return !!task.recoveryRequired && !['running','waiting_approval'].includes(task.state); }
 class McpTasks {
   constructor({store, adapter, directoryStore = store}) {
     this.store = store; this.directoryStore=directoryStore; this.adapter = adapter; this.tasks = new Map(); this.executing = false; this.closed = false;
@@ -26,7 +28,7 @@ class McpTasks {
       chatId:task.chatId || null, projectDirectory:task.projectDirectory, createdAt:task.createdAt,
       updatedAt:task.updatedAt, report:task.report || null, error:task.error || null,
       queuedContinuations:task.continuations?.length || 0,
-      recoveryRequired:!!task.recoveryRequired, pendingRequests:this.adapter.pending(task)}));
+      recoveryRequired:recoveryRequired(task), pendingRequests:this.adapter.pending(task)}));
   }
   operation(requestId, method, args, action) {
     string(requestId, 'requestId', 128);
@@ -161,4 +163,4 @@ class McpTasks {
   }
   dispose() { this.closed=true; clearTimeout(this.scheduled); }
 }
-module.exports={McpTasks};
+module.exports={McpTasks, recoveryRequired};

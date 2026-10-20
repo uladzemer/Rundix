@@ -22,6 +22,9 @@ async function main(){
   assert.equal(tasks.call('submit_task',{acceptanceCriteria:args.acceptanceCriteria,projectDirectory:project,description:args.description,requestId:args.requestId}).taskId,first.taskId);
   assert.throws(()=>tasks.call('submit_task',{...args,description:'Different synthetic task'}),/requestId/);
   await tasks.tick();assert.equal(sends,1);
+  assert.equal(tasks.get(first.taskId).recoveryRequired,true,'In-flight marker must persist for restart reconciliation');
+  assert.equal(tasks.call('get_task',{taskId:first.taskId}).recoveryRequired,false,'Normal execution must not report recovery');
+  if(process.platform==='win32')assert.equal(directories.canonical(project.toUpperCase()),directories.canonical(project),'Directory case must map to one reservation');
   assert.throws(()=>directories.acquire(store,project),/reserved/);
   pending=true;await tasks.tick();assert.equal(tasks.call('get_task',{taskId:first.taskId}).state,'waiting_approval');
   await tasks.call('continue_task',{taskId:first.taskId,requestId:'synthetic-approval',approval:{id:'synthetic-approval',decision:'accept'}});

@@ -1,5 +1,6 @@
 const fs=require('node:fs');
 const path=require('node:path');
+const {recoveryRequired}=require('./mcp-tasks.cjs');
 function readRecords(directory) {
   if(!fs.existsSync(directory))return [];
   return fs.readdirSync(directory).filter(name=>/^mcp-task-[\w-]+\.json$/.test(name)).map(name=>{
@@ -12,7 +13,7 @@ function snapshot({records,language,connection,connected,bridgeRunning,pending})
   const tasks=records.slice().sort((a,b)=>b.updatedAt-a.updatedAt).slice(0,100).map(task=>({
     taskId:task.taskId,title:(task.description || task.taskId).slice(0,160),state:task.state,
     chatId:task.chatId || null,projectDirectory:task.projectDirectory,progress:task.progress,
-    report:task.report || null,error:task.error || null,recoveryRequired:!!task.recoveryRequired,
+    report:task.report || null,error:task.error || null,recoveryRequired:recoveryRequired(task),
     pendingRequests:pending(task).map(request=>({id:request.id,method:request.method})),
   }));
   return {language,connection,connected,bridgeRunning,tasks};

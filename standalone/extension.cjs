@@ -231,7 +231,8 @@ function activate(context) {
   const serviceMode=vscode.workspace.getConfiguration('rundix').inspect('mcpService')?.globalValue==='service';
   let serviceInstallation=null;
   let serviceClient=null, serviceStarting=null, serviceStartingEpoch=null, serviceSpaceId=null, serviceError=null, serviceDisposed=false, serviceEpoch=0;
-  let serviceWanted=serviceMode && context.globalState.get('mcpEnabled',false), serviceStopped=serviceMode && context.globalState.get('mcpServiceStopped',false);
+  let serviceStopped=serviceMode && context.globalState.get('mcpServiceStopped',false);
+  let serviceWanted=serviceMode && !serviceStopped && context.globalState.get('mcpEnabled',false);
   function closeServiceClient() {
     serviceEpoch++;
     const client=serviceClient;serviceClient=null;client?.close();serviceSpaceId=null;
@@ -262,10 +263,10 @@ function activate(context) {
       const pending=serviceStarting || Promise.resolve();
       closeServiceClient();
       const epoch=serviceEpoch;
-      if(serviceWanted)void pending.catch(()=>{}).then(()=>{
-        if(serviceWanted && !serviceDisposed && epoch===serviceEpoch)return startMcp();
+      if(serviceWanted && !serviceStopped)void pending.catch(()=>{}).then(()=>{
+        if(serviceWanted && !serviceStopped && !serviceDisposed && epoch===serviceEpoch)return startMcp();
       }).catch(()=>{});
-    }),vscode.workspace.onDidGrantWorkspaceTrust(()=>{if(serviceWanted)void startMcp().catch(()=>{});}));
+    }),vscode.workspace.onDidGrantWorkspaceTrust(()=>{if(serviceWanted && !serviceStopped)void startMcp().catch(()=>{});}));
   let serviceSettingsWrite=Promise.resolve();
   function syncServiceSettings() {
     const settings=require('./runtime/service-settings.cjs');
@@ -329,7 +330,7 @@ function activate(context) {
     }
     if(message.action==='ready' || message.action==='refresh'){
       if(serviceMode && !serviceStopped)serviceWanted=true;
-      if(serviceMode && serviceWanted && !serviceClient && vscode.workspace.isTrusted)await startMcp();
+      if(serviceMode && !serviceStopped && serviceWanted && !serviceClient && vscode.workspace.isTrusted)await startMcp();
       if(serviceMode && message.action==='refresh' && serviceClient)await Promise.all(serviceClient.spaces.map(space=>serviceClient.refresh(space.spaceId)));
       publishMcpPanel(true);return;
     }

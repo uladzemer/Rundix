@@ -59,10 +59,13 @@ exports.run = async () => {
     report.startStopStart=true;
     await api.mcp.stop(); assert.equal(api.mcp.panelSnapshot().bridgeRunning, false);
     assert.equal(activationContext.globalState.get('mcpServiceStopped'),true);
-    for(const subscription of activationContext.subscriptions.splice(0).reverse())await subscription.dispose();
-    const beforeReload=installs;api=await activate(activationContext);
-    await api.mcp.panelAction({action:'ready'});await api.mcp.panelAction({action:'refresh'});
-    assert.equal(installs,beforeReload,'Reload and panel demand do not undo Stop MCP');assert.equal(api.mcp.panelSnapshot().bridgeRunning,false);
+    for(const staleEnabled of [false,true]){
+      await activationContext.globalState.update('mcpEnabled',staleEnabled);
+      for(const subscription of activationContext.subscriptions.splice(0).reverse())await subscription.dispose();
+      const beforeReload=installs;api=await activate(activationContext);
+      await api.mcp.panelAction({action:'ready'});await api.mcp.panelAction({action:'refresh'});
+      assert.equal(installs,beforeReload,'Persisted Stop overrides stale enabled flag after interrupted writes');assert.equal(api.mcp.panelSnapshot().bridgeRunning,false);
+    }
     await api.mcp.start();assert.equal(activationContext.globalState.get('mcpServiceStopped'),false);assert.equal(api.mcp.panelSnapshot().bridgeRunning,true);
     await api.mcp.stop();report.stopPersistsAcrossReload=true;
     report.globalOnly = true; report.noWindowExecutor = true; report.serviceConfiguration = true; report.passed = true;

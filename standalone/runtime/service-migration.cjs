@@ -232,8 +232,11 @@ function legacyBridgeRoot(root,file,options){
     if(typeof file!=='string' || !path.isAbsolute(file) || path.basename(file)!=='bridge.json' || path.basename(path.dirname(file))!=='mcp')throw unavailable();
     const source=canonical(path.dirname(path.dirname(file))),sourceId=createHash('sha256').update(process.platform+'\0'+source).digest('hex');
     const load=file=>{const info=fs.lstatSync(file);if(!info.isFile() || info.isSymbolicLink() || info.size>1024*1024)throw unavailable();return parseStrict(fs.readFileSync(file),{maxDepth:16});};
-    const marker=load(path.join(source,'mcp','service-migration.json')),receipt=load(path.join(root,'migrations',sourceId+'.json'));
-    if(marker.schemaVersion!==1 || marker.sourceId!==sourceId || receipt.phase!=='cutover' || receipt.source!==source || marker.manifestHash!==digest(receipt.manifest))throw unavailable();
+    const marker=load(path.join(source,'mcp','service-migration.json')),directory=path.join(root,'migrations');
+    const names=fs.readdirSync(directory).filter(name=>name===sourceId+'.json' || new RegExp('^'+sourceId+'-g[0-9]+\\.json$').test(name));
+    const receipts=names.map(name=>load(path.join(directory,name)));
+    const valid=receipt=>receipt.schemaVersion===1 && receipt.source===source && receipt.manifest?.sourceId===sourceId && receipt.manifest?.source===source && Array.isArray(receipt.manifest.records) && ['verified','cutover'].includes(receipt.phase);
+    if(marker.schemaVersion!==1 || marker.sourceId!==sourceId || !receipts.every(valid) || !receipts.some(receipt=>receipt.phase==='cutover') || !receipts.some(receipt=>marker.manifestHash===digest(receipt.manifest)))throw unavailable();
     registerRoot(root,source,options);return source;
   }catch(error){if(error.code==='legacy_registry_busy')throw error;throw unavailable();}
 }

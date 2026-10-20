@@ -88,6 +88,7 @@ async function main(){
     const nextRoot=path.join(base,'service-next'),nextSource=path.join(base,'legacy-next');fs.mkdirSync(nextRoot);fs.mkdirSync(nextSource);seed(nextSource,'synthetic-next',a);registerRoot(nextRoot,nextSource);
     const interrupted=createMigration({root:nextRoot,hooks:{afterMarker(){throw Error('Synthetic marker crash');}}});
     await assert.rejects(interrupted.sync(),/Synthetic marker crash/);await interrupted.close();assert(fs.existsSync(path.join(nextSource,'mcp','tasks')));
+    assert.throws(()=>require('../runtime/service-migration.cjs').legacyBridgeRoot(nextRoot,path.join(nextSource,'mcp','bridge.json')),{code:'service_upgrade_required'},'A verified first generation has no completed cutover yet');
     const resumed=createMigration({root:nextRoot});await resumed.sync();assert(!fs.existsSync(path.join(nextSource,'mcp','tasks')));await resumed.close();
     // A stale running record is interrupted only after bridge and thread leases are acquired.
     const activeRoot=path.join(base,'service-active'),activeSource=path.join(base,'legacy-active');fs.mkdirSync(activeRoot);fs.mkdirSync(activeSource);seed(activeSource,'synthetic-active',a,{state:'running'});registerRoot(activeRoot,activeSource);
@@ -151,7 +152,13 @@ async function main(){
     seed(additiveSource,'synthetic-new',a);seed(additiveSource,'synthetic-repeat',a);
     const repeatedFile=path.join(additiveSource,'mcp','tasks','mcp-task-synthetic-repeat.json');
     const newer=JSON.parse(fs.readFileSync(repeatedFile,'utf8'));newer.progress='Synthetic newer generation';newer.updatedAt=2;fs.writeFileSync(repeatedFile,JSON.stringify(newer));
-    additive=createMigration({root:additiveRoot});await additive.sync();
+    additive=createMigration({root:additiveRoot});
+    const rename=fs.promises.rename;let busyRename=false;
+    try{fs.promises.rename=async function(from,to){if(String(from)===path.join(canonical(additiveSource),'mcp','tasks')){busyRename=true;throw Object.assign(Error('Synthetic later generation rename busy'),{code:'EBUSY'});}return rename.call(this,from,to);};await additive.sync();}
+    finally{fs.promises.rename=rename;}
+    assert(busyRename);assert.equal(additive.status(canonical(additiveSource)).state,'retry_later');
+    assert.equal(require('../runtime/service-migration.cjs').legacyBridgeRoot(additiveRoot,path.join(additiveSource,'mcp','bridge.json')),canonical(additiveSource),'Completed generation remains bridge-compatible while a later receipt is verified');
+    await additive.sync({force:true});
     assert.equal(additive.status(canonical(additiveSource)).state,'ready');assert.equal(additive.visible(sa,[canonical(a)]).length,2);
     assert.equal(additive.visible(sa,[canonical(a)]).find(row=>row.task.taskId==='synthetic-repeat').task.progress,'Synthetic newer generation');
     const backups=fs.readdirSync(path.join(additiveSource,'mcp')).filter(name=>name.startsWith('backup-'));assert.equal(backups.length,2);

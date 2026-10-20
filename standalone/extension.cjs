@@ -266,8 +266,21 @@ function activate(context) {
           maxParallel:()=>vscode.workspace.getConfiguration('rundix').inspect('mcpMaxParallelTasks')?.globalValue ?? 3,
           adapter:mcpExecutor({connections,sessions,store,create,send,resume,handle,pending:pendingRequests,save,alive:()=>!disposed && !!mcpBridge,
             closeTab,
+            // Lets the agent client apply an installed update itself; busy chats are protected unless forced.
+            reloadWindow(force){
+              if(!force && [...sessions.values()].some(s=>s.busy || s.sendingTask || s.compacting))
+                throw Object.assign(Error('A Rundix chat is still working; wait for it, or pass force:true.'),{code:'task_active'});
+              setTimeout(()=>{void vscode.commands.executeCommand('workbench.action.reloadWindow');},300);
+            },
             async models(){
-              if(!catalog.length)await refreshCatalog().catch(()=>{});
+              // Load the catalog within the bridge's request budget; an empty answer must mean "no models", never "not loaded".
+              if(!catalog.length){
+                let timer;
+                const load=(async()=>{await connect();await refreshCatalog();})();
+                try{await Promise.race([load,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('timeout')),9000);})]);}
+                catch{throw Object.assign(Error('The model catalog is not available yet. Check the Codex connection in Rundix and retry.'),{code:'connection_unavailable'});}
+                finally{clearTimeout(timer);load.catch(()=>{});}
+              }
               return catalog.map(model=>({model:model.model,displayName:model.displayName || model.model,isDefault:!!model.isDefault,
                 defaultEffort:model.defaultReasoningEffort || null,efforts:(model.supportedReasoningEfforts || []).map(effort=>effort.reasoningEffort).filter(Boolean)}));
             },
@@ -706,6 +719,8 @@ function activate(context) {
           s.loaded = false;
           s.turnId = null;
           s.busy = false;
+          // A compaction cut off by the crash will never report completion.
+          s.compacting = false;
           s.error = message;
           publish(s);
         }

@@ -86,6 +86,18 @@ async function main(){
       assert.equal((await closer.call('close_task',{taskId:id})).chatClosed,false,'Closing again is harmless');
       chat.panel={};chat.busy=true;await assert.rejects(closer.call('close_task',{taskId:id}),e=>e.code==='task_active');
       assert.deepEqual(await closer.call('list_models'),{models:[{model:'synthetic-model',efforts:['low','medium']}]});
+      // Window reload is refused while a task runs unless forced, and forwarded otherwise.
+      let reloads=[];closer.adapter.reloadWindow=force=>{reloads.push(force);};
+      closer.get(id).state='running';
+      assert.throws(()=>closer.call('reload_window',{}),e=>e.code==='task_active');
+      assert.deepEqual(await closer.call('reload_window',{force:true}),{reloading:true});
+      closer.get(id).state='completed';
+      assert.deepEqual(await closer.call('reload_window',{}),{reloading:true});assert.deepEqual(reloads,[true,false]);
+      assert.throws(()=>closer.call('reload_window',{force:'yes'}),e=>e.code==='invalid_argument');
+      // A late thread/closed does not unload a running chat.
+      const {notification}=require('../runtime/session.cjs');
+      const running={id:'synthetic-thread',busy:true,loaded:true,items:[]};notification(running,{method:'thread/closed',params:{threadId:'synthetic-thread'}});
+      assert.equal(running.loaded,true);running.busy=false;notification(running,{method:'thread/closed',params:{threadId:'synthetic-thread'}});assert.equal(running.loaded,false);
     }
     console.log('MCP automation: run-scoped questions, closed chats stay closed, retried replies, multi-turn reports, safe titles, cancel during retryable start and recovered-turn slots passed.');
   }finally{for(const item of open)item.dispose();fs.rmSync(root,{recursive:true,force:true});}

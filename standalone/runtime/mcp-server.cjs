@@ -5,6 +5,7 @@ const states=['queued','running','waiting_approval','completed','error','cancell
 // The stable launcher copy lives next to version.json; the packaged copy reads package.json.
 const version=(()=>{for(const file of ['./version.json','../package.json'])try{return String(require(file).version);}catch{}return '0.0.0';})();
 const tools=[
+  ['reload_window','Reload the VS Code window that runs Rundix, for example after installing a new build. Refused while chats or MCP tasks are running unless force:true. The bridge is briefly unavailable afterwards; retry or use the --wait launcher, which waits through the reload.',{force:{type:'boolean'}},[]],
   ['list_models','List the Codex models available to the selected connection with their supported reasoning efforts and defaults, to choose model/effort for submit_task.',{},[]],
   ['close_task','Close the editor tab of a finished task (completed, cancelled or error) to avoid piling up tabs. The chat is kept; continue_task reopens it.',{taskId:text},['taskId']],
   ['submit_task','Queue a Codex task through the selected Rundix companion. Reuse requestId on retries. Choose model and effort per task from list_models: low for routine or mechanical work, medium by default, high only for genuinely hard reasoning (higher effort tends to over-reach); omit them to use the chat defaults.',{requestId:text,description:text,projectDirectory:text,acceptanceCriteria:text,model:text,effort:text},['requestId','description','projectDirectory','acceptanceCriteria']],

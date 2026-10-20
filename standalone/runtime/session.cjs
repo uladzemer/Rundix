@@ -112,7 +112,8 @@ function notification(session, message) {
     session.turnId = null;
     if (p.turn.error) session.error = p.turn.error.message;
   } else if (message.method === "thread/closed") {
-    session.loaded = false;
+    // A late close must not unload a thread that a continuation already resumed and is running.
+    if (!session.busy) session.loaded = false;
   } else if (message.method === "thread/tokenUsage/updated") {
     session.tokenUsage = p.tokenUsage;
     session.usageModel = session.turnModel || session.model;

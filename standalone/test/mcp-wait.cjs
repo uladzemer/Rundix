@@ -161,7 +161,7 @@ async function main(){
     assert.equal(installLauncher(path.join(root,'launcher'),'9.9.9-synthetic'),launcher);
     assert.equal(JSON.parse(fs.readFileSync(path.join(path.dirname(launcher),'version.json'))).version,'9.9.9-synthetic');
     const listed=execFileSync(process.execPath,['-e','const s=require(process.argv[1]);process.stdout.write(String(s.tools.length))',launcher],{encoding:'utf8',windowsHide:true});
-    assert.equal(listed,'9');
+    assert.equal(listed,'10');
     const cliBrief=JSON.parse((await execFileAsync(process.execPath,[launcher,'--bridge',bridge.descriptor,'--wait',remote.taskId,'--timeout','30','--brief'],{encoding:'utf8',windowsHide:true,timeout:35000})).stdout.trim());
     assert.equal(cliBrief.state,'completed');assert.deepEqual(cliBrief.reportSummary,reportSummary);assert.equal(Object.hasOwn(cliBrief,'report'),false);
     console.log('MCP wait: settled long polls, revision stability, replay-safe cancel/approval, compact listing, brief reports, queue fairness, stop safety, coded errors, shell waiter and stable launcher passed.');

@@ -61,6 +61,7 @@ Every mutation requires a caller-generated, globally unique `requestId` (for exa
 | `list_tasks` | optional `limit` (1–100, default 25), `state`, `projectDirectory`, `cursor` | `{tasks, nextCursor}`: compact summaries without reports, newest created first |
 | `close_task` | `taskId` of a finished task | Closes its editor tab (`chatClosed`); the chat is kept and a continuation reopens it |
 | `list_models` | none | Models of the selected connection with supported efforts and defaults, for choosing `model`/`effort` |
+| `reload_window` | optional `force` | Reloads the VS Code window running Rundix (for example after installing a build); refused while chats or MCP tasks run unless `force:true` |
 
 `revision` increases whenever the stored task changes. `wait_task` returns immediately for a settled task; pass `afterRevision` from an earlier snapshot to wait for a newer settled state. A queued task blocked by a busy directory or connection stays `queued` with the reason in `progress`, so `wait_task` returns `timedOut:true` until it can run; tasks for other directories keep running.
 

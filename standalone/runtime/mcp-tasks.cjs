@@ -134,6 +134,12 @@ class McpTasks {
     }
     if (name === 'wait_task') return this.wait(args);
     if (name === 'wait_tasks') return this.waitAny(args);
+    if (name === 'reload_window') {
+      if (args.force !== undefined && typeof args.force !== 'boolean') throw fail('invalid_argument', 'Invalid force');
+      const running = [...this.tasks.values()].filter(t=>['running','waiting_approval'].includes(t.state)).length;
+      if (running && !args.force) throw fail('task_active', running+' MCP task(s) are running; wait for them, or pass force:true (interrupted turns then need recovery).');
+      return Promise.resolve(this.adapter.reloadWindow?.(args.force === true)).then(()=>({reloading:true}));
+    }
     if (name === 'list_models') return Promise.resolve(this.adapter.models?.() ?? []).then(models=>({models}));
     if (name === 'close_task') {
       const task = this.get(args.taskId);

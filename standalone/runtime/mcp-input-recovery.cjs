@@ -1,9 +1,14 @@
 const {randomUUID}=require('node:crypto');
-// Each task already caps accepted operations at 1000. Keep distinct definite
-// refusals separately from nextInput; a new request must not erase recovery.
+const MAX_ENTRIES=50,MAX_BYTES=2*1024*1024;
+function prune(task) {
+  const rows=task.unsentInputs || [];
+  let bytes=Buffer.byteLength(JSON.stringify(rows));
+  while(rows.length>MAX_ENTRIES || bytes>MAX_BYTES){rows.shift();bytes=Buffer.byteLength(JSON.stringify(rows));}
+}
 function remember(task,text) {
   task.unsentInputs ||= [];
   if(!task.unsentInputs.some(row=>row.text===text))task.unsentInputs.push({id:randomUUID(),text});
+  prune(task);
 }
 function delivered(task,text) {
   if(task.unsentInputs)task.unsentInputs=task.unsentInputs.filter(row=>row.text!==text);
@@ -19,4 +24,4 @@ function page(task,after) {
   return {unsentInputs:selected,unsentInputCount:rows.length,
     nextUnsentCursor:start+selected.length<rows.length?selected.at(-1).id:null};
 }
-module.exports={remember,delivered,page};
+module.exports={remember,delivered,page,prune,MAX_ENTRIES,MAX_BYTES};

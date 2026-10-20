@@ -22,6 +22,8 @@ if(!chrome)throw Error('Set CHROME_PATH.');
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    await page.evaluate(()=>{window.fixture.tasks[0].unsentInputs=[{id:'synthetic-unsent',text:'Synthetic unsent <img src=x onerror="window.injected=true">'}];window.update();});
    await page.click('.unsent-inputs summary');
+   assert.equal(await page.$eval('.unsent-inputs summary',node=>node.textContent),language==='ru'
+    ?'Неотправленные сообщения: полный текст доступен через get_task':'Unsent inputs: recover full text with get_task');
    assert.equal(await page.$eval('.unsent-inputs pre',node=>node.textContent),'Synthetic unsent <img src=x onerror="window.injected=true">');
    assert.equal(await page.$$('img').then(rows=>rows.length),0);
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'Recovery preview fits both panel widths');

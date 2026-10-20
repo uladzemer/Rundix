@@ -112,7 +112,7 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
     async start(task,input,checkpoint=()=>{}) {
       // Availability and local setup errors are definite pre-send failures.
       try {await adapter.ensureConnection(task);}catch(error){throw Object.assign(error,{notSent:true});}
-      let sending=false;
+      let accepted=false,deliveryPending=false;
       try {
       const s=session(task);
       if(canonical(s.cwd)!==task.projectDirectory)throw Error('Chat project directory changed.');
@@ -127,10 +127,14 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       if(task.cancelRequested){task.awaitingPreparation=true;throw Error('Cancelled before sending.');}
       const options=turnOptions(task);
       const sendTurn=async()=>{
-        sending=true;
         const draft=composerDraft.hostOwned(s)?composerDraft.snapshot(s):null;
+        // An unresolved send may already have requested turn/start. Only a
+        // returned waitUntil proves this attempt stayed before delivery.
+        deliveryPending=true;
         const result=await send(s,input,[],{...options,consumeDraft:!!draft});
+        if(result?.waitUntil)deliveryPending=false;
         if(result?.turnId){
+          accepted=true;deliveryPending=false;
           task.turnId=result.turnId;task.turnIds=[...(task.turnIds || []),result.turnId];
           inputRecovery.delivered(task,input);
           const consumed=composerDraft.consume(s,draft) || result.draftConsumed===true;
@@ -154,7 +158,10 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
         result=await sendTurn();
         if(task.cancelRequested && !result?.waitUntil)await handle(s,{action:'stop'});
       }
-      } catch(error) {if(!sending)error.notSent=true;throw error;}
+      } catch(error) {
+        if(!accepted && !deliveryPending && !error.deliveryUncertain)error.notSent=true;
+        throw error;
+      }
     },
     async status(task) {
       adapter.assertConnection(task);

@@ -36,6 +36,7 @@ class McpTasks {
       if(['running','waiting_approval'].includes(task.state) || task.recoveryRequired)task.needsReconcile=true;
       if(task.unknownAnswer) {task.state='error';task.recoveryRequired=true;task.needsReconcile=true;}
       for(const op of task.operations)if(op.outcome==='pending' && op.approvalId?.startsWith('async-question:'))op.outcome='unknown';
+      inputRecovery.prune(task);
       this.tasks.set(task.taskId, task);
     }
   }
@@ -51,7 +52,7 @@ class McpTasks {
   }
   limit() { const value = Number(this.maxParallel()); return Number.isInteger(value) && value >= 1 ? Math.min(value, MAX_PARALLEL) : 1; }
   get(id) { const task = this.tasks.get(id); if (!task) throw fail('unknown_task', 'Unknown taskId'); return task; }
-  view(task, brief = false, unsentAfter) {
+  view(task, brief = false, unsentAfter, fullRecovery=false) {
     const report = task.report;
     const reportFields = brief ? {reportSummary:report ? {
       source:report.source, resultPreview:report.result.slice(0,500) + (report.result.length > 500 ? '…' : ''),
@@ -62,13 +63,14 @@ class McpTasks {
       chatId:task.chatId || null, projectDirectory:task.projectDirectory, createdAt:task.createdAt,
       updatedAt:task.updatedAt, revision:task.revision || 0, accessMode:task.accessMode || null, ...reportFields, error:task.error || null,
       queuedContinuations:task.continuations?.length || 0,
-      ...inputRecovery.page(task,unsentAfter),
+      ...(fullRecovery?inputRecovery.page(task,unsentAfter):{unsentInputCount:task.unsentInputs?.length || 0}),
       recoveryRequired:recoveryRequired(task), pendingRequests:this.adapter.pending(task)}));
   }
   summary(task) {
     return JSON.parse(JSON.stringify({taskId:task.taskId, title:(task.description || '').slice(0,160), state:task.state,
       progress:task.progress, chatId:task.chatId || null, projectDirectory:task.projectDirectory, createdAt:task.createdAt,
       updatedAt:task.updatedAt, revision:task.revision || 0, hasReport:!!task.report, error:task.error || null,
+      unsentInputCount:task.unsentInputs?.length || 0,
       recoveryRequired:recoveryRequired(task), pendingRequests:this.adapter.pending(task).length}));
   }
   operation(requestId, method, args, action) {
@@ -150,7 +152,7 @@ class McpTasks {
       if (args.brief !== undefined && typeof args.brief !== 'boolean') throw fail('invalid_argument', 'Invalid brief');
       const task=this.get(args.taskId);
       if(args.unsentAfter!==undefined && (typeof args.unsentAfter!=='string' || !task.unsentInputs?.some(row=>row.id===args.unsentAfter)))throw fail('invalid_argument','Invalid unsentAfter');
-      return this.view(task, args.brief,args.unsentAfter);
+      return this.view(task, args.brief,args.unsentAfter,args.brief!==true);
     }
     if (name === 'wait_task') return this.wait(args);
     if (name === 'wait_tasks') return this.waitAny(args);
@@ -225,6 +227,11 @@ class McpTasks {
         } else {task.nextInput=args.clarification; task.state='queued'; task.error=null; task.cancelRequested=false;}
         task.progress='Continuation queued';
       } else {
+        // The active attempt is handled by start()/reconciliation; only queued
+        // inputs are safe recovery here, never an in-flight nextInput.
+        if(task.state==='queued' && !task.recoveryRequired && !this.starting.has(task.taskId) && task.nextInput)
+          inputRecovery.remember(task,task.nextInput);
+        for(const text of task.continuations || [])inputRecovery.remember(task,text);
         // Record no-op cancellations too, so a replayed request can never cancel a later turn.
         if (!active.has(task.state) && !task.recoveryRequired) { task.operations.push(op); this.save(task); return this.view(task); }
         task.cancelRequested=true;

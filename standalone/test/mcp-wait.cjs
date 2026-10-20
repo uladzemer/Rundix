@@ -38,7 +38,7 @@ async function main(){
       assert.deepEqual(full.report,report);assert.equal(Object.hasOwn(full,'reportSummary'),false);
       assert.deepEqual(await compact.call(name,{taskId:compactId,brief:false}),full);
       const brief=await compact.call(name,{taskId:compactId,brief:true});
-      const {report:omitted,...metadata}=full;
+      const {report:omitted,unsentInputs:omittedRecovery,nextUnsentCursor:omittedCursor,...metadata}=full;
       assert.deepEqual(brief,{...metadata,reportSummary});assert.equal(Object.hasOwn(brief,'report'),false);
       assert.deepEqual(brief.pendingRequests,compactStub.requests);
       assert.throws(()=>compact.call(name,{taskId:compactId,brief:'true'}),e=>e.code==='invalid_argument');

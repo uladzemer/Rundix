@@ -436,13 +436,16 @@ mixed token/refusal and lost-reply cases, verifying no duplicate fallback reply.
 
 Service, provider and CLI children share a minimal environment allowlist: PATH/Path,
 SystemRoot/windir/COMSPEC/PATHEXT, USERPROFILE/HOME/APPDATA/LOCALAPPDATA/TEMP/TMP,
-CODEX_HOME, LANG/LC_*, NODE_EXTRA_CA_CERTS and HTTP(S)_PROXY/NO_PROXY. A fixed
+CODEX_HOME, LANG/LC_*, NODE_EXTRA_CA_CERTS, HTTP(S)_PROXY/NO_PROXY/ALL_PROXY,
+Windows program/system/profile variables, PSModulePath, TMPDIR/SHELL/USER/LOGNAME,
+XDG_* and SSL_CERT_FILE/SSL_CERT_DIR. A fixed
 ELECTRON_RUN_AS_NODE=1 is supplied internally; no inherited Node injection flags,
 repository credentials or project variables cross into the service children.
 Adapter space selection still uses its original cwd/CLAUDE_PROJECT_DIR.
 
 Linked worktrees must have a gitdir/gitdir back-pointer resolving to their own
-.git marker before sharing a main repository space. Missing/foreign pointers fail
+.git marker and a first-hop gitdir directly under the real common directory?s
+worktrees directory before sharing a main repository space. Missing/foreign pointers fail
 closed. Submodules/separate git directories without commondir remain independent.
 Task-directory reservation canonicalization retains the exact 0.3.1 algorithm;
 stricter alias/device normalization is confined to service-space identity. Default

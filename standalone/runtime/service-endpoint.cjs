@@ -210,7 +210,7 @@ async function probeOwner(options = {}) {
   try {
     peer = await ipc.dial(where.address,{connectTimeoutMs:options.pingTimeoutMs || 2000});
     const ping = await peer.request('service.ping',{},options.pingTimeoutMs || 5000);
-    return {state:ping.generation === descriptor.generation ? 'responding' : 'unverified'};
+    return {state:ping.generation === descriptor.generation ? 'responding' : 'unverified',generation:descriptor.generation};
   } catch {
     const state = await stateOf(descriptor,options.inspectProcess);
     return {state:state === 'alive' ? 'hung' : state, generation:descriptor.generation};

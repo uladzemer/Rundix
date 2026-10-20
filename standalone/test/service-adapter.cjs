@@ -56,6 +56,14 @@ async function main() {
       setTimeout(()=>{void (async()=>{endpoint=await startService({root,ipc:{hello:rpc.hello},call:rpc.call});await endpoint.ready();})();},400);
       return child;
     }});clients.push(cold);await cold.getTools();assert.equal(spawns,1,'Slow discovery publication spawns once per absent generation');cold.close();await endpoint.dispose();endpoint=null;
+    let replacements=0;
+    const replacing=createServiceClient({root,cwd,env:{},startupTimeoutMs:6000,spawnProcess(){
+      const attempt=++replacements,child=new (require('node:events').EventEmitter)();child.unref=()=>{};
+      setTimeout(()=>{void (async()=>{
+        endpoint=await startService({root,ipc:{hello:rpc.hello},call:rpc.call});
+        if(attempt===1){const dying=endpoint;setTimeout(()=>{void dying.dispose();},700);}else await endpoint.ready();
+      })();},400);return child;
+    }});clients.push(replacing);await replacing.getTools();assert.equal(replacements,2,'An observed starting generation may exit before hello and demand its successor');replacing.close();await endpoint.dispose();endpoint=null;
     // A listener that accepts but never answers must share the complete startup
     // deadline with process-identity probing; no second 20-second budget.
     const where = locations({root}), sockets = new Set(), silent = net.createServer(socket => {sockets.add(socket);socket.on('close', () => sockets.delete(socket));});

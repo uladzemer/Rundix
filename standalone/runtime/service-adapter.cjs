@@ -22,12 +22,12 @@ function createServiceClient(options = {}) {
       const owner = await Promise.race([probeOwner({...options, root}), new Promise((_, reject) => {
         timer = setTimeout(() => reject(failure('service_start_timeout')), Math.max(1, deadline - Date.now()));
       })]).finally(() => clearTimeout(timer));
-      const launched=new Set();let unpublished=false;
+      const launched=new Set();let unpublished=false,observedGeneration='initial';
       const startOwner=state=>{
-      if(state.state==='responding')unpublished=false;
+      if(state.state==='responding'){unpublished=false;observedGeneration=state.generation;}
       if (['absent','dead'].includes(state.state)) {
         if(state.state==='absent' && unpublished)return;
-        const generation=state.generation || 'absent';if(launched.has(generation))return;launched.add(generation);unpublished=true;
+        const generation=state.generation || 'absent-after:'+observedGeneration;if(launched.has(generation))return;launched.add(generation);unpublished=true;
         const installed = registration(root);
         const env = serviceEnvironment();
         const child = (options.spawnProcess || spawn)(installed.nodePath, [installed.entryPath, '--service-root', root],

@@ -180,9 +180,9 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
     syncing=(async()=>{
       for(const [identity,source] of pendingRegistrations)if(force || !(status(identity).retryAt>clock())){
         try{await registerRootAsync(root,source);pendingRegistrations.delete(identity);statuses.delete(identity);}
-        catch(error){const attempt=(status(identity).attempt || 0)+1;publish(identity,{state:['EPERM','EACCES','EBUSY','legacy_registry_busy'].includes(error.code)?'retry_later':'needs_repair',code:error.code==='legacy_registry_busy'?error.code:'migration_conflict',attempt,retryAt:clock()+Math.min(60000,retryMs*2**Math.min(attempt-1,6))});}
+        catch(error){if(error.code==='ENOENT'){pendingRegistrations.delete(identity);publish(identity,{state:'vanished'});continue;}const attempt=(status(identity).attempt || 0)+1;publish(identity,{state:['EPERM','EACCES','EBUSY','legacy_registry_busy'].includes(error.code)?'retry_later':'needs_repair',code:error.code==='legacy_registry_busy'?error.code:'migration_conflict',attempt,retryAt:clock()+Math.min(60000,retryMs*2**Math.min(attempt-1,6))});}
       }
-      for(const source of ready){try{if(await exists(path.join(source,'mcp','tasks')))ready.delete(source);}catch{ready.delete(source);}}
+      for(const source of ready){try{await fsp.lstat(source);if(await exists(path.join(source,'mcp','tasks')))ready.delete(source);}catch{ready.delete(source);}}
       const visited=new Set();
       for(;;){const pending=roots(store).filter(source=>!visited.has(source) && !ready.has(source) && (force || !(status(source).retryAt>clock())));if(!pending.length)return;
         for(const source of pending){visited.add(source);try{await importRoot(source);}catch(error){
@@ -190,11 +190,11 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
           let missing=false;try{await fsp.lstat(source);}catch(check){missing=check.code==='ENOENT';}
           if(missing){
             try{const release=store.acquire('legacy-roots');try{store.write('legacy','roots',{schemaVersion:1,roots:roots(store).filter(value=>value!==source)});}finally{release();}
-              leases.get(source)?.();leases.delete(source);publish(source,{state:'vanished'});continue;
-            }catch(drop){error=drop;}
+              bridges.get(source)?.dispose();bridges.delete(source);leases.get(source)?.();leases.delete(source);publish(source,{state:'vanished'});continue;
+            }catch(drop){error=drop.code?drop:registryBusy();}
           }
           const attempt=(status(source).attempt || 0)+1;
-          const busy=error.code==='legacy_owner_active',transient=['EPERM','EBUSY','EACCES','ENOENT','legacy_source_changed'].includes(error.code);
+          const busy=error.code==='legacy_owner_active',transient=['EPERM','EBUSY','EACCES','ENOENT','legacy_source_changed','legacy_registry_busy'].includes(error.code);
           publish(source,{state:busy?'busy':transient?'retry_later':'needs_repair',code:busy?'legacy_owner_active':transient?'legacy_retry_later':'migration_conflict',attempt,
             retryAt:clock()+Math.min(60000,retryMs*2**Math.min(attempt-1,6))});
         }}

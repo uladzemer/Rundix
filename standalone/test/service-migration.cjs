@@ -166,7 +166,16 @@ async function main(){
     }}});
     await recopy.sync();assert.equal(recopy.status(canonical(recopySource)).state,'retry_later');await recopy.sync({force:true});
     assert.equal(recopy.visible(sa,[canonical(a)])[0].task.progress,'Synthetic changed during copy');
-    assert.equal(recopy.visible(sa,[canonical(a)])[0].task.createdAt,0);assert.equal(recopy.visible(sa,[canonical(a)])[0].task.closedAt,null);await recopy.close();
+    assert.equal(recopy.visible(sa,[canonical(a)])[0].task.createdAt,0);assert.equal(recopy.visible(sa,[canonical(a)])[0].task.closedAt,null);
+    const readySource=canonical(recopySource);fs.renameSync(recopySource,path.join(base,'legacy-recopy-retired'));await recopy.sync();
+    assert.equal(recopy.status(readySource).state,'vanished');assert(!JSON.parse(fs.readFileSync(path.join(recopyRoot,'legacy-roots.json'),'utf8')).roots.includes(readySource));await recopy.close();
+    const probeRoot=make('service-probes'),probeA=make('legacy-probe-a'),probeB=make('legacy-probe-b');seed(probeA,'synthetic-probe-a',a);seed(probeB,'synthetic-probe-b',b);registerRoot(probeRoot,probeA);registerRoot(probeRoot,probeB);
+    const probes=createMigration({root:probeRoot});await probes.sync();seed(probeB,'synthetic-probe-new',b);
+    const lstat=fs.promises.lstat;let injected=false;
+    try{fs.promises.lstat=async function(file,...args){if(String(file)===path.join(canonical(probeA),'mcp','tasks')){injected=true;throw Object.assign(Error('Synthetic permission denial'),{code:'EACCES'});}return lstat.call(this,file,...args);};await probes.sync({force:true});}
+    finally{fs.promises.lstat=lstat;}
+    assert(injected);assert.equal(probes.visible(sb,[canonical(b)]).length,2,'An inaccessible ready-root probe cannot starve another generation');
+    await probes.close();
     console.log('PASS legacy migration: real mid-copy process crash, idempotent verify/marker/backup, live bridge/turn gates, lifetime lease, read-only inferred/unknown spaces, A/B isolation and no queued execution.');
   }finally{await migration?.close();clients.forEach(client=>client.close());await service?.shutdown();assert.equal(path.dirname(base),os.tmpdir());assert(path.basename(base).startsWith('rundix-migration-synthetic-'));fs.rmSync(base,{recursive:true,force:true});}
 }

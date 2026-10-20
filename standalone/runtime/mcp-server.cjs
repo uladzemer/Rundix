@@ -33,10 +33,13 @@ function run(descriptor,input=process.stdin,output=process.stdout) {
     if (message.method!=='tools/call') {send({id,error:{code:-32601,message:'Method not found'}});return;}
     try {
       const tool=tools.find(t=>t.name===message.params?.name), args=message.params?.arguments || {};
-      if(!tool || !args || Array.isArray(args) || typeof args!=='object' || Object.keys(args).some(k=>!Object.hasOwn(tool.inputSchema.properties,k)) || tool.inputSchema.required.some(k=>args[k]===undefined))throw Error('Invalid tool arguments');
+      if(!tool || !args || Array.isArray(args) || typeof args!=='object' || Object.keys(args).some(k=>!Object.hasOwn(tool.inputSchema.properties,k)) || tool.inputSchema.required.some(k=>args[k]===undefined))throw Object.assign(Error('Invalid tool arguments'),{code:'invalid_argument'});
       const result=await request(descriptor,tool.name,args);
       send({id,result:{content:[{type:'text',text:JSON.stringify(result)}]}});
-    } catch(error) {send({id,result:{isError:true,content:[{type:'text',text:(error.code?error.code+': ':'')+error.message}]}});}
+    } catch(error) {
+      const coded=typeof error?.code==='string' && /^[a-z_]{1,40}$/.test(error.code);
+      send({id,result:{isError:true,content:[{type:'text',text:coded?error.code+': '+error.message:'rejected: Request rejected. Check arguments, task state and connection in the Rundix MCP panel.'}]}});
+    }
   };
   input.setEncoding('utf8');
   input.on('data',chunk=>{
@@ -69,6 +72,7 @@ async function wait(descriptor,taskId,seconds,{call=request,output=process.stdou
       last=await call(descriptor,'wait_task',{taskId,...options});
       if(!last.timedOut && Object.hasOwn(exitCodes,last.state)){output.write(JSON.stringify(last)+'\n');return exitCodes[last.state];}
     } catch(error) {
+      if(error.code==='response_too_large' && !brief){brief=true;continue;}
       if(error.code!=='bridge_unavailable'){output.write(JSON.stringify({error:error.message,code:error.code || 'rejected'})+'\n');return 1;}
       await pause(Math.min(5000,Math.max(0,deadline-Date.now())));
     }

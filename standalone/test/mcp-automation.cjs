@@ -75,7 +75,7 @@ async function main(){
         closeTab:async s=>{closed.push(s.key);s.panel=null;},models:async()=>[{model:'synthetic-model',efforts:['low','medium']}]});
       const chat={key:'synthetic-close',id:'synthetic-close-chat',panel:{},busy:false,items:[]};chats.set(chat.key,chat);
       const store=new SessionStore(path.join(root,'records-close'));
-      const closer=new McpTasks({store,adapter:{...closing,connection:()=>connection,assertConnection(){},start:async()=>{},status:async()=>({done:false}),cancel:async()=>{}}});open.push(closer);
+      const closer=new McpTasks({store,adapter:{...closing,ensureConnection:undefined,connection:()=>connection,assertConnection(){},start:async()=>{},status:async()=>({done:false}),cancel:async()=>{}}});open.push(closer);
       const dir=path.join(root,'synthetic-close-dir');fs.mkdirSync(dir);
       const id=closer.call('submit_task',{requestId:'synthetic-close',description:'Synthetic',acceptanceCriteria:'Synthetic',projectDirectory:dir}).taskId;
       Object.assign(closer.get(id),{sessionKey:chat.key,state:'running'});

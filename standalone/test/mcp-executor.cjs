@@ -6,7 +6,7 @@ async function hostSendChecks(project,store) {
  const source=fs.readFileSync(path.join(__dirname,'../extension.cjs'),'utf8');
  const start=source.indexOf('  async function send('),end=source.indexOf('  async function preparationConfig(',start);
  assert(start>=0 && end>start);
- const turns=[],turnLeases=new Map();let complete=true;
+ const turns=[],turnLeases=new Map();let complete=true,lostReply=false;
  const noop=async()=>{};
  const context={authBusy:false,store,taskDirectory:require('../runtime/task-directory.cjs'),cwd:()=>project,
   locale:{t:text=>text},vscode:{workspace:{isTrusted:true}},syncExternal:noop,applyPendingMode:noop,connect:noop,
@@ -18,6 +18,7 @@ async function hostSendChecks(project,store) {
   speed:{effectiveTier:(_,fast)=>fast?'fast':'default'},buildInput:text=>[{type:'text',text}],turnLeases,publish(){},
   server:{request:async(method,params)=>{
    assert.equal(method,'turn/start');turns.push(params);
+   if(lostReply)throw Error('Synthetic accepted turn response lost');
    if(complete){s.busy=false;s.turnId=null;turnLeases.get(s.id)?.();turnLeases.delete(s.id);}
    return {turn:{id:'synthetic-host-turn-'+turns.length}};
   }},
@@ -39,7 +40,7 @@ async function hostSendChecks(project,store) {
 
  complete=false;
  const task={taskId:'synthetic-host-task',sessionKey:'synthetic-host-session',projectDirectory:project,connection:{id:'synthetic-pool'}};
- const adapter=executor({connections:{selection:()=>task.connection},sessions:new Map([[task.sessionKey,s]]),store,
+ const adapter=executor({connections:{selection:()=>task.connection,resolve:async()=>({...task.connection,provider:{}})},sessions:new Map([[task.sessionKey,s]]),store,
   send:(session,text,attached,options)=>send(session,text,attached,{...options,requiredConnection:undefined}),
   create(){throw Error('Unexpected creation');},pending:new Map(),save:noop,alive:()=>true});
  await assert.rejects(()=>adapter.start(task,'Synthetic checkpoint failure',()=>{if(task.turnId)throw Error('Synthetic persistence failure');}),/Synthetic persistence failure/);
@@ -59,6 +60,23 @@ async function hostSendChecks(project,store) {
  assert.equal(turns.at(-1).collaborationMode.settings.developer_instructions,agentInstructions);
  await send(s,'Synthetic ordinary chat after MCP',[],{includeIde:false});
  assert.equal(turns.at(-1).collaborationMode.settings.developer_instructions,ordinaryInstructions);
+ // The MCP-only wrapper observes the actual host boundary, including failures inside send preparation.
+ const delivery=require('../runtime/mcp-delivery.cjs');
+ const wrapped=(...args)=>delivery.send(send,...args);
+ const before=Object.getOwnPropertyDescriptor(s,'turnStartedAt'),count=turns.length;
+ for(const stage of ['authenticate','prepareTurn','model','lease']){
+   context.activeConnection={provider:{authenticate:async()=>{if(stage==='authenticate')throw Error('Synthetic authentication refusal');},
+     prepareTurn:async()=>{if(stage==='prepareTurn')throw Error('Synthetic preparation refusal');}}};
+   const model=s.model;if(stage==='model')s.model='synthetic-unavailable-model';
+   const acquire=store.acquire.bind(store);if(stage==='lease')store.acquire=key=>{if(key===s.id)throw Error('Synthetic session lease conflict');return acquire(key);};
+   await assert.rejects(()=>wrapped(s,'Synthetic preparation failure',[],{includeIde:false}),error=>error.notSent===true);
+   store.acquire=acquire;s.model=model;
+   assert.deepEqual(Object.getOwnPropertyDescriptor(s,'turnStartedAt'),before);assert.equal(turns.length,count);
+ }
+ context.activeConnection={};lostReply=true;
+ await assert.rejects(()=>wrapped(s,'Synthetic accepted lost reply',[],{includeIde:false}),error=>error.notSent!==true);
+ assert.equal(turns.length,count+1,'Accepted RPC loss is never classified as a pre-send refusal');
+ lostReply=false;
 }
 (async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-mcp-executor-synthetic-'));
@@ -71,7 +89,7 @@ async function hostSendChecks(project,store) {
   const task={taskId:'synthetic-task',sessionKey:s.key,projectDirectory:project,connection:{...selected},needsReconcile:true};
   const sessions=new Map([[s.key,s]]);
   const sent=[],sendOptions=[];let sendMode='success',turnNumber=0,turnCheckpointed=false;
-  const adapter=executor({connections:{selection:()=>selected,assertCurrent(){}},sessions,store,
+  const adapter=executor({connections:{selection:()=>selected,resolve:async()=>({...selected,provider:{}}),assertCurrent(){}},sessions,store,
    create(){throw Error('Unexpected synthetic creation');},send:async(session,text,attached,options)=>{
     assert(checkpointed);assert.equal(options.projectDirectory,project);assert(options.outputSchema);
     sendOptions.push(options);

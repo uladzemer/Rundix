@@ -4,6 +4,7 @@ const http = require('node:http');
 const {randomBytes, timingSafeEqual} = require('node:crypto');
 const {execFileSync} = require('node:child_process');
 const MAX = 1024 * 1024;
+const TOO_LARGE = 'MCP response exceeds the 1 MiB transport limit. Retry with brief:true; request fewer taskIds if necessary.';
 const UNAVAILABLE = 'Rundix MCP bridge is not running. In VS Code run "Rundix: Start MCP bridge and show Claude configuration" or press Start in the Rundix MCP panel, then retry; reuse the same requestId for mutations.';
 // Long polls keep the socket open for their wait budget plus a margin for the final snapshot.
 function budget(name, args) {
@@ -28,13 +29,17 @@ async function serve({directory, call}) {
     if (req.method!=='POST' || req.url!=='/call' || supplied.length!==expected.length || !timingSafeEqual(supplied,expected) || req.headers.origin) {
       res.writeHead(403); res.end(); return;
     }
-    let body='', size=0;
-    req.on('data',chunk=>{size+=chunk.length;if(size>MAX){req.destroy();return;}body+=chunk;});
+    const chunks=[]; let size=0;
+    req.on('data',chunk=>{size+=chunk.length;if(size>MAX){req.destroy();return;}chunks.push(chunk);});
     req.on('end',async()=>{
       let message;
-      try {message=JSON.parse(body);}catch{res.statusCode=400;res.end(JSON.stringify({error:'Invalid bridge request.',code:'invalid_request'}));return;}
+      try {message=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{res.statusCode=400;res.end(JSON.stringify({error:'Invalid bridge request.',code:'invalid_request'}));return;}
       req.socket.setTimeout(budget(message?.name,message?.arguments));
-      try {const result=await call(message.name,message.arguments);res.setHeader('Content-Type','application/json');res.end(JSON.stringify({result}));}
+      try {
+        const result=await call(message.name,message.arguments), output=JSON.stringify({result});
+        if(Buffer.byteLength(output)>MAX)throw bridgeError(TOO_LARGE,'response_too_large');
+        res.setHeader('Content-Type','application/json');res.end(output);
+      }
       catch(error) {
         // Only coded errors carry client-safe text; anything unexpected stays generic.
         const coded=typeof error?.code==='string' && /^[a-z_]{1,40}$/.test(error.code) && typeof error.message==='string';
@@ -57,10 +62,10 @@ function request(descriptor, name, args) {
     catch {reject(bridgeError(UNAVAILABLE,'bridge_unavailable'));return;}
     const body=JSON.stringify({name,arguments:args});
     const req=http.request({hostname:'127.0.0.1',port:config.port,path:'/call',method:'POST',headers:{Authorization:'Bearer '+config.secret,'Content-Type':'application/json','Content-Length':Buffer.byteLength(body)}},res=>{
-      let output='',size=0;
-      res.on('data',chunk=>{size+=chunk.length;if(size>MAX){res.destroy();reject(Error('MCP response too large.'));return;}output+=chunk;});
+      const chunks=[];let size=0;
+      res.on('data',chunk=>{size+=chunk.length;if(size>MAX){reject(bridgeError(TOO_LARGE,'response_too_large'));res.destroy();return;}chunks.push(chunk);});
       res.on('error',()=>reject(bridgeError(UNAVAILABLE,'bridge_unavailable')));
-      res.on('end',()=>{let parsed;try{parsed=JSON.parse(output);}catch{reject(bridgeError(UNAVAILABLE,'bridge_unavailable'));return;}if(res.statusCode!==200 || parsed.error)reject(bridgeError(String(parsed.error || 'Bridge request failed.'),typeof parsed.code==='string'?parsed.code:'rejected'));else resolve(parsed.result);});
+      res.on('end',()=>{let parsed;try{parsed=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{reject(bridgeError(UNAVAILABLE,'bridge_unavailable'));return;}if(res.statusCode!==200 || parsed.error)reject(bridgeError(String(parsed.error || 'Bridge request failed.'),typeof parsed.code==='string'?parsed.code:'rejected'));else resolve(parsed.result);});
     });
     req.setTimeout(budget(name,args),()=>req.destroy());req.on('error',()=>reject(bridgeError(UNAVAILABLE,'bridge_unavailable')));req.end(body);
   });

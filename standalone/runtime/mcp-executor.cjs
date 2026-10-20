@@ -1,6 +1,7 @@
 const {itemText} = require('./session.cjs');
 const {canonical} = require('./task-directory.cjs');
 const asyncQuestions = require('./async-questions.cjs');
+const delivery = require('./mcp-delivery.cjs');
 const reportSchema={type:'object',properties:{result:{type:'string'},changedFiles:{type:'array',items:{type:'string'}},checks:{type:'array',items:{type:'string'}},remainingIssues:{type:'array',items:{type:'string'}}},required:['result','changedFiles','checks','remainingIssues'],additionalProperties:false};
 function report(session, task) {
   // A task run may span several turns (for example answers to Codex questions); the report covers all of them.
@@ -29,13 +30,13 @@ function taskTitle(description) {
   const points=Array.from(line), short=points.length>TITLE_POINTS?points.slice(0,TITLE_POINTS-1).join('').trimEnd()+'…':line;
   return short?'MCP · '+short:'MCP task';
 }
-function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,client=()=>null,releases=new Map(),closeTab=async()=>{},models=async()=>[],accessMode=()=>'workspace',retainTurn=()=>{},sent=()=>{}}) {
+function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,client=()=>null,releases=new Map(),closeTab=async()=>{},models=async()=>[],reloadWindow,accessMode=()=>'workspace',retainTurn=()=>{},sent=()=>{}}) {
   const turnOptions=task=>({includeIde:false,taskId:task.taskId,projectDirectory:task.projectDirectory,requiredConnection:task.connection,outputSchema:reportSchema,
     ...(task.model?{modelSelection:{model:task.model,effort:task.effort,fast:false}}:task.effort?{modelSelection:{effort:task.effort}}:{})});
   // Only questions from the task's current run count; older unanswered quizzes in the chat are history.
   function asyncPending(s,task) {
     if(!s?.id || !Array.isArray(s.items))return [];
-    return s.items.filter(item=>!task.baselineItems?.includes(item.id) && asyncQuestions.questions(item).length && !s.asyncQuestionReplies?.[item.id] && !asyncQuestions.hasReply(s.items,item.id))
+    return s.items.filter(item=>!task.baselineItems?.includes(item.id) && !task.cancelledAsyncItems?.includes(item.id) && asyncQuestions.questions(item).length && !s.asyncQuestionReplies?.[item.id] && !asyncQuestions.hasReply(s.items,item.id))
       .map(item=>({id:'async-question:'+item.id,method:'rundix/asyncQuestion',params:{threadId:s.id,
         questions:item.questions.map((question,index)=>({id:String(index),title:question.title,options:question.options || []}))}}));
   }
@@ -58,8 +59,20 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       if(selected.id==='local')throw Error('Select an installed companion connection before submitting MCP tasks.');
       if(task && (task.connection.id!==selected.id || task.connection.owner!==selected.owner || task.connection.revision!==selected.revision))throw Error('The task belongs to a different connection selection. Restore that connection before continuing.');
     },
+    async ensureConnection(task) {
+      adapter.assertConnection(task);
+      const selected=adapter.connection();
+      let timer;
+      try {
+        const resolved=await Promise.race([connections.resolve(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Companion availability check timed out.')),8000);})]);
+        if(!resolved.provider || resolved.id!==selected.id || resolved.owner!==selected.owner || resolved.revision!==selected.revision)throw Error('The selected companion connection changed or is unavailable.');
+        adapter.assertConnection(task);
+        return selected;
+      } finally {clearTimeout(timer);}
+    },
     chatId:task=>sessions.get(task.sessionKey)?.id || task.chatId,
     models,
+    reloadWindow,
     // Closes the editor tab of a finished task; the saved chat stays and a continuation reopens it.
     async closeChat(task) {
       const s=sessions.get(task.sessionKey);
@@ -92,7 +105,10 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       return id?[...[...pending.values()].filter(r=>r.params?.threadId===id).map(r=>({id:r.id,method:r.method,params:r.params})),...asyncPending(s,task)]:[];
     },
     async start(task,input,checkpoint=()=>{}) {
-      adapter.assertConnection(task);
+      // Availability and local setup errors are definite pre-send failures.
+      try {await adapter.ensureConnection(task);}catch(error){throw Object.assign(error,{notSent:true});}
+      let sending=false;
+      try {
       const s=session(task);
       if(canonical(s.cwd)!==task.projectDirectory)throw Error('Chat project directory changed.');
       if(s.id && !s.loaded)await resume(s,s.id);
@@ -104,6 +120,7 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       if(task.cancelRequested){task.awaitingPreparation=true;throw Error('Cancelled before sending.');}
       const options=turnOptions(task);
       const sendTurn=async()=>{
+        sending=true;
         const result=await send(s,input,[],options);
         if(result?.turnId){task.turnId=result.turnId;task.turnIds=[...(task.turnIds || []),result.turnId];checkpoint();}
         return result;
@@ -124,11 +141,12 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       if(s.draft===input)s.draft='';
       await save(s);
       await sent(s,input);
+      } catch(error) {if(!sending)error.notSent=true;throw error;}
     },
     async status(task) {
       adapter.assertConnection(task);
       // Waiting for the client's answer must not reopen a chat tab the user closed; answering reopens it.
-      if(task.awaitingAsync && !task.cancelRequested && !sessions.get(task.sessionKey)) {
+      if(task.awaitingAsync && !task.unknownAnswer && !task.cancelRequested && !sessions.get(task.sessionKey)) {
         const saved=store.session(task.sessionKey);
         if(saved?.id===task.chatId && asyncPending(saved,task).length)return {done:false,pending:true,chatId:saved.id,progress:'Waiting for agent client answers'};
       }
@@ -141,10 +159,25 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       // Let transient chat operations finish before the terminal transition's one cleanup attempt.
       if(s.sendingTask || s.modeChange || s.compacting || s.followUpSending || s.asyncQuestionSending)return {done:false,chatId:s.id,progress:'Preparing task'};
       if(!s.id)return {done:true,failed:true,cancelled:!!task.cancelRequested,report:report(s,task)};
+      if(task.unknownAnswer) {
+        const itemId=task.unknownAnswer.slice('async-question:'.length);
+        const replied=asyncQuestions.hasReply(s.items,itemId);
+        // A partial transcript cannot prove absence. While a turn is live keep the answer quarantined.
+        if(replied || !s.busy && !s.cursor) {
+          s.asyncQuestionReplies={...s.asyncQuestionReplies};
+          if(replied)s.asyncQuestionReplies[itemId]='sent';else delete s.asyncQuestionReplies[itemId];
+          await save(s);
+          delete task.unknownAnswer;
+        } else {task.needsReconcile=true;return {done:false,chatId:s.id,progress:'Waiting to reconcile answer delivery',answerUnknown:true};}
+      }
+      if(task.cancelRequested && !s.busy) {
+        task.cancelledAsyncItems=[...new Set([...(task.cancelledAsyncItems || []),...asyncPending(s,task).map(r=>r.id.slice('async-question:'.length))])];
+        task.awaitingAsync=false;
+      }
       const hasAsync=asyncPending(s,task).length>0;
       const awaitingAsync=hasAsync && !task.cancelRequested && !s.error && (s.busy || s.lastTurnStatus==='completed');
       task.awaitingAsync=awaitingAsync && !s.busy;
-      return {chatId:s.id,done:!s.busy && !awaitingAsync,cancelled:s.lastTurnStatus==='interrupted' || hasAsync && !!task.cancelRequested && !s.busy,failed:!!s.error || s.lastTurnStatus!=='completed',pending:adapter.pending(task).length>0,
+      return {chatId:s.id,done:!s.busy && !awaitingAsync,cancelled:s.lastTurnStatus==='interrupted' || !!task.cancelledAsyncItems?.length && !!task.cancelRequested && !s.busy,failed:!!s.error || s.lastTurnStatus!=='completed',pending:adapter.pending(task).length>0,
         progress:awaitingAsync?'Waiting for agent client answers':s.busy?'Codex turn active':'Turn finished',report:!s.busy && !awaitingAsync?report(s,task):null};
     },
     async answer(task,approval) {
@@ -155,16 +188,18 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       if(!request)throw Error('Approval is no longer pending.');
       if(approval.decision==='acceptForSession')throw Error('MCP approvals must be scoped to this request.');
       if(request.method==='rundix/asyncQuestion') {
+        // Validate locally before entering the host's durable delivery intent.
+        asyncQuestions.buildReply(s.items.find(item=>item.id===request.id.slice('async-question:'.length)),approval.answers,{skip:approval.skip===true});
         await handle(s,{action:'answerAsync',itemId:request.id.slice('async-question:'.length),answers:approval.answers,skip:approval.skip===true,
           // Internal callback: keep new reply turns under the task's connection and directory lease.
           sendReply:async text=>{
             // Parallel starts briefly hold the connection; retry those pre-send conflicts within the client request budget.
             let result;
             for(let attempt=0;;attempt++) {
-              adapter.assertConnection(task);
-              if(task.cancelRequested)throw Error('Task cancelled before answering.');
+              try{adapter.assertConnection(task);}catch(error){throw Object.assign(error,{notSent:true});}
+              if(task.cancelRequested)throw Object.assign(Error('Task cancelled before answering.'),{notSent:true});
               try{result=await send(s,text,[],turnOptions(task));break;}
-              catch(error){if(!error?.retryable || attempt>=7)throw error;await new Promise(resolve=>setTimeout(resolve,1000));}
+              catch(error){if(!error?.retryable || attempt>=7)throw delivery.refused(error)?error:delivery.unknown(error);await new Promise(resolve=>setTimeout(resolve,1000));}
             }
             if(result?.turnId){task.turnId=result.turnId;task.turnIds=[...(task.turnIds || []),result.turnId];}
             if(task.cancelRequested && !result?.waitUntil)await handle(s,{action:'stop'});

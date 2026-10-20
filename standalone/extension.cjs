@@ -275,7 +275,9 @@ function activate(context) {
         catch{mcpLauncher=path.join(context.extensionUri.fsPath,'runtime','mcp-server.cjs');}
         mcpTasks=new McpTasks({store:new SessionStore(path.join(root,'tasks')),directoryStore:store,
           maxParallel:()=>vscode.workspace.getConfiguration('rundix').inspect('mcpMaxParallelTasks')?.globalValue ?? 3,
-          adapter:mcpExecutor({connections,sessions,store,create,send,resume,handle,pending:pendingRequests,save,alive:()=>!disposed && !!mcpBridge,
+          adapter:mcpExecutor({connections,sessions,store,create,
+            send:(...args)=>require('./runtime/mcp-delivery.cjs').send(send,...args),
+            resume,handle,pending:pendingRequests,save,alive:()=>!disposed && !!mcpBridge,
             closeTab,
             // Lets the agent client apply an installed update itself; busy chats are protected unless forced.
             reloadWindow(force){
@@ -1863,9 +1865,11 @@ function activate(context) {
         }
       } finally {releaseQueue();}
     } else if(msg.action==='answerAsync') {
+      const delivery=require('./runtime/mcp-delivery.cjs');
       if(s.asyncQuestionSending)throw Error('Wait for the question answer to finish sending.');
       const item=s.items.find(item=>item.id===msg.itemId);
       if(!item || s.asyncQuestionReplies?.[item.id] || asyncQuestions.hasReply(s.items,item.id))throw Error('This question has already been answered or is unavailable.');
+      if(mcpTasks && [...mcpTasks.tasks.values()].some(task=>task.sessionKey===s.key && task.cancelledAsyncItems?.includes(item.id)))throw Error('This question belongs to a cancelled task run.');
       const text=asyncQuestions.buildReply(item,msg.answers,{skip:msg.skip===true});
       // In an MCP task chat, answer through the task so its directory lease, connection and report stay consistent.
       const owner=typeof msg.sendReply!=='function' && mcpTasks?[...mcpTasks.tasks.values()].find(task=>task.sessionKey===s.key && mcpTasks.adapter.pending(task).some(request=>request.id==='async-question:'+item.id)):null;
@@ -1875,16 +1879,23 @@ function activate(context) {
       }
       if(preflight.preparing(s.preflight))s.preflight.skipped=msg.skip===true;
       s.asyncQuestionSending=item.id;publish(s);
+      let attempted=false;
       try{
+        // Persist before any mutating RPC: a crash or lost reply must never enable a duplicate answer.
+        s.asyncQuestionReplies={...s.asyncQuestionReplies,[item.id]:'unknown'};
+        await save(s);
         let queued=false;
         const sendReply=async()=>{
+          attempted=true;
           const result=await (typeof msg.sendReply==='function'?msg.sendReply(text):send(s,text,[],{includeIde:false}));
-          if(result?.waitUntil)throw Error(locale.t('Очередь ожидает сброса лимитов. Повторите отправку позже.'));
+          if(result?.waitUntil)throw Object.assign(Error(locale.t('Очередь ожидает сброса лимитов. Повторите отправку позже.')),{notSent:true});
         };
         if(s.busy){
+          attempted=true;
           if(!await steer(s,text,[])){
+            attempted=false;
             if(typeof msg.sendReply==='function'){
-              if(s.busy)throw Error('The turn is finishing. Retry the question answer after its status updates.');
+              if(s.busy)throw Object.assign(Error('The turn is finishing. Retry the question answer after its status updates.'),{notSent:true});
               await sendReply();
             }else{await queueFollowUp(s,text,[]);queued=true;}
           }
@@ -1892,6 +1903,15 @@ function activate(context) {
         s.asyncQuestionReplies={...s.asyncQuestionReplies,[item.id]:queued?'queued':msg.skip===true?'skipped':'sent'};
         questionRecords.remember(s,{id:'a:'+item.id,origin:'async',parentItemId:item.id,questions:questionRecords.fromAsync(item),answers:msg.answers,skipped:msg.skip===true,status:queued?'queued':'sent'});
         await save(s);
+      }catch(error){
+        s.asyncQuestionReplies={...s.asyncQuestionReplies};
+        if(!attempted || delivery.refused(error)){
+          delete s.asyncQuestionReplies[item.id];
+          await save(s);throw Object.assign(error,{deliveryOutcome:'rejected'});
+        }
+        s.asyncQuestionReplies[item.id]='unknown';
+        try{await save(s);}catch{}
+        throw delivery.unknown(error);
       }finally{s.asyncQuestionSending=null;publish(s);}
     } else if (msg.action === "send" || msg.action === 'enqueue') {
       if(s.approvingTask)throw Error(locale.t('Дождитесь обработки уточнений перед согласованием.'));

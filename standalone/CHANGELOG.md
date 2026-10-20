@@ -2,7 +2,16 @@
 
 Install and update Rundix through [Microsoft Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix).
 
-## 0.2.3 — 2026-10-20
+## 0.3.0 — 2026-10-20
+
+Reliability and automation release. Highlights:
+
+- Claude Code ↔ Codex over MCP is fully automatic: `wait_task`/`wait_tasks` and a background `--wait` launcher instead of polling, Codex questions routed to the agent client, parallel tasks across projects, per-task model/effort (`list_models`), `close_task`, `reload_window`, configurable access mode and per-thread Codex config.
+- Safer sending: a lost `turn/start` reply is reconciled instead of resent or released early; queued follow-ups are never replayed when delivery is uncertain; adding to the queue is transactional.
+- Safer storage across VS Code windows: atomic leases (with a fallback for volumes without hard links) and locked record saves so drafts are not overwritten.
+- Chat: quiz answers and queued-message edits survive panel reloads (secret answers are never stored); answers with unconfirmed delivery can be re-sent after checking the chat; the configured history scope is honoured and history keeps keyboard focus.
+- Security and robustness: `rundix.cliPath` is read only from user settings; a pending browser sign-in holds the account lock with a clear message and a 5-minute limit; a hung companion no longer blocks switching connections; broken CLI installs are repaired; catalog paging is bounded.
+- Packaging: the VSIX audit fails if a packaged script requires a module that is not packaged.
 
 - MCP: shorter task tab titles (24 characters); `close_task` closes the tab of a finished task so tabs do not pile up; `list_models` lets the client pick model and reasoning effort per task.
 - MCP: `rundix.mcpThreadConfig` applies per-thread Codex config overrides to MCP task chats only, for example to disable helper MCP servers and plugins that keep a finished task's worktree in use on Windows.

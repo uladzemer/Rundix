@@ -37,6 +37,13 @@ async function main(){
   assert.equal(tasks.call('cancel_task',{taskId:a.taskId,requestId:'synthetic-archived-cancel'}).revision,cancelled.revision,'Archived cancel remains idempotent');
   const key=require('node:crypto').createHash('sha256').update(space+'\0synthetic-a1').digest('hex');fs.writeFileSync(archived.store.file('request',key),'{');
   assert.throws(()=>tasks.call('submit_task',args('synthetic-a1')),{code:'storage_unavailable'});
+  for(let i=0;i<125;i++)archived.put({...task,taskId:'synthetic-page-'+i,createdAt:task.createdAt+1+i,operations:[]});
+  const get=archived.get.bind(archived);let reads=0;archived.get=(...args)=>{reads++;return get(...args);};
+  const latest=archived.page(space,{limit:3});assert.equal(latest.tasks.length,3);assert.equal(latest.total,126);assert.equal(reads,0,'Index serves unchanged summaries without opening archived records');
+  assert.equal(latest.tasks[0].taskId,'synthetic-page-124');
+  const restarted=new(require('../runtime/service-task-archive.cjs').TaskArchive)(store);assert.equal(restarted.page(space,{limit:3}).total,126,'Durable index survives restart');
+  const logs=[];restarted.log=value=>logs.push(value);fs.writeFileSync(restarted.store.file('mcp-task','synthetic-page-124'),'{');
+  const safe=restarted.page(space,{limit:3});assert.equal(safe.tasks.length,3);assert.equal(safe.total,125);assert(!safe.tasks.some(row=>row.taskId==='synthetic-page-124'));assert.deepEqual(logs,[{code:'archive_record_corrupt'}]);
   console.log('PASS task archive: per-space cap, automatic closed history, archived get/isolation, persistent requestId dedup, explicit restore and damaged-index fail closed.');
  }finally{tasks?.dispose();assert.equal(path.dirname(root),os.tmpdir());assert(path.basename(root).startsWith('rundix-task-archive-synthetic-'));fs.rmSync(root,{recursive:true,force:true});}
 }

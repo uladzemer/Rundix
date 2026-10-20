@@ -69,13 +69,15 @@ function createWindowRpc({generation, tasks,core,migration}) {
     }
     for (const task of serviceTasks.tasks.values()) include(task);
     // Restored/crash-duplicate active records take precedence over the archive.
-    for (const task of serviceTasks.archive?.records() || []) if (!serviceTasks.tasks.has(task.taskId)) include(task);
+    const archived=serviceTasks.archive?.page(spaceId,{limit,exclude:new Set(serviceTasks.tasks.keys())});
+    for(const task of archived?.tasks || [])include(task);
+    totalTasks+=(archived?.total || 0)-(archived?.tasks.length || 0);
     const legacy=migration?.visible(spaceId,peer.windowBinding.folders) || [];
     for(const row of legacy)include({...row.task,...(row.interrupted?{state:'error',recoveryRequired:true}:{}),taskId:row.taskId,space:spaceId,legacy:true,readOnly:true});
     const result = {generation, schemaVersion:1, spaceId, viewRevision:revision(spaceId),
       tasks:page.map(task => ({...(task.legacy?{taskId:task.taskId,title:String(task.description || '').slice(0,160),state:task.state,progress:task.progress,
-        chatId:task.chatId || null,projectDirectory:task.projectDirectory,unsentInputCount:task.unsentInputs?.length || 0,pendingRequests:0,recoveryRequired:!!task.recoveryRequired}:serviceTasks.summary(task)),
-        readOnly:!!task.readOnly,report:projection.report(task.report),closed:!!task.closedAt,
+        chatId:task.chatId || null,projectDirectory:task.projectDirectory,unsentInputCount:task.unsentInputs?.length || 0,pendingRequests:0,recoveryRequired:!!task.recoveryRequired}:task.archived?{taskId:task.taskId,title:task.description,state:task.state,progress:task.progress,chatId:task.chatId,projectDirectory:task.projectDirectory,createdAt:task.createdAt,updatedAt:task.updatedAt,revision:task.revision,hasReport:!!task.report,error:task.error,waitingLimit:null,unsentInputCount:task.unsentInputCount,recoveryRequired:false,pendingRequests:0}:serviceTasks.summary(task)),
+        readOnly:!!task.readOnly,report:task.archived?task.report:projection.report(task.report),closed:!!task.closedAt,
         actionRequired:task.providerFailureCode || (task.error?.startsWith('action_required') ? 'provider_unavailable' : null)})),
       chats:page.filter(task => task.chatId).map(task => ({taskId:task.taskId, chatId:task.chatId,
         owner:task.legacy?'legacy':'service',readOnly:!!task.readOnly,title:('MCP · ' + task.description).slice(0,167), visibility:task.closedAt ? 'closed' : 'open'})),

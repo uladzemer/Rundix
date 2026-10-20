@@ -16,7 +16,7 @@ const {plainSettings}=require('./service-settings.cjs');
 function boundedLogger(root) {
   const directory = path.join(root, 'diagnostics'); fs.mkdirSync(directory, {recursive:true, mode:0o700});
   const file = index => path.join(directory, 'service-' + index + '.log');
-  const codes = new Set(['host_error', 'service_started', 'service_stopped', 'idle_exit_failed', 'provider_unavailable']);
+  const codes = new Set(['host_error', 'service_started', 'service_stopped', 'idle_exit_failed', 'provider_unavailable','archive_record_corrupt','archive_index_corrupt','archive_index_unavailable']);
   return input => {
     const code = codes.has(input?.code) ? input.code : 'host_error';
     try {
@@ -150,7 +150,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       if(key==='mcpMaxParallelTasks'){try{return settings(key,fallback);}catch{return 1;}}
       return settings(key,fallback);
     }, clock, transport,
-    ui:{hasChat:() => false}, taskOptions, decorateAdapter:adapter => {
+    ui:{hasChat:() => false}, taskOptions:{...taskOptions,archiveLog:logger}, decorateAdapter:adapter => {
       const assertConnection=adapter.assertConnection;
       adapter.assertConnection=(...args)=>{settings.assertValid();return assertConnection(...args);};
       adapter.cancelWait = task => provider.cancelWait({taskId:task.taskId, spaceId:task.space, waitId:task.waitId});

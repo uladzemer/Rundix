@@ -120,6 +120,13 @@ async function main() {
     assert.equal(limited.result.totalTasks,2); assert.equal(limited.result.hasMoreHistory,true);
     assert.equal(limited.result.tasks[0].taskId,extra.taskId,'Active tasks precede archived history');
     await reloaded.call(sa,'cancel_task',{requestId:'synthetic-cancel-extra',taskId:extra.taskId});
+    const archive=service.host.mcp.tasks.archive;
+    archive.records=()=>{throw Error('Synthetic full archive scan forbidden');};
+    await reloaded.refresh(sa);assert.equal(reloaded.snapshots.get(sa).totalTasks,2);
+    fs.writeFileSync(archive.store.file('mcp-task',ta.taskId),'{');
+    await reloaded.refresh(sa);
+    assert.equal(reloaded.snapshots.get(sa).tasks.some(task=>task.taskId===ta.taskId),false,'Corrupt archive record is skipped by space.subscribe');
+    assert.equal(reloaded.snapshots.get(sa).totalTasks,1);await wb.refresh(sb);assert.equal(wb.snapshots.get(sb).totalTasks,1,'Corrupt A history does not affect B');
     const empty = window([]); await empty.start(); assert.equal(empty.snapshots.size,0);
     assert.throws(()=>new ServiceWindowClient({trusted:false,workspaceFolders:['synthetic-invalid-uri']}),{code:'workspace_untrusted'});
     for (const [binding,code] of [

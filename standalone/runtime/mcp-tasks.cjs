@@ -1,4 +1,4 @@
-// Durable task orchestration. The adapter is the existing extension executor.
+// Durable task orchestration shared by plain MCP hosts.
 const fs = require('node:fs');
 const {randomUUID, createHash} = require('node:crypto');
 const directories = require('./task-directory.cjs');
@@ -28,7 +28,9 @@ function directoryFilter(value) {
   try { return directories.canonical(value); } catch { return process.platform==='win32' ? value.toLowerCase() : value; }
 }
 class McpTasks {
-  constructor({store, adapter, directoryStore = store, maxParallel = () => 1}) {
+  constructor({store, adapter, directoryStore = store, maxParallel = () => 1, spaceOf = task => task.space, taskFilter = () => true}) {
+    // Optional task.space is absent for legacy/current-window tasks. No routing yet.
+    this.spaceOf = spaceOf; this.taskFilter = taskFilter;
     this.store = store; this.directoryStore=directoryStore; this.adapter = adapter; this.maxParallel = maxParallel; this.tasks = new Map(); this.waiters = new Set(); this.starting = new Set(); this.launches = new Set(); this.operations = new Map(); this.executing = false; this.closed = false;
     for (const name of fs.readdirSync(store.directory).filter(n => /^mcp-task-[\w-]+\.json$/.test(n))) {
       const task = store.read('mcp-task', name.slice(9, -5));
@@ -51,7 +53,8 @@ class McpTasks {
     try { void Promise.resolve(this.adapter.release?.(task)).catch(()=>{}); } catch {}
   }
   limit() { const value = Number(this.maxParallel()); return Number.isInteger(value) && value >= 1 ? Math.min(value, MAX_PARALLEL) : 1; }
-  get(id) { const task = this.tasks.get(id); if (!task) throw fail('unknown_task', 'Unknown taskId'); return task; }
+  visible(task) { return this.taskFilter(this.spaceOf(task), task); }
+  get(id) { const task = this.tasks.get(id); if (!task || !this.visible(task)) throw fail('unknown_task', 'Unknown taskId'); return task; }
   view(task, brief = false, unsentAfter, fullRecovery=false) {
     const report = task.report;
     const reportFields = brief ? {reportSummary:report ? {
@@ -106,7 +109,7 @@ class McpTasks {
     const directory = args.projectDirectory === undefined ? null : directoryFilter(string(args.projectDirectory, 'projectDirectory', 4096));
     // Creation order keeps pages stable while active tasks keep updating.
     const order = (a,b) => (b.createdAt-a.createdAt) || (a.taskId<b.taskId?-1:a.taskId>b.taskId?1:0);
-    const matches = [...this.tasks.values()].filter(t => (!args.state || t.state===args.state) && (!directory || t.projectDirectory===directory))
+    const matches = [...this.tasks.values()].filter(t => this.visible(t) && (!args.state || t.state===args.state) && (!directory || t.projectDirectory===directory))
       .sort(order).filter(t => !after || order(t, after) > 0);
     const page = matches.slice(0, limit), last = page[page.length-1];
     return {tasks:page.map(t=>this.summary(t)), nextCursor:matches.length>limit ? Buffer.from(last.createdAt+':'+last.taskId).toString('base64url') : null};

@@ -67,3 +67,5 @@
 !runtime/question-policy.cjs
 !runtime/question-answer.cjs
 !runtime/session-core.cjs
+!runtime/mcp-host.cjs
+!runtime/session-actions.cjs

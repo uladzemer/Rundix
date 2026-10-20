@@ -24,7 +24,7 @@ function hostDepsChecks(){
       acceptCli:noop,taskSessions:()=>null,applyPendingMode:async()=>{},clearProjectFiles:noop,
     });
     instance.mcpThreadConfig({mcpTask:false});
-    for(const name of ['account-lifecycle','mcp-access','question-answer','question-policy','send-queue','server-connection','session-persistence','session-resume']){
+    for(const name of ['account-lifecycle','mcp-access','question-answer','session-actions','question-policy','send-queue','server-connection','session-persistence','session-resume']){
       const source=fs.readFileSync(path.join(__dirname,'../runtime/'+name+'.cjs'),'utf8');
       assert.doesNotMatch(source,/deps\.(?:vscode|context|lastEditor)\b|\.panel\b/,name+': plain host interface');
       for(const match of source.matchAll(/\bdeps\.([\w$]+)/g)){
@@ -96,7 +96,10 @@ async function main(){
     const manifest=require('../package.json').contributes.configuration.properties['rundix.mcpAccessMode'];
     assert.equal(manifest.scope,'application');assert.equal(manifest.default,'workspace');
     const source=fs.readFileSync(path.join(__dirname,'../extension.cjs'),'utf8');
-    assert.match(source,/inspect\('mcpAccessMode'\)\?\.globalValue/,'Workspace settings must not grant MCP access');
+    assert.match(source,/settings:key=>vscode\.workspace\.getConfiguration\('rundix'\)\.inspect\(key\)\?\.globalValue/,'MCP host receives only user settings');
+    const mcpHost=fs.readFileSync(path.join(__dirname,'../runtime/mcp-host.cjs'),'utf8');
+    assert.match(mcpHost,/accessMode:\(\)=>settings\('mcpAccessMode'\)/,'MCP access uses the user settings callback');
+    assert.doesNotMatch(mcpHost,/\bvscode\b|\.webview\b|\.panel\b/,'MCP host has no editor objects');
     for(const file of ['../package.nls.json','../package.nls.ru.json'])for(const key of ['description','workspace','manual','auto','full'])assert.ok(require(file)['configuration.mcpAccessMode.'+key]);
     console.log('MCP access: configured mode on new task chats, safe fallback, user-scope only, existing chats untouched and task titles passed.');
   }finally{fs.rmSync(root,{recursive:true,force:true});}

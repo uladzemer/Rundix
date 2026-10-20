@@ -55,7 +55,7 @@ function audit(file) {
     'extension/runtime/mcp-server.cjs', 'extension/runtime/mcp-bridge.cjs', 'extension/runtime/mcp-tasks.cjs',
     'extension/runtime/account-lifecycle.cjs',
     'extension/runtime/session-persistence.cjs',
-    'extension/runtime/session-core.cjs',
+    'extension/runtime/session-core.cjs', 'extension/runtime/mcp-host.cjs', 'extension/runtime/session-actions.cjs',
     'extension/runtime/session-resume.cjs',
     'extension/runtime/server-connection.cjs',
     'extension/runtime/send-queue.cjs',

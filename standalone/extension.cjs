@@ -1,5 +1,4 @@
 const { findCli } = require('./runtime/transport.cjs');
-const { SessionStore } = require('./runtime/store.cjs');
 const { createSessionCore } = require('./runtime/session-core.cjs');
 const composerDraft = require('./runtime/composer-draft.cjs');
 const locale = require("./ui/i18n.js");
@@ -21,19 +20,15 @@ const { canEditQueued, queuedEdit, selectedAttachments, assertQueueCurrent, move
 const { fileAttachment, stageQueuedAttachments } = require('./runtime/queued-attachments.cjs');
 const { transferQueuedSession, acquireQueuedSession } = require('./runtime/queued-session-transfer.cjs');
 const { startLogin } = require("./runtime/account.cjs");
-const taskDirectory = require('./runtime/task-directory.cjs');
-const { McpTasks } = require('./runtime/mcp-tasks.cjs');
-const mcpBridgeTransport = require('./runtime/mcp-bridge.cjs');
-const { executor: mcpExecutor, reportMarkdown: mcpReportMarkdown } = require('./runtime/mcp-executor.cjs');
+const { createMcpHost } = require('./runtime/mcp-host.cjs');
+const { reportMarkdown: mcpReportMarkdown } = require('./runtime/mcp-executor.cjs');
 const {activateCompanions}=require('./runtime/connection-companions.cjs');
 const mcpPanelState=require('./runtime/mcp-panel.cjs');
 const { ProjectFiles } = require("./runtime/files.cjs");
 const modes = require("./ui/modes.js");
 const speed = require('./ui/speed.js');
 const { versions } = require("./runtime/diff.cjs");
-const forms = require("./ui/forms.js");
 const asyncQuestions = require('./runtime/async-questions.cjs');
-const questionRecords = require('./runtime/question-records.cjs');
 const preflight = require('./runtime/task-preflight.cjs');
 const { reference } = require("./runtime/references.cjs");
 const { tabTitle } = require("./runtime/titles.cjs");
@@ -111,13 +106,13 @@ function activate(context) {
     acceptCli: prepared => cliUpdates.accept(prepared.channel, prepared),
     clearProjectFiles: () => projectFiles.clear(),
     applyPendingMode: s => applyPendingMode(s),
-    taskSessions: () => mcpTasks && ({
-      tasks: { values: () => mcpTasks.tasks.values() },
-      adapter: { pending: task => mcpTasks.adapter.pending(task) },
-      call: (...args) => mcpTasks.call(...args),
+    taskSessions: () => mcpHost.tasks && ({
+      tasks: { values: () => mcpHost.tasks.tasks.values() },
+      adapter: { pending: task => mcpHost.tasks.adapter.pending(task) },
+      call: (...args) => mcpHost.tasks.call(...args),
     }),
   });
-  const { sessions, store, library, connections, pendingLogin, pendingRequests, threadReleases, turnLeases } = core;
+  const { sessions, store, library, connections, pendingLogin, pendingRequests, turnLeases } = core;
   for (const key of context.workspaceState
     .keys()
     .filter((key) => key.startsWith("session:"))) {
@@ -151,10 +146,9 @@ function activate(context) {
         );
     }),
   );
-  let mcpTasks=null, mcpBridge=null, mcpLease=null, mcpStarting=null, mcpLauncher=null;
   const mcpViews=new Map();
   let mcpEditor=null, mcpPanelBusy=false;
-  const mcpRecords=()=>mcpTasks?[...mcpTasks.tasks.values()]:mcpPanelState.readRecords(path.join(context.globalStorageUri.fsPath,'mcp','tasks'));
+  const mcpRecords=()=>mcpHost.tasks?[...mcpHost.tasks.tasks.values()]:mcpPanelState.readRecords(path.join(context.globalStorageUri.fsPath,'mcp','tasks'));
   async function connectMcpPool() {
     if(!vscode.workspace.isTrusted)throw Error('Workspace trust is required.');
     if(connections.selection().id==='local') {
@@ -172,8 +166,8 @@ function activate(context) {
   function mcpPanelSnapshot() {
     let connected=false;
     try{if(core.state.activeConnection?.provider && core.state.account && !core.state.limits.error){connections.assertCurrent(core.state.activeConnection);connected=true;}}catch{}
-    return mcpPanelState.snapshot({records:mcpRecords(),language:locale.language,connection:connections.display(),connected,bridgeRunning:!!mcpBridge,
-      pending:task=>mcpTasks?.adapter.pending(task) || []});
+    return mcpPanelState.snapshot({records:mcpRecords(),language:locale.language,connection:connections.display(),connected,bridgeRunning:!!mcpHost.bridge,
+      pending:task=>mcpHost.tasks?.adapter.pending(task) || []});
   }
   function publishMcpPanel(force=false) {
     if(![...mcpViews.keys()].some(view=>view.visible))return;
@@ -185,8 +179,8 @@ function activate(context) {
     }catch{for(const view of mcpViews.keys())if(view.visible)void view.webview.postMessage({type:'mcpResult',ok:false});}
   }
   function mcpConfiguration() {
-    if(!mcpBridge)throw Error('Start the MCP bridge first.');
-    return {mcpServers:{rundix:{command:'node',args:[mcpLauncher,'--bridge',mcpBridge.descriptor]}}};
+    if(!mcpHost.bridge)throw Error('Start the MCP bridge first.');
+    return {mcpServers:{rundix:{command:'node',args:[mcpHost.launcher,'--bridge',mcpHost.bridge.descriptor]}}};
   }
   async function handleMcpPanel(message) {
     if(!message || typeof message.action!=='string')throw Error('Invalid MCP panel action.');
@@ -207,9 +201,9 @@ function activate(context) {
         if(!saved || !task.chatId || saved.id!==task.chatId)throw Error('Task chat metadata is unavailable.');
         if(view(existing)?.panel)select(existing);else create(saved);
       }else {
-        if(!mcpTasks || !vscode.workspace.isTrusted)throw Error('Start the MCP bridge in a trusted workspace.');
+        if(!mcpHost.tasks || !vscode.workspace.isTrusted)throw Error('Start the MCP bridge in a trusted workspace.');
         if(typeof message.requestId!=='string' || !/^[\w-]{1,128}$/.test(message.requestId))throw Error('Invalid panel requestId.');
-        await mcpTasks.call(message.action==='cancel'?'cancel_task':'continue_task',{
+        await mcpHost.tasks.call(message.action==='cancel'?'cancel_task':'continue_task',{
           taskId:task.taskId,requestId:message.requestId,...(message.action==='continue'?{clarification:message.clarification}:{})});
       }
     }else throw Error('Unknown MCP panel action.');
@@ -250,86 +244,31 @@ function activate(context) {
   }));
   const mcpPanelTimer=setInterval(()=>publishMcpPanel(),1000);
   context.subscriptions.push({dispose(){clearInterval(mcpPanelTimer);}});
-  async function startMcp() {
-    if(mcpStarting)return mcpStarting;
-    if(mcpBridge)return mcpBridge.descriptor;
-    mcpStarting=(async()=>{
-      if(!vscode.workspace.isTrusted)throw Error('Trust the VS Code workspace before starting MCP.');
-      mcpLease=store.acquire('mcp-bridge');
-      try {
-        const root=path.join(context.globalStorageUri.fsPath,'mcp');
-        mcpBridgeTransport.privateDirectory(root);
-        // A locked launcher copy must not keep the bridge down; the packaged server still works until the next start.
-        try{mcpLauncher=mcpBridgeTransport.installLauncher(root,context.extension.packageJSON.version);}
-        catch{mcpLauncher=path.join(context.extensionUri.fsPath,'runtime','mcp-server.cjs');}
-        mcpTasks=new McpTasks({store:new SessionStore(path.join(root,'tasks')),directoryStore:store,
-          maxParallel:()=>vscode.workspace.getConfiguration('rundix').inspect('mcpMaxParallelTasks')?.globalValue ?? 3,
-          adapter:mcpExecutor({connections,sessions,store,create,hasChat,
-            send,
-            resume,handle,pending:pendingRequests,save,alive:()=>!core.state.disposed && !!mcpBridge,
-            closeTab,
-            // Only a restored tab that hosts exactly this chat and is unambiguous by title is closed.
-            async closeSavedTab(key){
-              const saved=store.session(key);
-              if(!saved?.name)return false;
-              const hosts=fs.readdirSync(store.directory).filter(name=>/^host-[\w-]+\.json$/.test(name)).map(name=>store.host(name.slice(5,-5))).filter(host=>host?.keys?.includes(key));
-              if(hosts.length!==1 || hosts[0].keys.length!==1)return false;
-              const tabs=vscode.window.tabGroups.all.flatMap(group=>group.tabs).filter(tab=>tab.input instanceof vscode.TabInputWebview &&
-                String(tab.input.viewType).includes('rundix.session') && tab.label===tabTitle(saved.name));
-              if(tabs.length!==1)return false;
-              return vscode.window.tabGroups.close(tabs[0]);
-            },
-            // Lets the agent client apply an installed update itself; busy chats are protected unless forced.
-            reloadWindow(force){
-              if(!force && [...sessions.values()].some(s=>s.busy || s.sendingTask || s.compacting))
-                throw Object.assign(Error('A Rundix chat is still working; wait for it, or pass force:true.'),{code:'task_active'});
-              setTimeout(()=>{void vscode.commands.executeCommand('workbench.action.reloadWindow');},300);
-            },
-            async models(){
-              // Load the catalog within the bridge's request budget; an empty answer must mean "no models", never "not loaded".
-              if(!core.state.catalog.length){
-                let timer;
-                const load=(async()=>{await connect();await refreshCatalog();})();
-                try{await Promise.race([load,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('timeout')),9000);})]);}
-                catch{throw Object.assign(Error('The model catalog is not available yet. Check the Codex connection in Rundix and retry.'),{code:'connection_unavailable'});}
-                finally{clearTimeout(timer);load.catch(()=>{});}
-              }
-              return core.state.catalog.map(model=>({model:model.model,displayName:model.displayName || model.model,isDefault:!!model.isDefault,
-                defaultEffort:model.defaultReasoningEffort || null,efforts:(model.supportedReasoningEfforts || []).map(effort=>effort.reasoningEffort).filter(Boolean)}));
-            },
-            releases:threadReleases,client:()=>{if(!core.state.activeConnection || !core.state.server)return null;connections.assertCurrent(core.state.activeConnection);return core.state.server;},
-            // Only the user's own settings count: a repository's workspace settings must not grant MCP full access.
-            accessMode:()=>vscode.workspace.getConfiguration('rundix').inspect('mcpAccessMode')?.globalValue || 'workspace',
-            async sent(s,text,options={}){
-              publish(s,true);
-              await view(s).panel?.webview.postMessage({type:'sent',key:s.key,text,...options});
-            },
-            retainTurn(s,task){
-              if(turnLeases.has(s.id))return;
-              const unlockDirectory=taskDirectory.acquire(store,s.cwd,task.taskId);
-              let unlockSession;
-              try{unlockSession=store.acquire(s.id);}catch(error){unlockDirectory();throw error;}
-              turnLeases.set(s.id,()=>{unlockSession();unlockDirectory();});
-            }})});
-        mcpBridge=await mcpBridgeTransport.serve({directory:root,call:(name,args)=>{
-          if(!vscode.workspace.isTrusted)throw Object.assign(Error('Trust the VS Code workspace that runs the Rundix MCP bridge.'),{code:'workspace_untrusted'});
-          return mcpTasks.call(name,args);
-        }});
-        mcpTasks.schedule();
-        await context.globalState.update('mcpEnabled',true);
-        broadcast();
-        return mcpBridge.descriptor;
-      }catch(error){mcpTasks?.dispose();mcpTasks=null;mcpBridge?.dispose();mcpBridge=null;mcpLease?.();mcpLease=null;throw error;}
-    })();
-    try{return await mcpStarting;}finally{mcpStarting=null;}
-  }
-  async function stopMcp() {
-    if(mcpStarting)await mcpStarting;
-    if(mcpTasks && [...mcpTasks.tasks.values()].some(t=>['running','waiting_approval'].includes(t.state)))throw Error('Cancel active MCP tasks and wait for confirmation before stopping the bridge.');
-    mcpTasks?.dispose();mcpTasks=null;mcpBridge?.dispose();mcpBridge=null;mcpLease?.();mcpLease=null;
-    await context.globalState.update('mcpEnabled',false);
-    broadcast();
-  }
+  const mcpHost=createMcpHost({core,storageRoot:context.globalStorageUri.fsPath,
+    version:context.extension.packageJSON.version,
+    settings:key=>vscode.workspace.getConfiguration('rundix').inspect(key)?.globalValue,
+    trusted:()=>vscode.workspace.isTrusted,
+    ui:{openChat:saved=>create(saved),hasChat,closeTab,
+      async closeSavedTab(key){
+        const saved=store.session(key);
+        if(!saved?.name)return false;
+        const hosts=fs.readdirSync(store.directory).filter(name=>/^host-[\w-]+\.json$/.test(name)).map(name=>store.host(name.slice(5,-5))).filter(host=>host?.keys?.includes(key));
+        if(hosts.length!==1 || hosts[0].keys.length!==1)return false;
+        const tabs=vscode.window.tabGroups.all.flatMap(group=>group.tabs).filter(tab=>tab.input instanceof vscode.TabInputWebview &&
+          String(tab.input.viewType).includes('rundix.session') && tab.label===tabTitle(saved.name));
+        if(tabs.length!==1)return false;
+        return vscode.window.tabGroups.close(tabs[0]);
+      },
+      reloadWindow:()=>{void vscode.commands.executeCommand('workbench.action.reloadWindow');},
+      async sent(s,text,options={}){
+        publish(s,true);
+        await view(s).panel?.webview.postMessage({type:'sent',key:s.key,text,...options});
+      },
+      enabled:enabled=>context.globalState.update('mcpEnabled',enabled),
+      changed:()=>broadcast(),
+    }});
+  async function startMcp() { return mcpHost.start(); }
+  async function stopMcp() { return mcpHost.stop(); }
   context.subscriptions.push(vscode.commands.registerCommand('rundix.mcpStart',async()=>{
     await connectMcpPool();
     const descriptor=await startMcp();
@@ -431,7 +370,7 @@ function activate(context) {
           modelsUpdatedAt: core.state.catalogUpdatedAt,
           account: connections.projectAccount(core.state.account),
           connection: connections.display(),
-          mcpBridgeRunning:!!mcpBridge,
+          mcpBridgeRunning:!!mcpHost.bridge,
           authBusy: core.state.authBusy,
           chatWidth:vscode.workspace.getConfiguration('rundix').get('chatWidth','wide'),
           contextDisplay:vscode.workspace.getConfiguration('rundix').get('contextDisplay','percent'),
@@ -1118,12 +1057,7 @@ function activate(context) {
         await save(s);
       }
     } else if (msg.action === "stop") {
-      s.stopRequested=true;
-      if (s.id && s.turnId)
-        await core.state.server.request("turn/interrupt", {
-          threadId: s.id,
-          turnId: s.turnId,
-        });
+      return core.stop(s);
     } else if (msg.action === "language") {
       if (!["auto", "en", "ru"].includes(msg.language))
         throw Error("Unsupported interface language.");
@@ -1620,69 +1554,7 @@ function activate(context) {
         { preview: false },
       );
     } else if (msg.action === "answer") {
-      const request = pendingRequests.get(String(msg.id));
-      if (
-        !request ||
-        (request.params.threadId && request.params.threadId !== s.id)
-      )
-        return;
-      let result;
-      if (request.method === "item/tool/requestUserInput") {
-        const entries = (request.params.questions || []).map(question => {
-          if(msg.skip===true)return [question.id,{answers:[]}];
-          const answer = msg.answers?.[question.id];
-          if (typeof answer !== "string" || !answer.trim() || answer.length>20000)
-            throw Error(locale.t("Ответьте на все вопросы."));
-          return [question.id,{answers:[answer]}];
-        });
-        result = {answers:Object.fromEntries(entries)};
-        if(preflight.preparing(s.preflight))s.preflight.skipped=msg.skip===true;
-      } else if (request.method === "item/permissions/requestApproval") {
-        if (!["accept", "decline"].includes(msg.decision)) return;
-        result = {
-          permissions:
-            msg.decision === "accept" ? request.params.permissions : {},
-          scope: "turn",
-        };
-      } else if (request.method === "mcpServer/elicitation/request") {
-        if (!["accept", "decline", "cancel"].includes(msg.decision)) return;
-        if (msg.decision === "accept" && request.params.mode === "form")
-          result = {
-            action: "accept",
-            content: forms.validate(
-              request.params.requestedSchema,
-              msg.content,
-            ),
-          };
-        else if (msg.decision === "accept" && request.params.mode === "url")
-          result = { action: "accept", content: null };
-        else if (msg.decision === "accept")
-          throw Error(
-            locale.t("Этот тип подтверждения пока не поддерживается."),
-          );
-        else result = { action: msg.decision, content: null };
-      } else {
-        if (
-          !["accept", "acceptForSession", "decline", "cancel"].includes(
-            msg.decision,
-          )
-        )
-          return;
-        if (
-          request.params.availableDecisions &&
-          !request.params.availableDecisions.includes(msg.decision)
-        )
-          throw Error(locale.t("Это решение недоступно для данного запроса."));
-        result = { decision: msg.decision };
-      }
-      core.state.server.respond(request.id, result);
-      pendingRequests.delete(String(msg.id));
-      if(request.method==='item/tool/requestUserInput'){
-        questionRecords.remember(s,{id:'b:'+(request.params.itemId || request.id),origin:'blocking',parentItemId:request.params.itemId || null,
-          questions:request.params.questions || [],answers:msg.answers,skipped:msg.skip===true});
-        await save(s);
-      }
-      broadcast();
+      return core.answer(s, msg);
     } else if (msg.action === "openReference") {
       const target = reference(s.items, msg.itemId, msg.href, s.cwd || cwd());
       if (target.url)
@@ -2121,7 +1993,7 @@ function activate(context) {
     dispose() {
       core.state.disposed=true;clearInterval(maintenanceTimer);
       core.state.server?.dispose(); pendingLogin.finish();
-      mcpTasks?.dispose();mcpBridge?.dispose();mcpLease?.();
+      mcpHost.dispose();
     },
   });
   let lastCliCheck=0;
@@ -2146,7 +2018,7 @@ function activate(context) {
         });
       },
     },
-    mcp:{start:startMcp,stop:stopMcp,tasks:()=>mcpTasks,connectPool:connectMcpPool,panelSnapshot:mcpPanelSnapshot,panelAction:handleMcpPanel,openPanel:openMcpEditor},
+    mcp:{start:startMcp,stop:stopMcp,tasks:()=>mcpHost.tasks,connectPool:connectMcpPool,panelSnapshot:mcpPanelSnapshot,panelAction:handleMcpPanel,openPanel:openMcpEditor},
     create,
     connect,
     sessions,

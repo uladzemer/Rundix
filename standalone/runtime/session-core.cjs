@@ -57,7 +57,7 @@ function createSessionCore(host) {
     clearTimeout: (...args) => clock.clearTimeout(...args),
     providerClient, refreshAccount, refreshLimits, refreshCatalog, resetConnection, updateDraftModel, preparationConfig,
     asyncQuestions: require('./async-questions.cjs'), questionRecords: require('./question-records.cjs'),
-    modes: require('../ui/modes.js'), speed: require('../ui/speed.js'),
+    forms: require('../ui/forms.js'), modes: require('../ui/modes.js'), speed: require('../ui/speed.js'),
     buildInput: require('./input.cjs').buildInput,
     captureCompletion: require('./completion-notifications.cjs').capture,
     notification: require('./session.cjs').notification, readItem: require('./session.cjs').readItem,
@@ -68,7 +68,7 @@ function createSessionCore(host) {
     get: () => state[key], set: value => { state[key] = value; }, enumerable: true,
   });
   const operations = {};
-  const modules = ['server-connection', 'session-persistence', 'session-resume', 'send-queue', 'question-policy', 'question-answer', 'mcp-access'];
+  const modules = ['server-connection', 'session-persistence', 'session-resume', 'send-queue', 'question-policy', 'question-answer', 'session-actions', 'mcp-access'];
   for (const name of modules) for (const [key, operation] of Object.entries(require('./' + name + '.cjs')))
     operations[key] = deps[key] = (...args) => operation(deps, ...args);
   const browserSignInMessage = (...args) => require('./account-lifecycle.cjs').browserSignInMessage(deps, ...args);

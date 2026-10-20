@@ -22,10 +22,11 @@ function report(session, task) {
 }
 // MCP chats may start in these modes; plan mode needs an interactive discussion and is never used.
 const taskModes={manual:'read',workspace:'workspace',auto:'workspace',full:'full'};
-// Short like other editor tabs; the full description stays in the chat.
-const TITLE_POINTS=24;
+// VS Code uses the panel title both for the tab label and its hover, so the title carries the
+// substance of the task; the label itself is kept narrow by fixed tab sizing (see docs/mcp.md).
+const TITLE_POINTS=160;
 function taskTitle(description) {
-  const line=String(description || '').split(/\r?\n/).map(text=>text.trim()).find(Boolean) || '';
+  const line=String(description || '').replace(/\s+/g,' ').trim();
   // Cut by code points so an emoji is never split into a lone surrogate.
   const points=Array.from(line), short=points.length>TITLE_POINTS?points.slice(0,TITLE_POINTS-1).join('').trimEnd()+'…':line;
   return short?'MCP · '+short:'MCP task';

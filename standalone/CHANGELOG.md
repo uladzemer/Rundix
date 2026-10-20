@@ -13,7 +13,7 @@ Reliability and automation release. Highlights:
 - Security and robustness: `rundix.cliPath` is read only from user settings; a pending browser sign-in holds the account lock with a clear message and a 5-minute limit; a hung companion no longer blocks switching connections; broken CLI installs are repaired; catalog paging is bounded.
 - Packaging: the VSIX audit fails if a packaged script requires a module that is not packaged.
 
-- MCP: shorter task tab titles (24 characters); `close_task` closes the tab of a finished task so tabs do not pile up; `list_models` lets the client pick model and reasoning effort per task.
+- MCP: task tab titles carry the task description (shown in the tab hover; use fixed tab sizing to keep tabs narrow); `close_task` closes the tab of a finished task so tabs do not pile up; `list_models` lets the client pick model and reasoning effort per task.
 - MCP: `rundix.mcpThreadConfig` applies per-thread Codex config overrides to MCP task chats only, for example to disable helper MCP servers and plugins that keep a finished task's worktree in use on Windows.
 - MCP: task turns address Codex as an automated agent client, so its questions go to Claude as blocking requests; asynchronous chat quizzes in MCP task chats are surfaced as `rundix/asyncQuestion` pending requests and answered through `continue_task`.
 - MCP: tasks for different projects or worktrees run in parallel, up to `rundix.mcpMaxParallelTasks` (default 3); `wait_tasks` and `--wait <id1>,<id2>` wake the client on the first task that needs attention. The shared Codex app-server no longer pins a task's worktree folder on Windows.

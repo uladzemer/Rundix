@@ -16,7 +16,7 @@ async function main(){
     await adapter.status(full);
     assert.deepEqual(created[0].prefs,{mode:'full',access:'full',ide:false,plan:false});
     assert.equal(full.accessMode,'full');
-    assert.equal(created[0].name,'MCP · Synthetic refactor of t…');assert.equal(created[0].customName,true);
+    assert.equal(created[0].name,'MCP · Synthetic refactor of the greeting module Second line is ignored');assert.equal(created[0].customName,true);
     assert.equal(created[0].mcpTask,true,'MCP chats are marked for per-thread config');
 
     // Per-thread Codex config applies only to MCP chats and only from user settings.
@@ -46,7 +46,7 @@ async function main(){
     assert.equal(created[3],saved,'An existing chat keeps its own mode and name');
 
     assert.equal(taskTitle('  \n  '),'MCP task');
-    assert.equal(taskTitle('x'.repeat(80)).length,'MCP · '.length+24);assert.match(taskTitle('x'.repeat(80)),/…$/);
+    assert.equal(taskTitle('x'.repeat(200)).length,'MCP · '.length+160);assert.match(taskTitle('x'.repeat(200)),/…$/);
 
     const manifest=require('../package.json').contributes.configuration.properties['rundix.mcpAccessMode'];
     assert.equal(manifest.scope,'application');assert.equal(manifest.default,'workspace');

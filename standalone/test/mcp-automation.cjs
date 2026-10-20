@@ -44,7 +44,7 @@ async function main(){
     assert.deepEqual(report(reportSession,task).changedFiles,['synthetic-a.js','synthetic-b.js']);
 
     // Titles never split a surrogate pair.
-    const title=taskTitle('x'.repeat(22)+'😀'+'y'.repeat(10));
+    const title=taskTitle('x'.repeat(158)+'😀'+'y'.repeat(10));
     assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(title),'No lone high surrogate');assert.match(title,/😀…$/);
 
     // Cancelling while a start fails before sending ends as cancelled with the directory released.

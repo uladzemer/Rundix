@@ -33,6 +33,8 @@ async function main(){
   const originalRelease=service.host.mcp.tasks.release;let releaseFailed=false;
   service.host.mcp.tasks.release=function(task){originalRelease.call(this,task);if(!releaseFailed){releaseFailed=true;throw Error('Synthetic release failure');}};
   service.host.provider.on('turnExited',()=>{throw Error('Synthetic downstream listener failure');});
+  const extra=await service.host.provider.prepareTurn({taskId:'synthetic-second-exit',spaceId:peer.binding.spaceId,attemptId:'synthetic-second-exit'});
+  assert.equal(extra.kind,'ready');assert.equal(service.host.provider.activeTurns,2,'Exit loop must drain multiple grants despite a throwing listener');
   const generation=service.host.provider.cli.binding.appServerGeneration;
   const cli=data.children.find(value=>value.child.spawnargs.some(arg=>arg.endsWith('fake-headless-cli.cjs'))).child;cli.kill();
   await until(async()=>!(await call(peer,'get_task',{taskId:task.taskId})).recoveryRequired && service.host.provider.activeTurns===0);

@@ -12,11 +12,11 @@ async function main() {
   const launch = (executable, args, options) => {
     const child = spawn(executable, args, options); children.push({child, closed:once(child, 'close')}); return child;
   };
-  async function create(name) {
+  async function create(name, options={}) {
     const directory = path.join(root, name); fs.mkdirSync(directory);
     const {configPath} = install(directory);
     const provider = new ServiceProvider({serviceGeneration:'synthetic-service', configPath, verifyPrivate:() => {},
-      spawnProcess:launch, createCli:options => new ServiceAppServer({...options, executable:process.execPath, cwd:directory,
+      ...options, spawnProcess:launch, createCli:options => new ServiceAppServer({...options, executable:process.execPath, cwd:directory,
         env:{...process.env, CODEX_HOME:directory}, spawnProcess:(_exe, _argv, opts) => launch(process.execPath, [path.join(__dirname, 'fake-service-cli.cjs')], opts)})});
     providers.push(provider); const before=children.length;await Promise.all([provider.start(),provider.start()]);assert.equal(children.length,before+1,'Concurrent startup shares validation and child'); const cli = provider.createCli(); await cli.start();
     let selection = 1;
@@ -25,6 +25,11 @@ async function main() {
   }
   const task = (id, waitId) => ({taskId:id, spaceId:'synthetic-space', attemptId:'synthetic-attempt-' + id, runId:'synthetic-run-' + id, ...(waitId ? {waitId} : {})});
   try {
+    const explicit=await create('explicit-recovery',{recoveryBackoffMs:10000});await explicit.provider.authenticate();
+    const previousGeneration=explicit.provider.authority.providerGeneration;
+    const disconnected=once(explicit.provider,'connectionChanged');children.at(-2).child.kill();await disconnected;
+    const began=Date.now();await explicit.provider.start();assert(Date.now()-began<8000,'Explicit recovery bypasses the scheduled ten-second backoff');
+    assert.notEqual(explicit.provider.authority.providerGeneration,previousGeneration);await explicit.provider.dispose();
     const lateDir=path.join(root,'late-disposal');fs.mkdirSync(lateDir);const lateConfig=install(lateDir);
     let lateSpawn=0;
     const late=new ServiceProvider({serviceGeneration:'synthetic-late',configPath:lateConfig.configPath,verifyPrivate:()=>{},spawnProcess(){lateSpawn++;throw Error('Disposed provider must not launch');}});

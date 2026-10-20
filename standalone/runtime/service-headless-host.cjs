@@ -35,6 +35,10 @@ function providerWait(outcome) {
   return reason ? {waitId:outcome.waitId, resetAt:null, reason, retryAfterMs:outcome.retryAfterMs || 0} : null;
 }
 
+function admissionBlocked(error){
+  const code=['legacy_owner_active','migration_conflict','legacy_retry_later','storage_unavailable','SETTINGS_INVALID'].includes(error?.code)?error.code:'admission_blocked';
+  return Object.assign(Error(code),{code,admissionBlocked:true,retryable:true,notSent:true,deliveryUncertain:false});
+}
 async function createHeadlessHost({root, generation, providerOptions = {}, resolveCli, clock = {now:Date.now, setTimeout, clearTimeout},
   taskOptions = {}, decorateAdapter,onSessionChanged=()=>{},beforeAdmission=async()=>{}} = {}) {
   const settings = plainSettings(root), logger = boundedLogger(root);
@@ -91,7 +95,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       if (method !== 'turn/start') return this.cli.request(method, params, timeoutMs);
       const task = taskForThread(params.threadId);
       if (!task || runs.has(params.threadId)) throw Object.assign(actionRequired('BUSY_ACTIVE'), {notSent:true, deliveryUncertain:false});
-      try{await beforeAdmission();}catch(error){throw Object.assign(error,{notSent:true,deliveryUncertain:false});}
+      try{await beforeAdmission();}catch(error){throw admissionBlocked(error);}
       let outcome;
       try {outcome = await provider.prepareTurn({taskId:task.taskId, spaceId:task.space || 'unbound',
         attemptId:randomUUID(), runId:randomUUID(), ...(task.waitId ? {waitId:task.waitId} : {})});}
@@ -102,7 +106,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
           {notSent:true, deliveryUncertain:false, providerWait:wait, retryable:outcome.code === 'BUSY_ACTIVE'});
       }
       if (task.cancelRequested || disposed) { provider.releaseReserved(outcome.grant); throw Object.assign(actionRequired(), {notSent:true, deliveryUncertain:false}); }
-      try{await beforeAdmission();}catch(error){provider.releaseReserved(outcome.grant);throw Object.assign(error,{notSent:true,deliveryUncertain:false});}
+      try{await beforeAdmission();}catch(error){provider.releaseReserved(outcome.grant);throw admissionBlocked(error);}
       const row = {threadId:params.threadId, taskId:task.taskId, grant:outcome.grant, completed:new Set()}; runs.set(params.threadId, row);
       delete task.providerFailureCode;
       try {

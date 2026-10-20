@@ -86,6 +86,7 @@ class McpTasks {
     return JSON.parse(JSON.stringify({taskId:task.taskId, state:task.state, progress:task.progress,
       chatId:task.chatId || null, projectDirectory:task.projectDirectory, createdAt:task.createdAt,
       updatedAt:task.updatedAt, revision:task.revision || 0, accessMode:task.accessMode || null, ...reportFields, error:task.error || null,
+      ...(this.scope && task.blockedReason?{blockedReason:task.blockedReason,blockedUntil:task.blockedUntil}:{}),
       ...(this.scope || task.waitingLimit ? {waitingLimit:task.state === 'waiting_limit' ? task.waitingLimit : null} : {}),
       queuedContinuations:task.continuations?.length || 0,
       ...(fullRecovery?inputRecovery.page(task,unsentAfter):{unsentInputCount:task.unsentInputs?.length || 0}),
@@ -95,6 +96,7 @@ class McpTasks {
     return JSON.parse(JSON.stringify({taskId:task.taskId, title:(task.description || '').slice(0,160), state:task.state,
       progress:task.progress, chatId:task.chatId || null, projectDirectory:task.projectDirectory, createdAt:task.createdAt,
       updatedAt:task.updatedAt, revision:task.revision || 0, hasReport:!!task.report, error:task.error || null,
+      ...(this.scope && task.blockedReason?{blockedReason:task.blockedReason,blockedUntil:task.blockedUntil}:{}),
       ...(this.scope || task.waitingLimit ? {waitingLimit:task.state === 'waiting_limit' ? task.waitingLimit : null} : {}),
       unsentInputCount:task.unsentInputs?.length || 0,
       recoveryRequired:recoveryRequired(task), pendingRequests:this.adapter.pending(task).length}));
@@ -416,6 +418,7 @@ class McpTasks {
     // Once another attempt is intended, this text is no longer proven unsent.
     // nextInput remains durable; a definite refusal below restores recovery.
     inputRecovery.delivered(task,input);
+    if(task.blockedReason)task.error=null;delete task.blockedReason;delete task.blockedUntil;
     task.state='running'; task.progress='Starting existing Codex executor'; task.recoveryRequired=true; task.awaitingPreparation=false; this.save(task);
     try {
       await this.adapter.start(task,input,()=>this.save(task));
@@ -446,6 +449,12 @@ class McpTasks {
         inputRecovery.remember(task,input);
         task.state='cancelled';task.recoveryRequired=false;task.progress='Cancelled before model execution';
         this.release(task);this.save(task);return;
+      }
+      if(this.scope && error?.admissionBlocked && error?.notSent && !task.cancelRequested){
+        inputRecovery.remember(task,input);task.nextInput=input;
+        task.state='queued';task.recoveryRequired=false;task.needsReconcile=false;
+        task.blockedReason=error.code;task.error=error.code;task.progress='Waiting to start: '+error.code;
+        task.blockedUntil=Date.now()+5000;directories.release(this.directoryStore,task.projectDirectory,task.taskId);this.save(task);return;
       }
       // Nothing was sent (another turn holds the connection or credentials): wait and start again.
       if(error?.retryable && !task.cancelRequested){

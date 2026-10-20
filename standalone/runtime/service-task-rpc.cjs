@@ -7,7 +7,7 @@ const budget = (name, args) => ['wait_task', 'wait_tasks'].includes(name)
   ? (Number.isInteger(args?.waitSeconds) ? Math.max(1, Math.min(1500, args.waitSeconds)) : 600) * 1000 + 15000 : 12000;
 const TOOLS = new Set(['submit_task', 'get_task', 'wait_task', 'wait_tasks', 'list_tasks', 'continue_task', 'cancel_task', 'close_task', 'list_models', 'reload_window']);
 const SAFE = new Set(['unknown_task', 'space_not_bound', 'stale_instance', 'invalid_argument', 'invalid_directory', 'request_conflict', 'task_active',
-  'connection_unavailable', 'approval_not_pending', 'approval_rejected', 'delivery_unknown', 'response_too_large', 'storage_unavailable', 'limit', 'unsupported','legacy_owner_active','migration_conflict']);
+  'connection_unavailable', 'approval_not_pending', 'approval_rejected', 'delivery_unknown', 'response_too_large', 'storage_unavailable', 'limit', 'unsupported','legacy_owner_active','migration_conflict','legacy_retry_later','admission_blocked']);
 const failure = code => Object.assign(Error(code), {code});
 function createTaskRpc({providerOptions = {}} = {}) {
   const scope = new AsyncLocalStorage(); let host, windows, migration, stopping = false;
@@ -31,7 +31,7 @@ function createTaskRpc({providerOptions = {}} = {}) {
     if(isWindow && peer.windowBinding.spaces.get(params.spaceId)?.kind==='legacy' && method==='task.call')return {error:{code:'unknown_task',message:'Unknown taskId'}};
     if (isWindow && ['space.subscribe','space.unsubscribe','chat.open','chat.subscribe','chat.unsubscribe','chat.history'].includes(method)) {
       try {return {result:await scope.run({spaceId:binding.spaceId,signal:peer.signal},()=>windows.call(method, params, peer))};}
-      catch (error) {return {error:{code:SAFE.has(error.code) ? error.code : 'rejected', message:'Request rejected.'}};}
+      catch (error) {return {error:{code:SAFE.has(error.code) ? error.code : 'rejected', message:SAFE.has(error.code)?error.code:'Request rejected.'}};}
     }
     if (method !== 'task.call' || !TOOLS.has(params.name)) return {error:{code:'invalid_argument', message:'Unknown tool.'}};
     return scope.run({spaceId:binding.spaceId, signal:peer.signal}, async () => {
@@ -49,7 +49,7 @@ function createTaskRpc({providerOptions = {}} = {}) {
       } catch (error) {
         const code = error?.reason === 'action_required' ? 'action_required' : SAFE.has(error?.code) ? error.code : 'rejected';
         return {error:{code, ...(code === 'action_required' ? {providerCode:error.code} : {}),
-          message:code === 'action_required' ? 'Open the installed companion connection settings and reconnect.' : code === 'unknown_task' ? 'Unknown taskId' : 'Request rejected.'}};
+          message:code === 'action_required' ? 'Open the installed companion connection settings and reconnect.' : code === 'unknown_task' ? 'Unknown taskId' : SAFE.has(code)?code:'Request rejected.'}};
       }
     });
   }

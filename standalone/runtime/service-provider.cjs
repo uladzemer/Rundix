@@ -36,7 +36,7 @@ class ServiceProvider extends EventEmitter {
   #providerGeneration = randomUUID(); #cli = null;
   #dispatchAuthorization = null;
   #launching = false;
-  #recovery=null; #retryTimer=null; #attempts=0; #childExit=null; #exited=new Set(); #cliRestarting=null;
+  #recovery=null; #retryTimer=null; #attempts=0; #healthySince=null; #childExit=null; #exited=new Set(); #cliRestarting=null;
   constructor({serviceGeneration, ...options} = {}) {
     super();
     if (typeof serviceGeneration !== 'string' || !serviceGeneration) throw actionRequired();
@@ -81,7 +81,7 @@ class ServiceProvider extends EventEmitter {
       if (!isObject(result) || result.version?.major !== 2 || result.version?.minor !== 0 ||
           result.providerId !== this.#config.provider.id || result.providerVersion !== this.#config.provider.version ||
           !Array.isArray(result.capabilities) || !CAPABILITIES.every(name => result.capabilities.includes(name))) throw actionRequired('PROVIDER_INCOMPATIBLE');
-      this.#attempts=0;clearTimeout(this.#retryTimer);
+      this.#healthySince=(this.#options.now || Date.now)();clearTimeout(this.#retryTimer);
       return this;
     })().catch(error => { this.#lose(); throw error?.reason === 'action_required' ? error : actionRequired('PROVIDER_UNAVAILABLE'); })
       .finally(()=>{this.#launching=false;});
@@ -146,6 +146,8 @@ class ServiceProvider extends EventEmitter {
   }
   #lose(reason = 'action_required') {
     if (this.#lost) return;
+    if(this.#healthySince!==null && (this.#options.now || Date.now)()-this.#healthySince>=60000)this.#attempts=0;
+    this.#healthySince=null;
     this.#lost = true; this.#cli?.invalidateProvider();
     for (const parent of this.#parents.values()) { parent.active = false; parent.transaction?.close(); }
     this.#peer?.close(); this.#child?.kill();

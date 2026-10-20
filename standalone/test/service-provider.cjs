@@ -30,6 +30,17 @@ async function main() {
     const disconnected=once(explicit.provider,'connectionChanged');children.at(-2).child.kill();await disconnected;
     const began=Date.now();await explicit.provider.start();assert(Date.now()-began<8000,'Explicit recovery bypasses the scheduled ten-second backoff');
     assert.notEqual(explicit.provider.authority.providerGeneration,previousGeneration);await explicit.provider.dispose();
+    const crashing=await create('crash-after-hello',{recoveryBackoffMs:10,now:()=>0});
+    for(let cycle=0;cycle<6;cycle++){
+      const generation=crashing.provider.authority.providerGeneration;
+      children.findLast(row=>row.child.spawnargs.some(arg=>arg.endsWith('provider-entry.cjs'))).child.kill();
+      if(cycle<5){
+        const deadline=Date.now()+5000;let recovered=false;
+        while(Date.now()<deadline){try{if(crashing.provider.authority.providerGeneration!==generation){await crashing.provider.status();recovered=true;break;}}catch{}await pause(10);}
+        assert(recovered,'A consecutive failure within the retry budget restarts automatically');
+      }else{await pause(600);assert.equal(crashing.provider.authority.providerGeneration,generation,'Hello alone cannot replenish the crash-loop budget');}
+    }
+    await crashing.provider.dispose();
     const lateDir=path.join(root,'late-disposal');fs.mkdirSync(lateDir);const lateConfig=install(lateDir);
     let lateSpawn=0;
     const late=new ServiceProvider({serviceGeneration:'synthetic-late',configPath:lateConfig.configPath,verifyPrivate:()=>{},spawnProcess(){lateSpawn++;throw Error('Disposed provider must not launch');}});

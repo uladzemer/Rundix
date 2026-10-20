@@ -540,5 +540,5 @@ exceeding the same JSON depth/size limits are dropped without dropping safety se
 
 Confirmed CLI exit cleanup isolates listener/storage failures with fixed diagnostic
 codes. Fatal process errors trigger bounded shutdown without logging exception
-text. Successful provider hello replenishes the recovery budget; scheduled retries
+text. A provider must remain healthy for at least 60 seconds to replenish the recovery budget; scheduled retries
 wait once, while explicit recovery bypasses backoff and waits at most seven seconds.

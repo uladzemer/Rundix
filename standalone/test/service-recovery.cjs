@@ -8,7 +8,7 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(check){const end=Date.now()+15000;while(Date.now()<end){if(await check())return;await pause(20);}throw Error('Synthetic recovery deadline');}
 async function main(){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-recovery-synthetic-'));
- const data=fixture(root,{cliEnv:{RUNDIX_SYNTHETIC_HOLD:'1'}});data.hostOptions.providerOptions.recoveryBackoffMs=10;
+ const data=fixture(root,{cliEnv:{RUNDIX_SYNTHETIC_HOLD:'1'}});data.hostOptions.providerOptions.recoveryBackoffMs=10;let providerNow=0;data.hostOptions.providerOptions.now=()=>providerNow;
  let service;const peers=[];
  const connect=async()=>{const peer=await connectService({root,hello:{clientKind:'adapter',binding:{source:'cwd',launchDirectory:root}}});peers.push(peer);return peer;};
  const call=async(peer,name,args={})=>{const value=await peer.call('task.call',{bindingId:peer.binding.bindingId,spaceId:peer.binding.spaceId,name,arguments:args},30000);if(value.error)throw Object.assign(Error(value.error.message),value.error);return value.result;};
@@ -50,7 +50,7 @@ async function main(){
   await until(()=>service.host.provider.activeTurns===0);
   assert.equal((await call(peer,'get_task',{taskId:lost.taskId})).state,'error');
   for(let cycle=0;cycle<6;cycle++){
-    await service.host.provider.start();const before=service.host.provider.authority.providerGeneration;
+    await service.host.provider.start();providerNow+=60000;const before=service.host.provider.authority.providerGeneration;
     data.children.find(value=>value.child.exitCode===null && !value.child.killed && value.child.spawnargs.some(arg=>arg.endsWith('provider-entry.cjs'))).child.kill();
     await until(()=>service.host.provider.authority.providerGeneration!==before);await service.host.provider.start();
   }

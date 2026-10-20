@@ -21,13 +21,17 @@ function currentSid(run = execFileSync) {
 }
 function locations({platform = process.platform, root, sid, uid, home = os.homedir(), localAppData = process.env.LOCALAPPDATA} = {}) {
   const userKey = platform === 'win32' ? hash(sid || currentSid()) : String(uid ?? process.getuid());
-  // Root overrides isolate BOTH discovery and the otherwise fixed per-user listener.
-  const testKey = root ? '-' + hash(path.resolve(root)) : '';
-  const directory = root ? path.resolve(root) : platform === 'win32'
+  // Only a non-default root is a test namespace. Installed shims pass their root
+  // explicitly and must still share the fixed production listener.
+  const defaultDirectory = platform === 'win32'
     ? path.join(localAppData || path.join(home,'AppData','Local'), 'Rundix','service')
     : platform === 'darwin' ? path.join(home,'Library','Application Support','Rundix','service')
       : path.join(home,'.local','state','Rundix','service');
-  const socketDirectory = root ? directory : `/tmp/rundix-${userKey}`;
+  const directory = root ? path.resolve(root) : defaultDirectory;
+  const normalize = value => platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
+  const testRoot = normalize(directory) !== normalize(defaultDirectory);
+  const testKey = testRoot ? '-' + hash(directory) : '';
+  const socketDirectory = testRoot ? directory : `/tmp/rundix-${userKey}`;
   const address = platform === 'win32' ? `\\\\.\\pipe\\rundix-service-v1-${userKey}${testKey}` : path.posix.join(socketDirectory,'service-v1.sock');
   if (platform !== 'win32' && Buffer.byteLength(address) > 103) throw ipc.failure('endpoint_too_long');
   return {platform, directory, socketDirectory, address, descriptor:path.join(directory,'bridge.json'), kind:platform === 'win32' ? 'named_pipe' : 'unix_socket'};

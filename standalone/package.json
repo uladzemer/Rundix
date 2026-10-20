@@ -277,6 +277,14 @@
     "configuration": {
       "title": "Rundix",
       "properties": {
+        "rundix.mcpService": {
+          "type": "string",
+          "scope": "application",
+          "enum": ["window", "service"],
+          "default": "window",
+          "tags": ["experimental"],
+          "description": "%configuration.mcpService.description%"
+        },
         "rundix.mcpAccessMode": {
           "type": "string",
           "scope": "application",
@@ -422,7 +430,7 @@
           "enumDescriptions": [
             "Follow the VS Code display language.",
             "English",
-            "Русский"
+            "Р СѓСЃСЃРєРёР№"
           ],
           "description": "Interface language. Also available from /language inside the chat."
         }
@@ -430,7 +438,7 @@
     }
   },
   "scripts": {
-    "test": "node test/service-limit-poller.cjs && node test/service-task-rpc.cjs && node test/service-headless-host.cjs && node test/service-provider-config.cjs && node test/service-provider-rpc.cjs && node test/service-provider.cjs && node test/service-cli.cjs && node test/service-space.cjs && node test/mcp-host-node.cjs && node test/session-core.cjs && node test/service-ipc.cjs && node test/mcp-panel.cjs && node test/mcp.cjs && node test/mcp-wait.cjs && node test/mcp-access.cjs && node test/mcp-parallel.cjs && node test/mcp-executor.cjs && node test/mcp-release.cjs && node test/connection-history.cjs && node test/connections.cjs && node test/queued-session-transfer.cjs && node test/queued-attachments.cjs && node test/queued-edits.cjs && node test/new-session-settings.cjs && node test/notification-sounds.cjs && node test/completion-notifications.cjs && node test/task-preflight.cjs && node test/async-questions.cjs && node test/message-images.cjs && node test/quota-warning.cjs && node test/speed.cjs && node test/pasted-image.cjs && node test/transport.cjs && node test/cli-installer.cjs && node test/cli-updates.cjs && node test/model-catalog.cjs && node test/foundation.cjs && node test/store.cjs && node test/store-locks.cjs && node test/account.cjs && node test/rich-checks.cjs && node test/task-directory.cjs && node test/mcp-async-questions.cjs && node test/mcp-automation.cjs && node test/send-queue.cjs",
+    "test": "node test/service-adapter.cjs && node test/service-limit-poller.cjs && node test/service-task-rpc.cjs && node test/service-headless-host.cjs && node test/service-provider-config.cjs && node test/service-provider-rpc.cjs && node test/service-provider.cjs && node test/service-cli.cjs && node test/service-space.cjs && node test/mcp-host-node.cjs && node test/session-core.cjs && node test/service-ipc.cjs && node test/mcp-panel.cjs && node test/mcp.cjs && node test/mcp-wait.cjs && node test/mcp-access.cjs && node test/mcp-parallel.cjs && node test/mcp-executor.cjs && node test/mcp-release.cjs && node test/connection-history.cjs && node test/connections.cjs && node test/queued-session-transfer.cjs && node test/queued-attachments.cjs && node test/queued-edits.cjs && node test/new-session-settings.cjs && node test/notification-sounds.cjs && node test/completion-notifications.cjs && node test/task-preflight.cjs && node test/async-questions.cjs && node test/message-images.cjs && node test/quota-warning.cjs && node test/speed.cjs && node test/pasted-image.cjs && node test/transport.cjs && node test/cli-installer.cjs && node test/cli-updates.cjs && node test/model-catalog.cjs && node test/foundation.cjs && node test/store.cjs && node test/store-locks.cjs && node test/account.cjs && node test/rich-checks.cjs && node test/task-directory.cjs && node test/mcp-async-questions.cjs && node test/mcp-automation.cjs && node test/send-queue.cjs",
     "test:live": "node test/live.cjs",
     "test:cli-auth": "node test/cli-external-auth.cjs",
     "test:context": "node test/context.cjs",

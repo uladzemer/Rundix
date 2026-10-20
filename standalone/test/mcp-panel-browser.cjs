@@ -49,6 +49,11 @@ if(!chrome)throw Error('Set CHROME_PATH.');
    await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'mcpResult',ok:true,action:'copyConfiguration',requestId:window.calls.at(-1).requestId,configuration:{mcpServers:{rundix:{command:'node',args:['D:/synthetic-extension/runtime/mcp-server.cjs','--bridge','D:/synthetic-storage/mcp/bridge.json']}}}}})));
    fs.mkdirSync(path.join(__dirname,'../.verification'),{recursive:true});
    await page.screenshot({path:path.join(__dirname,`../.verification/mcp-panel-${language}-${theme}-${width}.png`),fullPage:true});
+   await page.evaluate(()=>{window.fixture.serviceMode=true;window.fixture.tasks=[];window.update();});
+   assert.match(await page.$eval('.service-note',node=>node.textContent),language==='ru'?/фоновом сервисе/:/background service/);
+   assert.equal(await page.$('.task-detail'),null);
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+   await page.screenshot({path:path.join(__dirname,`../.verification/mcp-service-${language}-${theme}-${width}.png`),fullPage:true});
    assert.deepEqual(errors,[]);await page.close();
   }
   console.log('MCP panel browser: RU/EN, dark/light, narrow/wide, safe text, draft/focus retention and action results passed.');

@@ -216,7 +216,7 @@ The original normative prose does not settle every concrete payload choice.
 | Public success `fence` top-level vs companion `result.fence` | Public transport changed to `result.fence`; raw-wire tests added. Requests/events/errors retain top-level fence. |
 | Public string `error.code` vs numeric error + `message`/`data.code` | Public transport changed to numeric JSON-RPC error with fixed public name in both fields. |
 | Public hello `providerVersion` vs companion `version` | Public hello now sends `version`; result still uses `providerVersion`. |
-| Public depth 64, numeric IDs, unbounded string IDs, 32 per direction vs companion depth 16/string 1–128/32 total | Public provider framing now uses the companion's tighter bounds. Config parsing retains its separate bound. |
+| Public depth 64, numeric IDs, unbounded string IDs, 32 per direction vs companion depth 16/string 1вЂ“128/32 total | Public provider framing now uses the companion's tighter bounds. Config parsing retains its separate bound. |
 | Public callback string `owner` vs `{leaseId}` | Public callbacks now require `{leaseId}`; synthetic fixture updated. |
 | Public login/reconnect callback missing `idleGrantId` | Public now requires the exact live idleGrantId for both mutations. |
 | Public raw CLI callback result vs `{response,fence}` | Public now returns nested `response`, with callback fence inside result. The existing public `authGrantId`/`nextAccountRevision` login result extensions remain; companion must tolerate/use them until grant-order alignment below. |
@@ -273,7 +273,7 @@ it cannot dispose a busy host. A connected client resets the idle period.
 synthetic provider child and `fake-headless-cli.cjs`, checks report/continuation,
 same chat ID, no-UI close/reload, settings/KV/session files, safe diagnostics,
 singleton loser and real-IPC connected-client/idle exit. It runs in `npm test`.
-These modules remain excluded from the VSIX until service mode is integrated.
+Item 4 includes these modules in the VSIX behind the experimental user setting.
 
 Review of item 2 used three read-only rounds. The reviewer reproduced a retained
 grant after lost ACK, then stale-event poisoning and a buffered timing variant.
@@ -319,8 +319,49 @@ zero remaining confirmed findings. No real account or CLI was used.
 
 ## Remaining work for 3a
 
-durable intents/recovery, limit waits/poller, demand start/stable launcher,
-experimental user-only setting, and the service/two-space end-to-end suite.
-These requirements must be integrated before exposing service mode. Window
+The two-space stdio/demand-start end-to-end suite and the owner-approved grant
+lifecycle alignments remain. Existing McpTasks recovery is retained; additional
+durable intents/recovery are deferred. Window
 projections/migration belong to 3b; real Windows scenarios belong to 3c. Private
 provider implementation, credential storage and rotation stay outside this repo.
+
+
+## Experimental service adapter (item 4)
+
+`rundix.mcpService` is an application/user setting, `window` by default. Only
+`inspect(...).globalValue` is read, once per activation; reload after changing.
+In `service` mode this window never starts its MCP bridge/executor or selects a
+window companion for MCP. Manual chats retain their existing connection API.
+The panel displays a background-service note and configuration controls; task
+projection belongs to 3b. Stop in this panel disables its launcher controls;
+it does not interrupt service tasks or other clients. The service exits when idle.
+
+Start MCP installs a stable `<serviceRoot>/bin/mcp-server.cjs` shim, an atomic
+private `installation.json`, and a versioned installed runtime copy under
+`versions/`. Existing versions are retained while an owner may still use them.
+Registration names absolute `nodePath`, `entryPath`, `adapterPath`; workspace input
+cannot select an executable. Replace only the Rundix Claude MCP entry with the
+configuration shown by the window and restart the adapter. No automatic edit of
+Claude configuration, legacy migration, or window task projection is performed.
+
+`service-adapter.cjs` preserves launch cwd/env, resolves the immutable launch
+space, probes ownership, starts absent/dead owners detached with a hidden Windows
+window, then waits for authenticated ready IPC within the startup budget.
+Responding/starting owners are reused. Hung/unverified owners are never killed.
+The stable launcher supports --wait/--timeout/--brief; --recover-hung currently
+fails closed (verified child-process tree recovery remains deferred). Old HTTP
+--bridge configuration still selects window mode and must be replaced explicitly.
+No task call is replayed after timeout/disconnect; reuse requestId explicitly.
+Tools are negotiated from hello capabilities; service list_tasks adds waiting_limit,
+reload_window is omitted, and limit waits retain their non-waking semantics.
+
+Service runtime modules now ship in the package; audit verifies inclusion and
+relative require closure. Synthetic fixtures remain excluded. Installation,
+space negotiation, user-only selection and default-window compatibility have
+synthetic/isolated-host coverage; panel checks cover both languages/themes/widths.
+
+Item-4 independent read-only review found the explicit-default-root endpoint
+split, split startup budget and read-only waiter reconnect error mapping. All
+three were fixed; the reviewer reran adapter and IPC suites and reported zero
+outstanding confirmed findings. Visual inspection then changed the service note
+to inherit theme text/background and corrected its copy button label.

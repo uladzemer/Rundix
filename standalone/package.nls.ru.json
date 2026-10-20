@@ -1,4 +1,5 @@
 {
+  "configuration.mcpService.description": "Экспериментальный владелец MCP: окно (window, по умолчанию) или фоновый сервис (service). После изменения перезагрузите окно. Для service нужен установленный провайдер и замена конфигурации Claude MCP; задачи сервиса управляются через MCP, а не это окно.",
   "configuration.contextDisplay.description": "Вид индикатора контекста. Также доступен в меню команд чата.",
   "configuration.contextDisplay.percent": "Кольцо размером с кнопку, с процентом.",
   "configuration.contextDisplay.ring": "Маленькое кольцо без цифр; подробности остаются в подсказке.",

@@ -27,7 +27,9 @@ exports.run=async()=>{
    if(method==='thread/turns/list' || method==='thread/items/list')return {data:[]};
    return {};
   };
+  await assert.rejects(vscode.workspace.getConfiguration('rundix').update('mcpService','service',vscode.ConfigurationTarget.Workspace));
   api=await vscode.extensions.getExtension('local-rundix-tools.rundix').activate();
+  assert.equal(api.mcp.panelSnapshot().serviceMode,undefined,'Workspace service setting cannot change the default window owner');
   registration=api.connections.registerProvider('synthetic.companion',{id:'synthetic-pool',label:'Synthetic pool',authenticate:async()=>{authenticated++;},configure:async()=> 'activate',prepareTurn:async({assertCanChange,reconnect})=>{
    assertCanChange();prepared++;
    if(prepareFailure){prepareFailure=false;throw Object.assign(Error('Synthetic quota rotation pending'),{retryable:true});}

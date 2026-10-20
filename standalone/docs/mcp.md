@@ -115,3 +115,30 @@ After Extension Host restart the bridge observes saved chats and active turns; i
 ## Local validation
 
 `npm.cmd test` covers synthetic persistence, replay, queue, cancellation, directory exclusion, channel authentication, stdio RPC, companion discovery and panel data projection. `npm.cmd run test:browser` includes the MCP panel in Russian/English, both themes and narrow/wide layouts, including draft preservation and safe rendering. `powershell.exe -NoProfile -ExecutionPolicy Bypass -File test/host.ps1 -TestFile mcp-host.cjs` exercises the real Extension Host with synthetic CLI and companion: submit → chat → companion preparation → report → panel continuation in the same chat → panel cancellation, and approvals. It performs no real sign-in or model inference. A real pool/model end-to-end run additionally needs the separately installed companion and its environment.
+
+
+## Experimental background service
+
+The user setting `rundix.mcpService: "service"` selects the background service
+instead of a window-owned MCP bridge. Reload the window after changing it.
+The default is `"window"`. Start MCP installs a stable launcher and displays the
+replacement Claude MCP entry; replace the Rundix entry and restart Claude MCP.
+No other Claude entries are modified. A separately installed provider v2 is
+required: missing/invalid configuration fails closed with `action_required`.
+The window does not show service tasks yet; use MCP to list/wait/continue them.
+
+The adapter binds tasks to the Git root of `CLAUDE_PROJECT_DIR`, falling back to
+its cwd, including the main repository for `.claude/worktrees`. In a non-Git
+directory it uses that exact directory. `projectDirectory` selects execution cwd
+and can be another repository; it never changes the submitter's task space.
+`waiting_limit` remains waiting: `wait_task` returns a timedOut snapshot with
+`waitingLimit` at its deadline or a quota reset checkpoint. A shared service
+poller makes fresh admissions when the quota becomes available.
+
+The launcher preserves --wait/--timeout/--brief. Its background waiter reconnects
+after transient service loss; mutations are never automatically replayed. Reuse
+the same requestId explicitly after an uncertain response. Connected adapters
+keep the service alive; otherwise it exits after five idle minutes with no
+nonterminal tasks or uncertain turns. Hung-owner recovery and old-window history
+migration are not implemented by this experimental switch. Stop in the window
+only disables its configuration controls; it does not kill background tasks.

@@ -1,4 +1,5 @@
 {
+  "configuration.mcpService.description": "Experimental MCP owner: window (default) or background service. Reload the window after changing. Service mode requires an installed provider and replacement of the Claude MCP configuration; service tasks are managed through MCP, not this window.",
   "configuration.contextDisplay.description": "Context indicator style. Also available in the chat commands menu.",
   "configuration.contextDisplay.percent": "Button-sized ring with percentage.",
   "configuration.contextDisplay.ring": "Smaller ring without numbers; details remain in the tooltip.",

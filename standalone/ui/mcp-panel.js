@@ -24,6 +24,14 @@
     const focused=document.activeElement?.id, start=document.activeElement?.selectionStart, end=document.activeElement?.selectionEnd, scroll=window.scrollY;
     root.replaceChildren();document.documentElement.lang=state.language;
     const header=element('header');header.append(element('h1',t('title')),element('p',t('subtitle'),'eyebrow'));root.append(header);
+    if(state.serviceMode){
+      root.append(element('p',state.language==='ru'?'Задачи выполняются в фоновом сервисе. Просмотр и управление доступны через Claude MCP.':'Tasks run in the background service. View and manage them through Claude MCP.','service-note'));
+      const controls=element('section',undefined,'connection');
+      controls.append(button(t('start'),'start',{},state.bridgeRunning),button(t('config'),'configuration',{},!state.bridgeRunning));root.append(controls);
+      if(configuration)root.append(element('pre',JSON.stringify(configuration,null,2),'configuration-json'),button(configurationText[state.language==='ru'?'ru':'en'].copy,'copyConfiguration'));
+      if(error)root.append(element('p',t('failed'),'alert'));
+      return;
+    }
     const connection=element('section',undefined,'connection');
     connection.append(element('strong',t('pool')),element('p',state.connection?.external?state.connection.label:t('local')),
       element('p',state.connected?t('ready'):t('unchecked'),'muted'),element('p',state.bridgeRunning?t('bridgeOn'):t('bridgeOff'),'bridge-status'));

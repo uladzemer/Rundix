@@ -4,8 +4,7 @@ const {createHeadlessHost} = require('./service-headless-host.cjs');
 const {createTaskRpc} = require('./service-task-rpc.cjs');
 const {createLimitPoller} = require('./service-limit-poller.cjs');
 
-// Singleton is acquired before creating core, provider or CLI. Until space
-// binding is installed, this entry deliberately exposes no task RPC or metadata.
+// Singleton is acquired before creating core, provider or CLI.
 async function runService(options = {}) {
   const rpc = createTaskRpc({providerOptions:options.hostOptions?.providerOptions});
   const endpoint = await startService({...options, entryPath:__filename, serviceVersion:require('../package.json').version,
@@ -26,5 +25,8 @@ async function runService(options = {}) {
     return {status:'owner', host, endpoint, poller, dispose};
   } catch (error) { idle?.dispose(); poller?.dispose(); await endpoint.dispose(); throw error; }
 }
-if (require.main === module) runService().catch(() => {process.exitCode = 1;});
+if (require.main === module) {
+  const index = process.argv.indexOf('--service-root');
+  runService({root:index < 0 ? undefined : process.argv[index + 1]}).catch(() => {process.exitCode = 1;});
+}
 module.exports = {runService};

@@ -16,7 +16,7 @@ const tools=[
   ['cancel_task','Request interruption; call wait_task until cancellation is confirmed.',{requestId:text,taskId:text},['requestId','taskId']],
   ['list_tasks','List compact task summaries (no reports), newest created first. Filter by state or projectDirectory; pass nextCursor as cursor for the next page. Read a full report with get_task.',{limit:{type:'integer',minimum:1,maximum:100},state:{type:'string',enum:states},projectDirectory:text,cursor:text},[]],
 ].map(([name,description,properties,required])=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false}}));
-function run(descriptor,input=process.stdin,output=process.stdout) {
+function run(descriptor,input=process.stdin,output=process.stdout,{call=request,getTools=async()=>tools}={}) {
   let buffer='',initialized=false;
   const send=value=>output.write(JSON.stringify({jsonrpc:'2.0',...value})+'\n');
   const handle=async message=>{
@@ -29,16 +29,18 @@ function run(descriptor,input=process.stdin,output=process.stdout) {
     }
     if (!initialized) {send({id,error:{code:-32000,message:'Initialize first'}});return;}
     if (message.method==='ping') {send({id,result:{}});return;}
-    if (message.method==='tools/list') {send({id,result:{tools}});return;}
+    if (message.method==='tools/list') {
+      try {send({id,result:{tools:await getTools()}});} catch {send({id,error:{code:-32000,message:'Service unavailable; check the installed service and retry.'}});} return;
+    }
     if (message.method!=='tools/call') {send({id,error:{code:-32601,message:'Method not found'}});return;}
     try {
-      const tool=tools.find(t=>t.name===message.params?.name), args=message.params?.arguments || {};
+      const tool=(await getTools()).find(t=>t.name===message.params?.name), args=message.params?.arguments || {};
       if(!tool || !args || Array.isArray(args) || typeof args!=='object' || Object.keys(args).some(k=>!Object.hasOwn(tool.inputSchema.properties,k)) || tool.inputSchema.required.some(k=>args[k]===undefined))throw Object.assign(Error('Invalid tool arguments'),{code:'invalid_argument'});
-      const result=await request(descriptor,tool.name,args);
+      const result=await call(descriptor,tool.name,args);
       send({id,result:{content:[{type:'text',text:JSON.stringify(result)}]}});
     } catch(error) {
       const coded=typeof error?.code==='string' && /^[a-z_]{1,40}$/.test(error.code);
-      send({id,result:{isError:true,content:[{type:'text',text:coded?error.code+': '+error.message:'rejected: Request rejected. Check arguments, task state and connection in the Rundix MCP panel.'}]}});
+      send({id,result:{isError:true,content:[{type:'text',text:coded?error.code+(error.providerCode?' ('+error.providerCode+')':'')+': '+error.message:'rejected: Request rejected. Check arguments, task state and connection in the Rundix MCP panel.'}]}});
     }
   };
   input.setEncoding('utf8');
@@ -81,7 +83,11 @@ async function wait(descriptor,taskId,seconds,{call=request,output=process.stdou
   return 4;
 }
 function argument(name){const index=process.argv.indexOf(name);return index<0?undefined:process.argv[index+1];}
-if(require.main===module){
+if(require.main===module && process.argv.includes('--service')){
+  // Defer until exports are available to the service adapter.
+  void Promise.resolve().then(()=>require('./service-adapter.cjs').main({root:argument('--service-root')}))
+    .catch(()=>{process.stderr.write('service_unavailable\n');process.exitCode=1;});
+}else if(require.main===module){
   const descriptor=argument('--bridge'), taskId=argument('--wait'), timeout=Number(argument('--timeout') ?? 3600);
   if(!descriptor || descriptor.startsWith('--') || (process.argv.includes('--wait') && (!taskId || taskId.startsWith('--') || !Number.isInteger(timeout) || timeout<1 || timeout>86400))){
     process.stderr.write('Usage: node mcp-server.cjs --bridge <bridge.json> [--wait <taskId>[,<taskId>...] [--timeout <seconds>] [--brief]]\n');process.exitCode=1;

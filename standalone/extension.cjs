@@ -147,9 +147,13 @@ function activate(context) {
     }),
   );
   const mcpViews=new Map();
+  // Global user setting only. An activation owns one mode; changes apply on reload.
+  const serviceMode=vscode.workspace.getConfiguration('rundix').inspect('mcpService')?.globalValue==='service';
+  let serviceInstallation=null;
   let mcpEditor=null, mcpPanelBusy=false;
-  const mcpRecords=()=>mcpHost.tasks?[...mcpHost.tasks.tasks.values()]:mcpPanelState.readRecords(path.join(context.globalStorageUri.fsPath,'mcp','tasks'));
+  const mcpRecords=()=>serviceMode?[]:mcpHost.tasks?[...mcpHost.tasks.tasks.values()]:mcpPanelState.readRecords(path.join(context.globalStorageUri.fsPath,'mcp','tasks'));
   async function connectMcpPool() {
+    if(serviceMode)throw Object.assign(Error('Configure the installed background service provider.'),{code:'unsupported'});
     if(!vscode.workspace.isTrusted)throw Error('Workspace trust is required.');
     if(connections.selection().id==='local') {
       await activateCompanions(vscode.extensions,'local-rundix-tools.rundix');
@@ -164,6 +168,7 @@ function activate(context) {
     if(!core.state.account || core.state.limits.error)throw Error('The selected pool connection is unavailable.');
   }
   function mcpPanelSnapshot() {
+    if(serviceMode)return {language:locale.language,serviceMode:true,bridgeRunning:!!serviceInstallation,tasks:[]};
     let connected=false;
     try{if(core.state.activeConnection?.provider && core.state.account && !core.state.limits.error){connections.assertCurrent(core.state.activeConnection);connected=true;}}catch{}
     return mcpPanelState.snapshot({records:mcpRecords(),language:locale.language,connection:connections.display(),connected,bridgeRunning:!!mcpHost.bridge,
@@ -179,6 +184,7 @@ function activate(context) {
     }catch{for(const view of mcpViews.keys())if(view.visible)void view.webview.postMessage({type:'mcpResult',ok:false});}
   }
   function mcpConfiguration() {
+    if(serviceMode){if(!serviceInstallation)throw Error('Install the service launcher first.');return serviceInstallation.configuration;}
     if(!mcpHost.bridge)throw Error('Start the MCP bridge first.');
     return {mcpServers:{rundix:{command:'node',args:[mcpHost.launcher,'--bridge',mcpHost.bridge.descriptor]}}};
   }
@@ -186,7 +192,7 @@ function activate(context) {
     if(!message || typeof message.action!=='string')throw Error('Invalid MCP panel action.');
     if(message.action==='ready' || message.action==='refresh'){publishMcpPanel(true);return;}
     if(message.action==='connectPool')await connectMcpPool();
-    else if(message.action==='start'){await connectMcpPool();await startMcp();}
+    else if(message.action==='start'){if(!serviceMode)await connectMcpPool();await startMcp();}
     else if(message.action==='stop')await stopMcp();
     else if(message.action==='configuration' || message.action==='copyConfiguration') {
       const configuration=mcpConfiguration();
@@ -267,10 +273,19 @@ function activate(context) {
       enabled:enabled=>context.globalState.update('mcpEnabled',enabled),
       changed:()=>broadcast(),
     }});
-  async function startMcp() { return mcpHost.start(); }
-  async function stopMcp() { return mcpHost.stop(); }
+  async function startMcp() {
+    if(!serviceMode)return mcpHost.start();
+    if(!vscode.workspace.isTrusted)throw Error('Workspace trust is required.');
+    serviceInstallation ||= require('./runtime/service-launcher.cjs').installLauncher();
+    await context.globalState.update('mcpEnabled',true);
+    return serviceInstallation.launcher;
+  }
+  async function stopMcp() {
+    if(!serviceMode)return mcpHost.stop();
+    serviceInstallation=null;await context.globalState.update('mcpEnabled',false);
+  }
   context.subscriptions.push(vscode.commands.registerCommand('rundix.mcpStart',async()=>{
-    await connectMcpPool();
+    if(!serviceMode)await connectMcpPool();
     const descriptor=await startMcp();
     const config=mcpConfiguration();
     const document=await vscode.workspace.openTextDocument({language:'json',content:JSON.stringify(config,null,2)});

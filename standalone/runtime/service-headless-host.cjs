@@ -114,6 +114,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       const row = {threadId:params.threadId, taskId:task.taskId, grant:outcome.grant, completed:new Set()}; runs.set(params.threadId, row);
       try {
         const result = await provider.dispatchTurn(outcome.grant, params); row.turnId = result.turn.id;
+        delete task.waitId; task.waitingLimit = null;
         if (row.completed.has(row.turnId)) finishRun(row, row.turnId);
         return result;
       } catch (error) {
@@ -147,11 +148,14 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     serve:async () => ({descriptor:null, dispose:noop}),
   };
   mcp = createMcpHost({core, storageRoot:root, trusted:() => true, settings, clock, transport,
-    ui:{hasChat:() => false}, taskOptions, decorateAdapter});
+    ui:{hasChat:() => false}, taskOptions, decorateAdapter:adapter => {
+      adapter.cancelWait = task => provider.cancelWait({taskId:task.taskId, spaceId:task.space, waitId:task.waitId});
+      return decorateAdapter ? decorateAdapter(adapter) : adapter;
+    }});
   try { await mcp.start(); } catch (error) { core.state.disposed = true; throw error; }
   logger({code:'service_started'});
   return {core, mcp, provider, settings, logger,
-    busy:() => provider.busy || [...mcp.tasks.tasks.values()].some(task => !['completed', 'error', 'cancelled'].includes(task.state) || task.recoveryRequired),
+    busy:() => !disposed && (provider.busy || [...mcp.tasks.tasks.values()].some(task => !['completed', 'error', 'cancelled'].includes(task.state) || task.recoveryRequired)),
     async dispose() {
       if (disposed) return;
       if (provider.busy || [...mcp.tasks.tasks.values()].some(task => !['completed', 'error', 'cancelled'].includes(task.state) || task.recoveryRequired))

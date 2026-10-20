@@ -185,7 +185,7 @@ async function connectService(options = {}) {
       const descriptor = await readDiscoveryWithRetry(where,options,deadline);
       if (descriptor) {
         peer = await ipc.dial(where.address,{...options.ipc, connectTimeoutMs:Math.max(1,Math.min(2000,deadline-Date.now()))});
-        return await ipc.authenticate(peer, descriptor, options.pingTimeoutMs || 5000, deadline);
+        return await ipc.authenticate(peer, descriptor, options.pingTimeoutMs || 5000, deadline, options.hello);
       }
     } catch (error) {
       peer?.close();

@@ -3,8 +3,8 @@ const fs = require('node:fs');
 const {randomUUID, createHash} = require('node:crypto');
 const directories = require('./task-directory.cjs');
 const inputRecovery = require('./mcp-input-recovery.cjs');
-const active = new Set(['queued', 'running', 'waiting_approval']);
-const states = ['queued','running','waiting_approval','completed','error','cancelled'];
+const active = new Set(['queued', 'running', 'waiting_approval', 'waiting_limit']);
+const states = ['queued','running','waiting_approval','waiting_limit','completed','error','cancelled'];
 const MAX_WAIT_SECONDS = 1500, MAX_PARALLEL = 5;
 // Errors with a code are expected outcomes whose message is safe to return to the MCP client.
 function fail(code, message) { return Object.assign(Error(message), {code}); }
@@ -17,7 +17,7 @@ function fingerprint(value) { return createHash('sha256').update(JSON.stringify(
 // The stored flag also marks an in-flight turn for restart reconciliation; clients only see it once execution stopped.
 function recoveryRequired(task) { return !!task.recoveryRequired && !['running','waiting_approval'].includes(task.state); }
 // Queued and running tasks need no client action; every other state is worth waking a waiting client for.
-function settled(task) { return !['queued','running'].includes(task.state); }
+function settled(task) { return !['queued','running','waiting_limit'].includes(task.state); }
 function connected(adapter, task) {
   try { adapter.assertConnection(task); } catch (error) { throw fail('connection_unavailable', String(error?.message || 'The selected companion connection is unavailable.').slice(0,300)); }
 }
@@ -28,9 +28,9 @@ function directoryFilter(value) {
   try { return directories.canonical(value); } catch { return process.platform==='win32' ? value.toLowerCase() : value; }
 }
 class McpTasks {
-  constructor({store, adapter, directoryStore = store, maxParallel = () => 1, spaceOf = task => task.space, taskFilter = () => true}) {
+  constructor({store, adapter, directoryStore = store, maxParallel = () => 1, spaceOf = task => task.space, taskFilter = () => true, scope, signal}) {
     // Optional task.space is absent for legacy/current-window tasks. No routing yet.
-    this.spaceOf = spaceOf; this.taskFilter = taskFilter;
+    this.spaceOf = spaceOf; this.taskFilter = taskFilter; this.scope = scope; this.signal = signal;
     this.store = store; this.directoryStore=directoryStore; this.adapter = adapter; this.maxParallel = maxParallel; this.tasks = new Map(); this.waiters = new Set(); this.starting = new Set(); this.launches = new Set(); this.operations = new Map(); this.executing = false; this.closed = false;
     for (const name of fs.readdirSync(store.directory).filter(n => /^mcp-task-[\w-]+\.json$/.test(n))) {
       const task = store.read('mcp-task', name.slice(9, -5));
@@ -53,7 +53,7 @@ class McpTasks {
     try { void Promise.resolve(this.adapter.release?.(task)).catch(()=>{}); } catch {}
   }
   limit() { const value = Number(this.maxParallel()); return Number.isInteger(value) && value >= 1 ? Math.min(value, MAX_PARALLEL) : 1; }
-  visible(task) { return this.taskFilter(this.spaceOf(task), task); }
+  visible(task) { return (!this.scope || this.scope() === this.spaceOf(task)) && this.taskFilter(this.spaceOf(task), task); }
   get(id) { const task = this.tasks.get(id); if (!task || !this.visible(task)) throw fail('unknown_task', 'Unknown taskId'); return task; }
   view(task, brief = false, unsentAfter, fullRecovery=false) {
     const report = task.report;
@@ -65,6 +65,7 @@ class McpTasks {
     return JSON.parse(JSON.stringify({taskId:task.taskId, state:task.state, progress:task.progress,
       chatId:task.chatId || null, projectDirectory:task.projectDirectory, createdAt:task.createdAt,
       updatedAt:task.updatedAt, revision:task.revision || 0, accessMode:task.accessMode || null, ...reportFields, error:task.error || null,
+      ...(this.scope || task.waitingLimit ? {waitingLimit:task.state === 'waiting_limit' ? task.waitingLimit : null} : {}),
       queuedContinuations:task.continuations?.length || 0,
       ...(fullRecovery?inputRecovery.page(task,unsentAfter):{unsentInputCount:task.unsentInputs?.length || 0}),
       recoveryRequired:recoveryRequired(task), pendingRequests:this.adapter.pending(task)}));
@@ -73,15 +74,18 @@ class McpTasks {
     return JSON.parse(JSON.stringify({taskId:task.taskId, title:(task.description || '').slice(0,160), state:task.state,
       progress:task.progress, chatId:task.chatId || null, projectDirectory:task.projectDirectory, createdAt:task.createdAt,
       updatedAt:task.updatedAt, revision:task.revision || 0, hasReport:!!task.report, error:task.error || null,
+      ...(this.scope || task.waitingLimit ? {waitingLimit:task.state === 'waiting_limit' ? task.waitingLimit : null} : {}),
       unsentInputCount:task.unsentInputs?.length || 0,
       recoveryRequired:recoveryRequired(task), pendingRequests:this.adapter.pending(task).length}));
   }
   operation(requestId, method, args, action) {
     string(requestId, 'requestId', 128);
     const hash = fingerprint([method, args]);
-    const inFlight=this.operations.get(requestId);
+    const operationKey = this.scope ? this.scope() + '\0' + requestId : requestId;
+    const inFlight=this.operations.get(operationKey);
     if(inFlight){if(inFlight.hash!==hash)throw fail('request_conflict','requestId was already used for different arguments.');return inFlight.promise;}
     for (const task of this.tasks.values()) {
+      if (!this.visible(task)) continue;
       const found = task.operations.find(op => op.requestId === requestId);
       if (found) {
         if (found.hash !== hash) throw fail('request_conflict', 'requestId was already used for different arguments.');
@@ -91,8 +95,8 @@ class McpTasks {
     }
     const result=action({requestId, hash});
     if(result?.then){
-      const promise=Promise.resolve(result).finally(()=>this.operations.delete(requestId));
-      this.operations.set(requestId,{hash,promise});return promise;
+      const promise=Promise.resolve(result).finally(()=>this.operations.delete(operationKey));
+      this.operations.set(operationKey,{hash,promise});return promise;
     }
     return result;
   }
@@ -114,6 +118,11 @@ class McpTasks {
     const page = matches.slice(0, limit), last = page[page.length-1];
     return {tasks:page.map(t=>this.summary(t)), nextCursor:matches.length>limit ? Buffer.from(last.createdAt+':'+last.taskId).toString('base64url') : null};
   }
+  checkpointDelay(tasks,deadline) {
+    const now=Date.now();
+    const future=tasks.filter(t=>t.state==='waiting_limit' && t.waitingLimit?.resetAt>now).map(t=>t.waitingLimit.resetAt);
+    return Math.max(1,Math.min(deadline,...future)-now);
+  }
   wait(args) {
     const task = this.get(args.taskId);
     if (args.brief !== undefined && typeof args.brief !== 'boolean') throw fail('invalid_argument', 'Invalid brief');
@@ -123,10 +132,15 @@ class McpTasks {
     const ready = () => settled(task) && (after === undefined || (task.revision || 0) > after);
     if (ready() || this.closed) return {...this.view(task, args.brief), timedOut:false};
     return new Promise(resolve => {
-      const finish = timedOut => { clearTimeout(timer); this.waiters.delete(waiter); resolve({...this.view(task, args.brief), timedOut}); };
+      const signal=this.signal?.();
+      const finish = timedOut => { clearTimeout(timer); signal?.removeEventListener('abort',abort); this.waiters.delete(waiter); resolve({...this.view(task, args.brief), timedOut}); };
+      const abort=()=>finish(true);
       const waiter = {check:()=>{ if (ready()) finish(false); }, close:()=>finish(true)};
-      const timer = setTimeout(()=>finish(true), seconds*1000);
-      this.waiters.add(waiter);
+      let timer;
+      const deadline=Date.now()+seconds*1000;
+      const arm=()=>{clearTimeout(timer);timer=setTimeout(()=>finish(true),this.checkpointDelay([task],deadline));};
+      const check=waiter.check;waiter.check=()=>{check();if(this.waiters.has(waiter))arm();};
+      this.waiters.add(waiter);arm();signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
     });
   }
   // Wakes on the first of several tasks that needs attention, so a client running tasks in parallel waits once.
@@ -137,16 +151,22 @@ class McpTasks {
     if (!Number.isInteger(seconds) || seconds < 1 || seconds > MAX_WAIT_SECONDS) throw fail('invalid_argument', 'Invalid waitSeconds');
     const tasks = args.taskIds.map(id => this.get(id));
     const result = timedOut => {
-      const value={settled:tasks.filter(settled).map(t=>this.view(t, args.brief)), waiting:tasks.filter(t=>!settled(t)).map(t=>t.taskId), timedOut};
+      const value={settled:tasks.filter(settled).map(t=>this.view(t, args.brief)), waiting:tasks.filter(t=>!settled(t)).map(t=>t.taskId), timedOut,
+        ...(this.scope ? {waitingLimits:tasks.filter(t=>t.state==='waiting_limit').map(t=>({taskId:t.taskId,...t.waitingLimit}))} : {})};
       if(Buffer.byteLength(JSON.stringify({result:value}))>1024*1024)throw fail('response_too_large','MCP response exceeds the 1 MiB transport limit. Retry with brief:true or fewer taskIds.');
       return value;
     };
     if (tasks.some(settled) || this.closed) return result(false);
     return new Promise((resolve,reject) => {
-      const finish = timedOut => { clearTimeout(timer); this.waiters.delete(waiter); try{resolve(result(timedOut));}catch(error){reject(error);} };
+      const signal=this.signal?.();
+      const finish = timedOut => { clearTimeout(timer); signal?.removeEventListener('abort',abort); this.waiters.delete(waiter); try{resolve(result(timedOut));}catch(error){reject(error);} };
+      const abort=()=>finish(true);
       const waiter = {check:()=>{ if (tasks.some(settled)) finish(false); }, close:()=>finish(true)};
-      const timer = setTimeout(()=>finish(true), seconds*1000);
-      this.waiters.add(waiter);
+      let timer;
+      const deadline=Date.now()+seconds*1000;
+      const arm=()=>{clearTimeout(timer);timer=setTimeout(()=>finish(true),this.checkpointDelay(tasks,deadline));};
+      const check=waiter.check;waiter.check=()=>{check();if(this.waiters.has(waiter))arm();};
+      this.waiters.add(waiter);arm();signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
     });
   }
   call(name, args = {}) {
@@ -188,11 +208,12 @@ class McpTasks {
       const task = {taskId:randomUUID(), sessionKey:randomUUID(), state:'queued', progress:'Queued',
         projectDirectory, description:args.description,
         acceptanceCriteria:args.acceptanceCriteria, model:args.model, effort:args.effort,
-        connection:connection || this.adapter.connection(), operations:[op], createdAt:Date.now()};
+        ...(this.scope ? {space:this.scope()} : {}), connection:connection || this.adapter.connection(), operations:[op], createdAt:Date.now()};
       this.save(task); this.tasks.set(task.taskId, task); this.schedule(); return this.view(task);
       };
       return this.adapter.ensureConnection?available(this.adapter).then(persist):persist();
     });
+    if (['continue_task','cancel_task'].includes(name)) this.get(args.taskId);
     if (!['continue_task','cancel_task'].includes(name)) throw fail('invalid_argument', 'Unknown tool');
     return this.operation(args.requestId, name, args, op => {
       const task = this.get(args.taskId);
@@ -227,7 +248,7 @@ class McpTasks {
           task.continuations ||= [];
           if(task.continuations.length>=20)throw fail('limit', 'Too many queued continuations.');
           task.continuations.push(args.clarification);
-        } else {task.nextInput=args.clarification; task.state='queued'; task.error=null; task.cancelRequested=false;}
+        } else {task.nextInput=args.clarification; task.state='queued'; task.error=null; task.cancelRequested=false; delete task.waitId;task.waitingLimit=null;}
         task.progress='Continuation queued';
       } else {
         // The active attempt is handled by start()/reconciliation; only queued
@@ -239,12 +260,14 @@ class McpTasks {
         if (!active.has(task.state) && !task.recoveryRequired) { task.operations.push(op); this.save(task); return this.view(task); }
         task.cancelRequested=true;
         task.continuations=[];
-        if (task.state === 'queued' && !task.recoveryRequired) {
+        if (['queued','waiting_limit'].includes(task.state) && !task.recoveryRequired) {
+          task.waitingLimit=null;
           task.state='cancelled'; task.progress='Cancelled before execution';
           this.release(task);
         } else { task.state='running';task.progress='Cancellation requested'; }
       }
       task.operations.push(op); this.save(task);
+      if (name === 'cancel_task' && task.state === 'cancelled' && task.waitId) void Promise.resolve(this.adapter.cancelWait?.(task)).catch(()=>{});
       if (name === 'cancel_task' && task.state !== 'cancelled') {
         void Promise.resolve(this.adapter.cancel(task)).catch(()=>{task.error='Cancellation could not be confirmed; query task again.';this.save(task);});
       }
@@ -364,6 +387,20 @@ class McpTasks {
       delete task.nextInput;
       task.chatId=this.adapter.chatId(task); this.save(task);
     } catch (error) {
+      if(error?.providerWait && !task.cancelRequested){
+        inputRecovery.remember(task,input); task.nextInput=input;
+        task.state='waiting_limit';task.recoveryRequired=false;task.needsReconcile=false;
+        task.waitId=error.providerWait.waitId || task.waitId || randomUUID();
+        task.waitingLimit={resetAt:error.providerWait.resetAt,reason:error.providerWait.reason};
+        task.chatId=this.adapter.chatId(task);
+        task.nextCheckAt=Date.now() + (error.providerWait.retryAfterMs || 0);
+        task.progress='Waiting for provider availability';task.error=null;this.save(task);return;
+      }
+      if(error?.reason==='action_required' && error?.notSent && !task.cancelRequested){
+        inputRecovery.remember(task,input); task.state='error';task.recoveryRequired=false;task.needsReconcile=false;
+        task.error='action_required: Open companion connection settings and reconnect.';task.progress='Provider action required';
+        this.release(task);this.save(task);return;
+      }
       if(task.cancelRequested && (task.awaitingPreparation || error?.retryable || error?.notSent)){
         inputRecovery.remember(task,input);
         task.state='cancelled';task.recoveryRequired=false;task.progress='Cancelled before model execution';

@@ -54,7 +54,9 @@ class Peer extends EventEmitter {
     // A reader which stops consuming cannot retain a connection forever.
     if (this.socket.writableLength && !this.writeTimer) {
       this.writeTimer = setTimeout(() => this.close('write_timeout'), this.options.writeTimeoutMs || 5000);
-      this.socket.once('drain', () => { clearTimeout(this.writeTimer); this.writeTimer = null; });
+      // The final write callback clears the stall timer when the queue empties.
+      // A small completed write need not emit drain; per-write drain listeners
+      // would otherwise accumulate for the lifetime of a busy service client.
     }
   }
   request(method, params = {}, timeoutMs = 12000) {
@@ -128,7 +130,7 @@ class Peer extends EventEmitter {
   }
 }
 
-function accept(socket, {secret, generation, status, call, onAuthenticated, ...options}) {
+function accept(socket, {secret, generation, status, call, hello, onAuthenticated, ...options}) {
   const peer = new Peer(socket, options);
   let nonce, expires;
   peer.authTimer = setTimeout(() => peer.close('auth_failed'), options.authTimeoutMs || 5000);
@@ -144,8 +146,10 @@ function accept(socket, {secret, generation, status, call, onAuthenticated, ...o
       if (!timingSafeEqual(expected, Buffer.from(params.proof, 'hex'))) throw failure('auth_failed');
       if (!(params.protocol?.min <= 1 && params.protocol?.max >= 1)) throw failure('protocol_incompatible');
       if (status() !== 'ready') throw failure('service_initializing');
+      const binding = await hello?.(params, peer);
+      if (peer.closed || context.signal.aborted) throw failure('auth_failed');
       peer.authenticated = true; clearTimeout(peer.authTimer); onAuthenticated?.(peer);
-      return {generation, protocol:1};
+      return {generation, protocol:1, ...binding};
     }
     if (!peer.authenticated) throw failure('auth_failed');
     if (params?.generation !== generation) throw failure('stale_instance');
@@ -163,16 +167,17 @@ function dial(address, options = {}) {
     socket.once('connect', () => { clearTimeout(timer); socket.removeListener('error', failed); resolve(new Peer(socket, options)); });
   });
 }
-async function authenticate(peer, descriptor, timeoutMs = 5000, deadline = Date.now() + 2 * timeoutMs) {
+async function authenticate(peer, descriptor, timeoutMs = 5000, deadline = Date.now() + 2 * timeoutMs, hello = {}) {
   const remaining = () => { const ms = Math.min(timeoutMs,deadline-Date.now()); if (ms <= 0) throw failure('rpc_timeout'); return ms; };
   const ping = await peer.request('service.ping', {}, remaining());
   if (ping.generation !== descriptor.generation) throw failure('auth_failed');
   if (ping.status !== 'ready') throw failure('service_initializing');
-  const result = await peer.request('service.hello', {protocol:{min:1,max:1}, generation:ping.generation,
+  const result = await peer.request('service.hello', {...hello, protocol:{min:1,max:1}, generation:ping.generation,
     serverNonce:ping.serverNonce, proof:proof(descriptor.secret, ping.generation, ping.serverNonce)}, remaining());
   remaining();
   if (result.generation !== descriptor.generation || result.protocol !== 1) throw failure('stale_instance');
   peer.authenticated = true; peer.generation = result.generation;
+  peer.binding = result;
   peer.call = (method, params = {}, budget) => peer.request(method, {...params, generation:peer.generation}, budget);
   return peer;
 }

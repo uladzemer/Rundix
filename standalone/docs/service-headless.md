@@ -283,9 +283,42 @@ with an unvalidated event. Both 5 ms and 80/120 ms stale-event/ACK regressions p
 This last correction was author-verified after round 3; it is not represented as
 an independent approval of the final diff. Further review was not requested.
 
+## Space task RPC and shared limits (item 3)
+
+`service-task-rpc.cjs` binds an adapter connection during authenticated hello by
+recomputing `resolveSpace(binding.launchDirectory)`. The immutable reply contains
+bindingId/spaceId, toolSchemaVersion:1 and tasks.v1/limitWait.v1 capabilities.
+Every `task.call` carries bindingId/spaceId as well as the IPC generation.
+Only that space's tasks are visible, including mutations and idempotency search;
+dedup keys are `(spaceId,requestId)`. Ownership precedes provider or operation
+lookup. Mixed foreign wait IDs fail as a whole with unknown_task. Execution
+projectDirectory may belong to a different repository. A disconnected long poll
+is detached without cancelling its task. Domain errors use fixed safe envelopes;
+missing/invalid provider returns action_required plus the provider's public code.
+
+McpTasks now accepts optional scope/signal hooks; window hosts omit both. Durable
+task records carry space; existing storage/recovery mechanics remain in place.
+`waiting_limit` retains the unsent input and directory reservation, frees execution
+and credential slots, and is not a waking state. wait_task/wait_tasks return a
+timedOut checkpoint at client deadline or a future resetAt, including waitingLimit
+or waitingLimits. Progress/revision changes and entering waiting_limit do not
+wake them. Cancelling a wait is saved before provider cancellation; an explicit
+continuation after cancellation allocates a new wait identity.
+
+`service-limit-poller.cjs` owns one in-flight probe and a shared unknown backoff
+1/2/4/8/15 minutes, honoring retryAfterMs as a lower bound. Tick defaults to 15 s;
+known reset and idle turn completion trigger fresh probes/admissions. Unchanged
+quota results do not bump visible revisions. Provider action-required errors
+wake tasks as errors while preserving unsent input. `service-task-rpc.cjs` tests
+real IPC isolation and wait/cancel behavior; `service-limit-poller.cjs` tests 100
+waits sharing one probe, backoff, deadlines and unchanged revisions.
+
+Separate read-only item-3 review found the retired waitId continuation bug; it
+was fixed with a real-IPC regression. Reviewer reran both suites and reported
+zero remaining confirmed findings. No real account or CLI was used.
+
 ## Remaining work for 3a
 
-space-bound IPC hello/dispatch and all task mutations,
 durable intents/recovery, limit waits/poller, demand start/stable launcher,
 experimental user-only setting, and the service/two-space end-to-end suite.
 These requirements must be integrated before exposing service mode. Window

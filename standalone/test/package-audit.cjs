@@ -50,7 +50,7 @@ function audit(file) {
   // Stage-1 headless foundation stays out of the public extension until host wiring is reviewed.
   for (const module of ['service-endpoint','service-ipc','service-process','service-lifecycle','service-space','service-cli',
     'service-json','service-provider-config','service-provider-rpc','service-provider-contract','service-provider',
-    'service-headless-host','service-main']) {
+    'service-headless-host','service-main','service-task-rpc','service-limit-poller']) {
     assert(!names.has(`extension/runtime/${module}.cjs`), 'Unwired headless module shipped');
   }
   for (const required of ['extension/extension.cjs', 'extension/package.json', 'extension/readme.md', 'extension/changelog.md',

@@ -79,7 +79,7 @@ async function main() {
     const serviceRoot = path.join(root, 'service-process'); fs.mkdirSync(serviceRoot);
     service = await runService({root:serviceRoot, idleMs:50, pollMs:10});
     assert.equal(service.status, 'owner');
-    peer = await connectService({root:serviceRoot});
+    peer = await connectService({root:serviceRoot, hello:{clientKind:'adapter', binding:{launchDirectory:serviceRoot, source:'cwd'}}});
     await pause(100); assert(fs.existsSync(path.join(serviceRoot, 'bridge.json')), 'A connected client prevents idle exit');
     assert.equal((await runService({root:serviceRoot})).status, 'already_running', 'Singleton loser creates no second host');
     peer.close(); peer = null;

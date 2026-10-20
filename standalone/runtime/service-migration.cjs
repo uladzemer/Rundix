@@ -64,7 +64,7 @@ function contains(folders,directory){return folders.some(folder=>{const relative
 function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
   const store=new SessionStore(root),leases=new Map(),imports=new Map(),ready=new Set(),bridges=new Map(),statuses=new Map(),listeners=new Set(),pendingRegistrations=new Map();let syncing,closed=false,timer;
   const status=source=>statuses.get(source) || statuses.get(undefined) || {state:source?'pending':'ready'};
-  function publish(source,value){statuses.set(source,value);for(const listener of listeners)listener(source,value);}
+  function publish(source,value){if(json(statuses.get(source))===json(value))return;statuses.set(source,value);for(const listener of listeners)listener(source,value);}
   async function finish(source,sourceId,records){
     if(!bridges.has(source))bridges.set(source,await require('./mcp-bridge.cjs').serve({directory:path.join(source,'mcp'),call:()=>{
       throw Object.assign(Error('Replace the Rundix MCP entry with the service launcher and restart Claude MCP.'),{code:'adapter_upgrade_required'});
@@ -179,7 +179,7 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
     if(closed)throw failure('migration_conflict');if(syncing)return syncing;
     syncing=(async()=>{
       for(const [identity,source] of pendingRegistrations)if(force || !(status(identity).retryAt>clock())){
-        try{await registerRootAsync(root,source);pendingRegistrations.delete(identity);statuses.delete(identity);}
+        try{await registerRootAsync(root,source);pendingRegistrations.delete(identity);if(ready.has(identity))publish(identity,{state:'ready'});else statuses.delete(identity);}
         catch(error){if(error.code==='ENOENT'){pendingRegistrations.delete(identity);publish(identity,{state:'vanished'});continue;}const attempt=(status(identity).attempt || 0)+1;publish(identity,{state:['EPERM','EACCES','EBUSY','legacy_registry_busy'].includes(error.code)?'retry_later':'needs_repair',code:error.code==='legacy_registry_busy'?error.code:'migration_conflict',attempt,retryAt:clock()+Math.min(60000,retryMs*2**Math.min(attempt-1,6))});}
       }
       for(const source of ready){try{await fsp.lstat(source);if(await exists(path.join(source,'mcp','tasks')))ready.delete(source);}catch{ready.delete(source);}}
@@ -219,8 +219,8 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
     async register(source){
       if(typeof source!=='string' || !path.isAbsolute(source) || source.includes('\0'))throw failure('migration_conflict');
       let identity=path.normalize(source);if(process.platform==='win32')identity=identity.toLowerCase();
-      try{identity=canonical(source);await registerRootAsync(root,identity);await sync();}
-      catch(error){if(error.code!=='ENOENT')pendingRegistrations.set(identity,source);publish(identity,{state:error.code==='ENOENT'?'vanished':['EPERM','EACCES','EBUSY','legacy_registry_busy'].includes(error.code)?'retry_later':'needs_repair',code:error.code==='legacy_registry_busy'?error.code:'migration_conflict',retryAt:clock()+retryMs});}
+      try{identity=canonical(source);await registerRootAsync(root,identity);await sync();if(ready.has(identity))publish(identity,{state:'ready'});}
+      catch(error){if(error.code!=='ENOENT')pendingRegistrations.set(identity,source);if(ready.has(identity))publish(identity,{state:'ready'});else publish(identity,{state:error.code==='ENOENT'?'vanished':['EPERM','EACCES','EBUSY','legacy_registry_busy'].includes(error.code)?'retry_later':'needs_repair',code:error.code==='legacy_registry_busy'?error.code:'migration_conflict',retryAt:clock()+retryMs});}
       return identity;
     },
     async close(){closed=true;clearTimeout(timer);await syncing?.catch(()=>{});for(const bridge of bridges.values())bridge.dispose();bridges.clear();for(const release of leases.values())release();leases.clear();listeners.clear();},

@@ -55,6 +55,10 @@ async function main(){
     const {Worker}=require('node:worker_threads'),{once}=require('node:events');
     const holder=new Worker("const {parentPort,workerData}=require('node:worker_threads');const release=new(require(workerData.module).SessionStore)(workerData.root).acquire('legacy-roots');parentPort.postMessage('held');setTimeout(()=>{release();parentPort.postMessage('released');},150);",{eval:true,workerData:{module:require.resolve('../runtime/store.cjs'),root:serviceRoot}});
     await once(holder,'message');registerRoot(serviceRoot,source);await once(holder,'exit');
+    const readyLease=registryStore.acquire('legacy-roots');
+    try{await migration.register(source);assert.equal(migration.status(canonical(source)).state,'ready','Registry contention cannot replace a completed import status');}finally{readyLease();}
+    await migration.sync({force:true});assert.equal(migration.status(canonical(source)).state,'ready','Pending registration retry preserves ready status');
+    let redundantReady=0;const unlisten=migration.onChanged(()=>redundantReady++);await migration.register(source);await migration.register(source);unlisten();assert.equal(redundantReady,0,'Repeated hello does not cause ready-event reconnect loops');
     assert.throws(()=>require('../runtime/service-migration.cjs').legacyBridgeRoot(serviceRoot,path.join(a,'mcp','bridge.json')),{code:'service_upgrade_required'});
     const imported=path.join(serviceRoot,'legacy',visible[0].sourceId);assert(!fs.readdirSync(imported).some(name=>name.includes('manual')));
     await migration.sync();await migration.close();migration=createMigration({root:serviceRoot});await migration.sync();assert.equal(migration.visible(sa,[canonical(a)]).length,1);
@@ -64,8 +68,9 @@ async function main(){
     const data=require('./service-fixture.cjs').fixture(serviceRoot);
     try{
       service=await require('../runtime/service-main.cjs').runService({root:serviceRoot,hostOptions:data.hostOptions});
-      for(const folder of [a,b]){const client=new ServiceWindowClient({root:serviceRoot,trusted:true,workspaceFolders:[pathToFileURL(folder).href]});clients.push(client);await client.start();}
+      for(const folder of [a,b]){const client=new ServiceWindowClient({root:serviceRoot,legacyRoot:source,trusted:true,workspaceFolders:[pathToFileURL(folder).href]});clients.push(client);await client.start();assert.equal(client.legacyStatus.state,'ready');}
       const [wa,wb]=clients;assert.equal(wa.snapshots.get(sa).tasks[0].readOnly,true);assert.equal(wb.snapshots.get(sb).tasks.length,1);
+      wa.peer.close();const reconnectedBy=Date.now()+5000;while(!wa.peer || !wa.snapshots.has(sa)){assert(Date.now()<reconnectedBy,'Synthetic ready-root reconnect deadline');await new Promise(resolve=>setTimeout(resolve,20));}assert.equal(wa.legacyStatus.state,'ready');assert.equal(wb.legacyStatus.state,'ready');
       const open=fs.promises.open;let transcriptReads=0;
       try{
         fs.promises.open=async function(file,...args){if(String(file).includes(path.sep+'legacy'+path.sep))transcriptReads++;return open.call(this,file,...args);};

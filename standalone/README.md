@@ -47,7 +47,7 @@ Completion sounds, Telegram notifications and local Stop scripts are optional. T
 
 Compatible companion extensions can add another connection. Select one through `/account` → **Connection settings**. If the selected companion is unavailable, Rundix preserves your draft and reports the error before sending.
 
-Control Rundix from Claude Code through the optional [local MCP bridge](https://github.com/uladzemer/Rundix/blob/main/standalone/docs/mcp.md). VS Code must remain open and an installed companion connection must be selected.
+Control Rundix from Claude Code through the optional [local MCP bridge](https://github.com/uladzemer/Rundix/blob/main/standalone/docs/mcp.md). Click **MCP** at the top of the chat to open its controls, tasks and copyable Claude configuration. VS Code must remain open and an installed companion connection must be selected.
 
 ## What's new and feedback
 

@@ -4,7 +4,8 @@ const {request}=require('../runtime/mcp-bridge.cjs');
 exports.run=async()=>{
  const report={syntheticTransport:true,syntheticCompanion:true,inferencePerformed:false};
  const original={start:AppServer.prototype.start,request:AppServer.prototype.request,respond:AppServer.prototype.respond};
- let api,registration,descriptor;let turns=0,threads=0,prepared=0,authenticated=0;const responses=[];
+ let mcpEditor;
+ let api,registration,descriptor,stage='initialization';let turns=0,threads=0,prepared=0,authenticated=0;const responses=[];
  const wait=async predicate=>{const until=Date.now()+15000;while(Date.now()<until){const value=await predicate();if(value)return value;await new Promise(r=>setTimeout(r,60));}throw Error('Synthetic scenario timeout');};
  try{
   await vscode.workspace.getConfiguration('rundix').update('cliPath',findCli(),vscode.ConfigurationTarget.Global);
@@ -30,6 +31,11 @@ exports.run=async()=>{
   const first=await request(descriptor,'submit_task',args);assert.equal(first.state,'queued');
   await wait(()=>turns===1);
   const s=[...api.sessions.values()].find(s=>s.id==='synthetic-mcp-chat');assert(s);assert(prepared>0);assert(authenticated>0);
+  stage='chat-panel-entry';await api.dispatch(s.host,{action:'mcpPanel',sessionKey:s.key,currentDraft:'Synthetic preserved chat draft'});
+  mcpEditor=api.mcp.openPanel();assert.equal(api.mcp.openPanel(),mcpEditor);assert.equal(s.draft,'Synthetic preserved chat draft');
+  assert(mcpEditor.webview.html.includes('mcp-panel.js'));assert(mcpEditor.webview.html.includes("default-src 'none'"));
+  stage='inline-configuration';const inlineConfiguration=await api.mcp.panelAction({action:'configuration'});assert.equal(inlineConfiguration.configuration.mcpServers.rundix.args.at(-1),descriptor);
+  stage='task-lifecycle';
   const ordinary=api.create({key:'synthetic-ordinary',cwd:args.projectDirectory,model:'synthetic-model',prefs:{access:'workspace'}});
   await assert.rejects(()=>api.handle(ordinary,{action:'send',text:'Synthetic conflicting edit'}));assert.equal(ordinary.id,null);assert.equal(turns,1);
   assert.equal((await request(descriptor,'submit_task',args)).taskId,first.taskId);assert.equal(turns,1);
@@ -52,6 +58,6 @@ exports.run=async()=>{
   assert.equal(api.mcp.panelSnapshot().bridgeRunning,false);assert.equal(api.mcp.panelSnapshot().tasks[0].chatId,completed.chatId);
   descriptor=await api.mcp.start();assert.equal((await request(descriptor,'get_task',{taskId:first.taskId})).chatId,completed.chatId);assert.equal(turns,2);
   report.passed=true;report.sameChatContinuation=true;report.companionPrepareCalls=prepared;report.approvalAndCancellation=true;report.persistedRestart=true;
- }catch{report.passed=false;report.failure='Synthetic MCP Extension Host scenario failed.';throw Error(report.failure);}
- finally{try{await api?.mcp.stop();}catch{}registration?.dispose();Object.assign(AppServer.prototype,original);fs.writeFileSync(path.join(__dirname,'../.verification/mcp-host.json'),JSON.stringify(report,null,2));}
+ }catch{report.passed=false;report.failure='Synthetic MCP Extension Host scenario failed.';report.stage=stage;throw Error(report.failure);}
+ finally{mcpEditor?.dispose();try{await api?.mcp.stop();}catch{}registration?.dispose();Object.assign(AppServer.prototype,original);fs.writeFileSync(path.join(__dirname,'../.verification/mcp-host.json'),JSON.stringify(report,null,2));}
 };

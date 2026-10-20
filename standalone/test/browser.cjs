@@ -24,6 +24,7 @@ if(!chromePath)throw Error('Set CHROME_PATH to an installed Chrome or Chromium e
  await page.evaluate(()=>{window.fixture.prefs.fast=false;window.fixture.models[0].serviceTiers=[{id:'priority',name:'Fast'}];window.update();});
  await page.screenshot({path:path.join(__dirname,'../.verification/fast-mode.png')});await page.keyboard.press('Escape');
  await require('./control-motion-browser.cjs')({page});
+ await require('./mcp-entry-browser.cjs')({page});
  await require('./toggle-response-browser.cjs')({page});
  await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'open',action:'commands'}})));
  await page.type('.command-search','/fast');assert.equal(await page.$$('.command-list .menu-row').then(n=>n.length),1);

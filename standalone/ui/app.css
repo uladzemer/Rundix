@@ -131,6 +131,9 @@ button:disabled {
 .session-toolbar .session-bookmarks {
   margin-left: auto;
 }
+.session-toolbar .session-mcp{display:inline-flex;align-items:center;gap:6px;flex:none;min-width:60px;height:26px;margin-right:auto;padding:3px 9px;border:1px solid var(--border);border-radius:5px;font-size:12px;font-weight:600}
+.session-mcp::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--muted)}
+.session-mcp.is-running::before{background:var(--vscode-testing-iconPassed,#73c991)}
 .session-toolbar .session-history,
 .session-toolbar .new-session {
   margin: 0;

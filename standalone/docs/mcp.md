@@ -10,9 +10,9 @@ Select and configure your installed companion connection in Rundix first. The pu
 
 ## Connect
 
-1. Open and trust the project in VS Code. Open **Rundix → MCP tasks** in the sidebar, or run **Rundix: Open MCP tasks**.
-2. Click **Connect pool**, then **Start MCP** and **Claude configuration**. Alternatively run **Rundix: Start MCP bridge and show Claude configuration** from the command palette.
-3. The command opens an unsaved JSON document containing the exact server script and bridge descriptor paths. Copy its `mcpServers.rundix` entry into your Claude MCP configuration, or use those two paths in:
+1. Open and trust the project in VS Code. Click the visible **MCP** button at the top of any Rundix chat. It opens the **Rundix · MCP** editor tab; no command palette is needed. The sidebar **Rundix → MCP tasks** remains available too.
+2. In the MCP tab click **Connect pool**, then **Start MCP** and **Claude configuration**.
+3. The configuration appears directly in that tab. Click **Copy configuration** to copy the `mcpServers` JSON into your Claude MCP configuration. If `rundix` is already registered in Claude Code, copying it again is unnecessary. For CLI setup, the same server script and bridge descriptor paths can be used in:
 
    ```powershell
    claude mcp add --transport stdio --scope user rundix -- node "<extension-directory>/runtime/mcp-server.cjs" --bridge "<extension-storage>/mcp/bridge.json"
@@ -25,6 +25,8 @@ The CLI syntax follows [Claude Code's stdio instructions](https://code.claude.co
 Do not commit generated configuration containing personal paths. The descriptor contains a random bridge capability, consumed only by the local Node process; never paste its contents into a chat. The bridge listens only on `127.0.0.1`, requires this capability, rejects browser origins and bounds request sizes/timeouts. Storage uses user-only directory permissions (Windows DACL: current user and SYSTEM; POSIX: 0700 directory, 0600 records). Other processes running as the same OS user are part of the trust boundary.
 
 Only one Extension Host per extension storage/profile owns the bridge. After opt-in, it starts again when Rundix activates (including VS Code startup). Start it in the intended trusted window. **Rundix: Stop MCP bridge** disables automatic startup; cancel active tasks and wait for confirmation first. No VS Code settings outside Rundix are changed.
+
+The **MCP** button in the chat shows a green dot while this Extension Host's bridge is running. Opening it preserves the current chat draft and does not switch the connection or start the bridge. The editor tab and sidebar share the same task service. Existing command-palette commands remain available for compatibility, but the normal controls and configuration copy are all in the UI.
 
 ## Working pool and task panel
 

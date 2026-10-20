@@ -423,6 +423,7 @@ function send(action, payload = {}) {
       "fork",
       "forkTab",
       "moveTab",
+      "mcpPanel",
     ].includes(action)
       ? { currentDraft: input.value }
       : {}),
@@ -1189,6 +1190,7 @@ function open(kind, refresh = true, changeItems = null) {
       (o) => o.reasoningEffort === "none",
     );
   return [
+    ['mcp','MCP · Claude Code',WorkbenchI18n.t('Подключение, задачи и управление мостом MCP'),()=>{close();send('mcpPanel');}],
     ['prepare',WorkbenchI18n.t('Подготовить задачу · эксперимент'),WorkbenchI18n.t('Включайте подготовку перед первым сообщением нового чата.'),
       toggleRequestId=>send('preflight',{enabled:!state.preflight?.enabled,toggleRequestId}),
       {disabled:!!state.id||!!state.busy,checked:!!state.preflight?.enabled,toggle:true}],

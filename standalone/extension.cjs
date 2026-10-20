@@ -151,7 +151,8 @@ function activate(context) {
   );
   const pendingRequests = new Map();
   let mcpTasks=null, mcpBridge=null, mcpLease=null, mcpStarting=null;
-  let mcpPanel=null, mcpPanelBusy=false, mcpPanelSignature='';
+  const mcpViews=new Map();
+  let mcpEditor=null, mcpPanelBusy=false;
   const mcpRecords=()=>mcpTasks?[...mcpTasks.tasks.values()]:mcpPanelState.readRecords(path.join(context.globalStorageUri.fsPath,'mcp','tasks'));
   async function connectMcpPool() {
     if(!vscode.workspace.isTrusted)throw Error('Workspace trust is required.');
@@ -174,11 +175,17 @@ function activate(context) {
       pending:task=>mcpTasks?.adapter.pending(task) || []});
   }
   function publishMcpPanel(force=false) {
-    if(!mcpPanel?.visible)return;
+    if(![...mcpViews.keys()].some(view=>view.visible))return;
     try {
       const data=mcpPanelSnapshot(), signature=JSON.stringify(data);
-      if(force || signature!==mcpPanelSignature){mcpPanelSignature=signature;void mcpPanel.webview.postMessage({type:'mcpState',data});}
-    }catch{void mcpPanel.webview.postMessage({type:'mcpResult',ok:false});}
+      for(const [view,record]of mcpViews)if(view.visible && (force || signature!==record.signature)){
+        record.signature=signature;void view.webview.postMessage({type:'mcpState',data});
+      }
+    }catch{for(const view of mcpViews.keys())if(view.visible)void view.webview.postMessage({type:'mcpResult',ok:false});}
+  }
+  function mcpConfiguration() {
+    if(!mcpBridge)throw Error('Start the MCP bridge first.');
+    return {mcpServers:{rundix:{command:'node',args:[path.join(context.extensionUri.fsPath,'runtime','mcp-server.cjs'),'--bridge',mcpBridge.descriptor]}}};
   }
   async function handleMcpPanel(message) {
     if(!message || typeof message.action!=='string')throw Error('Invalid MCP panel action.');
@@ -186,7 +193,11 @@ function activate(context) {
     if(message.action==='connectPool')await connectMcpPool();
     else if(message.action==='start'){await connectMcpPool();await startMcp();}
     else if(message.action==='stop')await stopMcp();
-    else if(message.action==='configuration')await vscode.commands.executeCommand('rundix.mcpStart');
+    else if(message.action==='configuration' || message.action==='copyConfiguration') {
+      const configuration=mcpConfiguration();
+      if(message.action==='copyConfiguration')await vscode.env.clipboard.writeText(JSON.stringify(configuration,null,2));
+      return {configuration};
+    }
     else if(['openChat','cancel','continue'].includes(message.action)) {
       const task=mcpRecords().find(task=>task.taskId===message.taskId);
       if(!task)throw Error('Unknown taskId');
@@ -203,24 +214,38 @@ function activate(context) {
     }else throw Error('Unknown MCP panel action.');
     publishMcpPanel(true);
   }
-  context.subscriptions.push(vscode.window.registerWebviewViewProvider('rundix.mcpTasks',{
-    resolveWebviewView(view) {
-      mcpPanel=view;mcpPanelSignature='';
+  function attachMcpView(view,onVisible) {
+      mcpViews.set(view,{signature:''});
       view.webview.options={enableScripts:true,localResourceRoots:[vscode.Uri.joinPath(context.extensionUri,'ui')]};
       const nonce=randomBytes(18).toString('base64'), uri=file=>view.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri,'ui',file));
       view.webview.html=`<!doctype html><html lang="${locale.language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('mcp-panel.css')}"></head><body><main id="app"></main><script nonce="${nonce}" src="${uri('mcp-panel.js')}"></script></body></html>`;
       const listener=view.webview.onDidReceiveMessage(async message=>{
-        if(mcpPanelBusy)return;
+        if(mcpPanelBusy){await view.webview.postMessage({type:'mcpResult',ok:false,requestId:message?.requestId});return;}
         mcpPanelBusy=true;
-        try{await handleMcpPanel(message);await view.webview.postMessage({type:'mcpResult',ok:true,action:message.action,taskId:message.taskId,requestId:message.requestId});}
+        try{const result=await handleMcpPanel(message);await view.webview.postMessage({type:'mcpResult',ok:true,action:message.action,taskId:message.taskId,requestId:message.requestId,...result});}
         catch{try{await view.webview.postMessage({type:'mcpResult',ok:false,requestId:message?.requestId});}catch{}}
         finally{mcpPanelBusy=false;}
       });
-      const visible=view.onDidChangeVisibility(()=>publishMcpPanel(true));
-      view.onDidDispose(()=>{listener.dispose();visible.dispose();if(mcpPanel===view){mcpPanel=null;mcpPanelSignature='';}});
+      const visible=onVisible(()=>publishMcpPanel(true));
+      view.onDidDispose(()=>{listener.dispose();visible.dispose();mcpViews.delete(view);if(mcpEditor===view)mcpEditor=null;});
+  }
+  function openMcpEditor() {
+    if(mcpEditor){mcpEditor.reveal();publishMcpPanel(true);return mcpEditor;}
+    mcpEditor=vscode.window.createWebviewPanel('rundix.mcp','Rundix · MCP',vscode.ViewColumn.Active,{enableScripts:true,retainContextWhenHidden:true,localResourceRoots:[vscode.Uri.joinPath(context.extensionUri,'ui')]});
+    mcpEditor.iconPath=vscode.Uri.joinPath(context.extensionUri,'resources','extension-icon.png');
+    attachMcpView(mcpEditor,listener=>mcpEditor.onDidChangeViewState(listener));
+    return mcpEditor;
+  }
+  context.subscriptions.push(vscode.window.registerWebviewViewProvider('rundix.mcpTasks',{
+    resolveWebviewView(view) {attachMcpView(view,listener=>view.onDidChangeVisibility(listener));},
+  }),vscode.commands.registerCommand('rundix.mcpPanel',openMcpEditor),
+  vscode.commands.registerCommand('rundix.mcpConnectPool',connectMcpPool),
+  vscode.window.registerWebviewPanelSerializer('rundix.mcp',{
+    async deserializeWebviewPanel(panel){
+      if(mcpEditor && mcpEditor!==panel){panel.dispose();return;}
+      mcpEditor=panel;attachMcpView(panel,listener=>panel.onDidChangeViewState(listener));
     },
-  }),vscode.commands.registerCommand('rundix.mcpPanel',()=>vscode.commands.executeCommand('rundix.mcpTasks.focus')),
-  vscode.commands.registerCommand('rundix.mcpConnectPool',connectMcpPool));
+  }));
   const mcpPanelTimer=setInterval(()=>publishMcpPanel(),1000);
   context.subscriptions.push({dispose(){clearInterval(mcpPanelTimer);}});
   async function startMcp() {
@@ -247,6 +272,7 @@ function activate(context) {
         }});
         mcpTasks.schedule();
         await context.globalState.update('mcpEnabled',true);
+        broadcast();
         return mcpBridge.descriptor;
       }catch(error){mcpTasks?.dispose();mcpTasks=null;mcpBridge?.dispose();mcpBridge=null;mcpLease?.();mcpLease=null;throw error;}
     })();
@@ -257,11 +283,12 @@ function activate(context) {
     if(mcpTasks && [...mcpTasks.tasks.values()].some(t=>['running','waiting_approval'].includes(t.state)))throw Error('Cancel active MCP tasks and wait for confirmation before stopping the bridge.');
     mcpTasks?.dispose();mcpTasks=null;mcpBridge?.dispose();mcpBridge=null;mcpLease?.();mcpLease=null;
     await context.globalState.update('mcpEnabled',false);
+    broadcast();
   }
   context.subscriptions.push(vscode.commands.registerCommand('rundix.mcpStart',async()=>{
     await connectMcpPool();
     const descriptor=await startMcp();
-    const config={mcpServers:{rundix:{command:'node',args:[path.join(context.extensionUri.fsPath,'runtime','mcp-server.cjs'),'--bridge',descriptor]}}};
+    const config=mcpConfiguration();
     const document=await vscode.workspace.openTextDocument({language:'json',content:JSON.stringify(config,null,2)});
     await vscode.window.showTextDocument(document);
     return descriptor;
@@ -359,6 +386,7 @@ function activate(context) {
           modelsUpdatedAt: catalogUpdatedAt,
           account: connections.projectAccount(account),
           connection: connections.display(),
+          mcpBridgeRunning:!!mcpBridge,
           authBusy,
           chatWidth:vscode.workspace.getConfiguration('rundix').get('chatWidth','wide'),
           contextDisplay:vscode.workspace.getConfiguration('rundix').get('contextDisplay','percent'),
@@ -1537,6 +1565,7 @@ function activate(context) {
     }
   }
   async function handle(s, msg) {
+    if(msg.action==='mcpPanel'){openMcpEditor();return;}
     if (!msg || typeof msg.action !== "string") return;
     if (!["draft", "history"].includes(msg.action)) s.error = null;
     if(msg.action==='preflight'){
@@ -2740,7 +2769,7 @@ function activate(context) {
         });
       },
     },
-    mcp:{start:startMcp,stop:stopMcp,tasks:()=>mcpTasks,connectPool:connectMcpPool,panelSnapshot:mcpPanelSnapshot,panelAction:handleMcpPanel},
+    mcp:{start:startMcp,stop:stopMcp,tasks:()=>mcpTasks,connectPool:connectMcpPool,panelSnapshot:mcpPanelSnapshot,panelAction:handleMcpPanel,openPanel:openMcpEditor},
     create,
     connect,
     sessions,

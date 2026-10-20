@@ -20,6 +20,12 @@ class WorkbenchTabs {
       window.dispatchEvent(
         new MessageEvent("message", { data: { type: "open", action: kind } }),
       );
+    this.mcp=document.createElement('button');
+    this.mcp.type='button';this.mcp.className='session-mcp quiet-button';this.mcp.textContent='MCP';
+    this.mcp.title=WorkbenchI18n.t('Управление MCP для Claude Code');
+    this.mcp.setAttribute('aria-label',this.mcp.title);
+    this.mcp.onclick=()=>{closeMenus();send('mcpPanel');};
+    this.element.append(this.mcp);
     this.bookmarks = action(
       WorkbenchI18n.t("Закладки ответов"),
       "bookmark",
@@ -47,6 +53,9 @@ class WorkbenchTabs {
   update(state) {
     this.state = state;
     this.element.title = state.name || 'Rundix';
+    this.mcp.classList.toggle('is-running',!!state.mcpBridgeRunning);
+    this.mcp.title=WorkbenchI18n.t('Управление MCP для Claude Code')+' · '+WorkbenchI18n.t(state.mcpBridgeRunning?'Мост запущен':'Мост остановлен');
+    this.mcp.setAttribute('aria-label',this.mcp.title);
     this.bookmarks.classList.toggle("has-bookmarks", !!state.bookmarks?.length);
     this.bookmarks.title =
       WorkbenchI18n.t("Закладки ответов") +

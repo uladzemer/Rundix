@@ -3,6 +3,8 @@
   const api=acquireVsCodeApi(), root=document.getElementById('app');
   let saved=api.getState() || {}, drafts=saved.drafts || {}, selected=saved.selected || null, state=null, pending=false, error='', submission=null, requestId=null;
   const versions={};
+  let configuration=null,copied=false;
+  const configurationText={ru:{title:'Подключение Claude Code',hint:'Эти настройки связывают Claude Code с Rundix. Если сервер rundix уже добавлен, перезапустите сессию Claude Code и проверьте /mcp. VS Code должен оставаться открытым.',copy:'Скопировать настройки',copied:'Настройки скопированы'},en:{title:'Connect Claude Code',hint:'These settings connect Claude Code to Rundix. If rundix is already registered, restart your Claude Code session and check /mcp. VS Code must remain open.',copy:'Copy configuration',copied:'Configuration copied'}};
   const words={
     en:{title:'MCP tasks',subtitle:'Claude Code → Codex',pool:'Connection',local:'Select a companion pool',ready:'Connected',unchecked:'Not checked',bridgeOn:'MCP bridge running',bridgeOff:'MCP bridge stopped',connect:'Connect pool',start:'Start MCP',stop:'Stop MCP',config:'Claude configuration',refresh:'Refresh',empty:'No MCP tasks yet. Start the bridge and submit a task from Claude Code.',open:'Open chat',cancel:'Cancel task',follow:'Continue in the same chat',placeholder:'Clarification or next step…',send:'Send continuation',report:'Final report',result:'Result',files:'Changed files',checks:'Checks performed',issues:'Remaining issues',none:'None reported',approval:'Approval required — open the chat to review the request, or answer in Claude Code.',recovery:'Execution requires verification. Inspect the chat before continuing.',offline:'Tasks are paused while the bridge is stopped.',failed:'Action failed. Check the selected connection, workspace trust and task state.',queued:'Queued',running:'Running',waiting_approval:'Waiting for approval',completed:'Completed',error:'Error',cancelled:'Cancelled',working:'Working…',copy:'Task ID',context:'VS Code must remain open. Tasks use the selected companion and its server limits.'},
     ru:{title:'Задачи MCP',subtitle:'Claude Code → Codex',pool:'Подключение',local:'Выберите companion с рабочим пулом',ready:'Подключено',unchecked:'Не проверено',bridgeOn:'Мост MCP запущен',bridgeOff:'Мост MCP остановлен',connect:'Подключить пул',start:'Запустить MCP',stop:'Остановить MCP',config:'Конфигурация Claude',refresh:'Обновить',empty:'Задач MCP пока нет. Запустите мост и отправьте задачу из Claude Code.',open:'Открыть чат',cancel:'Отменить задачу',follow:'Продолжить в том же чате',placeholder:'Уточнение или следующий шаг…',send:'Отправить уточнение',report:'Итоговый отчёт',result:'Результат',files:'Изменённые файлы',checks:'Выполненные проверки',issues:'Оставшиеся проблемы',none:'Не указаны',approval:'Требуется подтверждение — откройте чат для проверки запроса или ответьте в Claude Code.',recovery:'Нужно проверить исполнение. Просмотрите чат перед продолжением.',offline:'Задачи приостановлены, пока мост остановлен.',failed:'Действие не выполнено. Проверьте подключение, доверие рабочей области и состояние задачи.',queued:'В очереди',running:'Выполняется',waiting_approval:'Ожидает подтверждения',completed:'Завершена',error:'Ошибка',cancelled:'Отменена',working:'Выполняется…',copy:'ID задачи',context:'VS Code должен оставаться открытым. Задачи используют выбранный companion и его серверные лимиты.'}
@@ -27,6 +29,10 @@
       element('p',state.connected?t('ready'):t('unchecked'),'muted'),element('p',state.bridgeRunning?t('bridgeOn'):t('bridgeOff'),'bridge-status'));
     const controls=element('div',undefined,'actions');controls.append(button(t('connect'),'connectPool'),button(t('start'),'start',{},state.bridgeRunning),button(t('stop'),'stop',{},!state.bridgeRunning),button(t('config'),'configuration',{},!state.bridgeRunning),button(t('refresh'),'refresh'));
     connection.append(controls,element('p',t('context'),'muted'));root.append(connection);
+    if(configuration){
+      const labels=configurationText[state.language==='ru'?'ru':'en'],section=element('section',undefined,'claude-configuration');
+      section.append(element('h2',labels.title),element('p',labels.hint,'muted'),element('pre',JSON.stringify(configuration,null,2),'configuration-json'),button(copied?labels.copied:labels.copy,'copyConfiguration',{},!state.bridgeRunning));root.append(section);
+    }
     if(error || pending){const alert=element('p',pending?t('working'):t('failed'),'alert');alert.setAttribute('role','status');root.append(alert);}
     const tasks=state.tasks || [];
     if(!tasks.length){root.append(element('p',t('empty'),'empty'));return;}
@@ -71,6 +77,7 @@
     if(message?.type==='mcpResult'){
       if(pending && message.requestId!==requestId)return;
       pending=false;error=message.ok?'':'failed';
+      if(message.ok && message.configuration){configuration=message.configuration;copied=message.action==='copyConfiguration';}
       if(message.ok && message.action==='continue' && submission?.taskId===message.taskId && submission.version===(versions[message.taskId] || 0)){delete drafts[message.taskId];persist();}
       submission=null;requestId=null;
       render();

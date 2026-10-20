@@ -28,7 +28,8 @@
   ],
   "activationEvents": [
     "onWebviewPanel:rundix.session",
-    "onStartupFinished"
+    "onStartupFinished",
+    "onWebviewPanel:rundix.mcp"
   ],
   "contributes": {
     "commands": [

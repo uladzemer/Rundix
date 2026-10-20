@@ -49,6 +49,21 @@ Compatible companion extensions can add another connection. Select one through `
 
 Control Rundix from Claude Code through the optional [local MCP bridge](https://github.com/uladzemer/Rundix/blob/main/standalone/docs/mcp.md). Click **MCP** at the top of the chat to open its controls, tasks and copyable Claude configuration. VS Code must remain open and an installed companion connection must be selected.
 
+### Claude Code and Codex working together
+
+With the bridge running, Claude Code can hand coding tasks to Codex and supervise them without polling:
+
+- `submit_task` opens a visible Codex chat for the task (titled `MCP · <task>`, in focus mode); `list_models` lets Claude pick model and reasoning effort per task.
+- `wait_task` / `wait_tasks`, or the launcher's background `--wait` mode, wake Claude when a task finishes or needs a decision. Codex asks its questions to Claude, which answers with `continue_task`.
+- Tasks for different projects or git worktrees run in parallel; `close_task` closes finished task tabs and `reload_window` applies an updated build.
+
+Useful user settings (read only from your user settings, never from a repository):
+
+- `rundix.mcpAccessMode` — access mode of task chats: `workspace` (default), `manual`, `auto` or `full` (no approval requests; Codex can change files and use the network outside the project).
+- `rundix.mcpMaxParallelTasks` — how many tasks run at once (default 3).
+- `rundix.mcpThreadConfig` — Codex config overrides for task chats only, for example to disable browser or computer-use helpers that unattended tasks do not need and that keep task folders in use on Windows.
+- `"workbench.editor.tabSizing": "fixed"` — keeps tabs narrow while hovering a task tab shows its description.
+
 ## What's new and feedback
 
 See the [changelog](https://github.com/uladzemer/Rundix/blob/main/standalone/CHANGELOG.md) for version notes. Install and update through **Microsoft Marketplace**.
@@ -89,6 +104,21 @@ Rundix может установить и обновлять официальн�
 Звуки завершения, Telegram и локальные Stop-скрипты включаются по желанию. Telegram выключен до настройки; после включения он отправляет итоговый ответ в выбранный чат. Stop-скрипты выполняются с вашими правами. Экспериментальная подготовка задачи запрашивает явное согласование перед выполнением.
 
 Совместимый дополнительный модуль может предоставить другой способ подключения. Выберите его через `/account` → **Настройки подключения**. Если выбранный модуль недоступен, Rundix сохранит черновик и сообщит об ошибке до отправки.
+
+### Claude Code и Codex вместе
+
+Через [локальный мост MCP](https://github.com/uladzemer/Rundix/blob/main/standalone/docs/mcp.md) Claude Code отдаёт Codex задачи и ведёт их без ручного опроса:
+
+- `submit_task` открывает видимый чат Codex для задачи (заголовок `MCP · <задача>`, фокус-режим); `list_models` позволяет выбрать модель и глубину рассуждения под задачу.
+- `wait_task` / `wait_tasks` или фоновый режим `--wait` будят Claude, когда задача завершилась или нужен выбор. Вопросы Codex приходят Claude, он отвечает через `continue_task`.
+- Задачи разных проектов или git worktree идут параллельно; `close_task` закрывает вкладки завершённых задач, `reload_window` применяет обновлённую сборку.
+
+Полезные пользовательские настройки (читаются только из ваших настроек, не из репозитория):
+
+- `rundix.mcpAccessMode` — режим доступа чатов задач: `workspace` (по умолчанию), `manual`, `auto` или `full` (без запросов разрешений; Codex может менять файлы и пользоваться сетью вне проекта).
+- `rundix.mcpMaxParallelTasks` — сколько задач выполняется одновременно (по умолчанию 3).
+- `rundix.mcpThreadConfig` — переопределения конфигурации Codex только для чатов задач, например отключение браузерных и computer-use помощников, которые не нужны автоматическим задачам и на Windows держат папки задач.
+- `"workbench.editor.tabSizing": "fixed"` — вкладки остаются узкими, а при наведении на вкладку задачи видно её описание.
 
 ### Демонстрация и обратная связь
 

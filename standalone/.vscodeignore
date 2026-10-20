@@ -51,6 +51,7 @@
 !runtime/mcp-executor.cjs
 !runtime/mcp-bridge.cjs
 !runtime/mcp-server.cjs
+!runtime/mcp-delivery.cjs
 !runtime/task-directory.cjs
 !docs/mcp.md
 !runtime/connection-companions.cjs

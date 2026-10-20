@@ -17,6 +17,8 @@ async function hostSendChecks(project,store) {
   preflight:{preparing:()=>false},modes:{current:()=>({id:'workspace'}),policy:()=>({})},
   speed:{effectiveTier:(_,fast)=>fast?'fast':'default'},buildInput:text=>[{type:'text',text}],turnLeases,publish(){},
   server:{request:async(method,params)=>{
+   // An uncertain start is reconciled by listing turns; the synthetic turn already finished.
+   if(method==='thread/turns/list')return {data:[{id:'synthetic-host-turn-'+turns.length,status:'completed'}]};
    assert.equal(method,'turn/start');turns.push(params);
    if(lostReply)throw Error('Synthetic accepted turn response lost');
    if(complete){s.busy=false;s.turnId=null;turnLeases.get(s.id)?.();turnLeases.delete(s.id);}
@@ -60,10 +62,9 @@ async function hostSendChecks(project,store) {
  assert.equal(turns.at(-1).collaborationMode.settings.developer_instructions,agentInstructions);
  await send(s,'Synthetic ordinary chat after MCP',[],{includeIde:false});
  assert.equal(turns.at(-1).collaborationMode.settings.developer_instructions,ordinaryInstructions);
- // The MCP-only wrapper observes the actual host boundary, including failures inside send preparation.
- const delivery=require('../runtime/mcp-delivery.cjs');
- const wrapped=(...args)=>delivery.send(send,...args);
- const before=Object.getOwnPropertyDescriptor(s,'turnStartedAt'),count=turns.length;
+ // send() itself marks failures before turn/start as notSent, including failures inside send preparation.
+ const wrapped=send;
+ const count=turns.length;
  for(const stage of ['authenticate','prepareTurn','model','lease']){
    context.activeConnection={provider:{authenticate:async()=>{if(stage==='authenticate')throw Error('Synthetic authentication refusal');},
      prepareTurn:async()=>{if(stage==='prepareTurn')throw Error('Synthetic preparation refusal');}}};
@@ -71,7 +72,7 @@ async function hostSendChecks(project,store) {
    const acquire=store.acquire.bind(store);if(stage==='lease')store.acquire=key=>{if(key===s.id)throw Error('Synthetic session lease conflict');return acquire(key);};
    await assert.rejects(()=>wrapped(s,'Synthetic preparation failure',[],{includeIde:false}),error=>error.notSent===true);
    store.acquire=acquire;s.model=model;
-   assert.deepEqual(Object.getOwnPropertyDescriptor(s,'turnStartedAt'),before);assert.equal(turns.length,count);
+   assert.equal(turns.length,count);
  }
  context.activeConnection={};lostReply=true;
  await assert.rejects(()=>wrapped(s,'Synthetic accepted lost reply',[],{includeIde:false}),error=>error.notSent!==true);

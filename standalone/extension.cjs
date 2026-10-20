@@ -276,7 +276,7 @@ function activate(context) {
         mcpTasks=new McpTasks({store:new SessionStore(path.join(root,'tasks')),directoryStore:store,
           maxParallel:()=>vscode.workspace.getConfiguration('rundix').inspect('mcpMaxParallelTasks')?.globalValue ?? 3,
           adapter:mcpExecutor({connections,sessions,store,create,
-            send:(...args)=>require('./runtime/mcp-delivery.cjs').send(send,...args),
+            send,
             resume,handle,pending:pendingRequests,save,alive:()=>!disposed && !!mcpBridge,
             closeTab,
             // Lets the agent client apply an installed update itself; busy chats are protected unless forced.
@@ -1364,6 +1364,8 @@ function activate(context) {
       if(actual!==leasedDirectory){const next=taskDirectory.acquire(store,actual,options.taskId);directoryLease?.();directoryLease=next;leasedDirectory=actual;}
     };
     s.sendingTask=true;
+    // Everything thrown before turn/start is requested provably sent nothing; callers may retry or re-answer.
+    let turnRequested=false;
     try {
     if (s.busy)
       throw Error(locale.t("Дождитесь ответа или остановите текущую задачу."));
@@ -1500,6 +1502,7 @@ function activate(context) {
     s.turnStartedAt=Date.now();
     publish(s);
     try {
+      turnRequested=true;
       const result = await client.request("turn/start", {
         threadId: s.id,
         serviceTierForTurn:serviceTier,
@@ -1563,6 +1566,9 @@ function activate(context) {
     } finally {
       publish(s);
     }
+    } catch (error) {
+      if (!turnRequested && error && typeof error === 'object') error.notSent = true;
+      throw error;
     } finally { s.sendingTask=false;directoryLease?.();accountLease(); }
   }
   async function preparationConfig(s){

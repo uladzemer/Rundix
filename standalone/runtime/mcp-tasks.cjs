@@ -327,7 +327,7 @@ class McpTasks {
           catch { if (this.closed) return; task.state='error';task.recoveryRequired=true;task.needsReconcile=true;task.error='Chat status unavailable. Restore the connection and explicitly continue after inspecting the chat.';this.save(task);continue; }
           if (this.closed) return;
           this.update(task, ()=>{
-            if(task.state==='error' && task.recoveryRequired && !status.answerUnknown)task.error=null;
+            if(task.state==='error' && task.recoveryRequired && !status.answerUnknown)task.error=status.error || null;
             task.pendingIds=this.adapter.pending(task).map(r=>String(r.id));
             if (status.chatId) task.chatId=status.chatId;
             if(status.answerUnknown){task.state='error';task.recoveryRequired=true;task.progress=status.progress;}

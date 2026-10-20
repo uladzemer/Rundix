@@ -2,11 +2,12 @@
 // persistent sign-in operations. Delays exercise stale authentication callbacks.
 const readline = require('node:readline');
 const methods = [];
+const refreshReplies = [];
 const output = value => process.stdout.write(JSON.stringify(value) + '\n');
 readline.createInterface({input:process.stdin}).on('line', line => {
   const message = JSON.parse(line);
   if (message.id === undefined) return;
-  if (!message.method && message.id === 'synthetic-refresh-request') { methods.push('synthetic-refresh-answered'); return; }
+  if (!message.method && message.id === 'synthetic-refresh-request') { methods.push('synthetic-refresh-answered');refreshReplies.push(message); return; }
   methods.push(message.method);
   if (message.method === 'thread/read' && message.params.threadId === 'synthetic-refresh')
     output({id:'synthetic-refresh-request', method:'account/chatgptAuthTokens/refresh', params:{reason:'synthetic-refresh'}});
@@ -18,7 +19,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
     result = {type:message.params.chatgptAccountId === 'synthetic-wrong-type' ? 'chatgpt' : 'chatgptAuthTokens'};
   }
   if (message.method === 'account/read') result = {account:{type:'chatgpt'}};
-  if (message.method === 'config/read') result = {methods:[...methods], codexHome:process.env.CODEX_HOME};
+  if (message.method === 'config/read') result = {methods:[...methods], refreshReplies, codexHome:process.env.CODEX_HOME};
   if (message.method === 'turn/start') result = {turn:{id:'synthetic-turn'}};
   const reply = () => output({id:message.id, result});
   if (message.params?.chatgptAccountId === 'synthetic-delay' || message.params?.threadId === 'synthetic-delay') setTimeout(reply, 80);

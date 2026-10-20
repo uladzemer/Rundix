@@ -112,6 +112,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       }
       if (task.cancelRequested || disposed) { provider.releaseReserved(outcome.grant); throw Object.assign(actionRequired(), {notSent:true, deliveryUncertain:false}); }
       const row = {threadId:params.threadId, taskId:task.taskId, grant:outcome.grant, completed:new Set()}; runs.set(params.threadId, row);
+      delete task.providerFailureCode;
       try {
         const result = await provider.dispatchTurn(outcome.grant, params); row.turnId = result.turn.id;
         delete task.waitId; task.waitingLimit = null;
@@ -150,8 +151,25 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
   mcp = createMcpHost({core, storageRoot:root, trusted:() => true, settings, clock, transport,
     ui:{hasChat:() => false}, taskOptions, decorateAdapter:adapter => {
       adapter.cancelWait = task => provider.cancelWait({taskId:task.taskId, spaceId:task.space, waitId:task.waitId});
+      const status = adapter.status;
+      adapter.status = async task => {
+        const value = await status(task);
+        return task.providerFailureCode ? {...value, failed:true, answerUnknown:!value.done,
+          error:'action_required: Open companion connection settings and reconnect.', progress:'Provider action required'} : value;
+      };
       return decorateAdapter ? decorateAdapter(adapter) : adapter;
     }});
+  provider.on('actionRequired', ({code, turns}) => {
+    if (disposed) return;
+    for (const {taskId, turnLeaseId} of turns) {
+      const row = [...runs.values()].find(value => value.taskId === taskId && value.grant.leaseId === turnLeaseId);
+      const task = row && mcp.tasks.tasks.get(taskId);
+      if (!task) continue;
+      task.providerFailureCode = code; task.state = 'error'; task.recoveryRequired = true;
+      task.error = 'action_required: Open companion connection settings and reconnect.';
+      task.progress = 'Provider action required'; mcp.tasks.save(task);
+    }
+  });
   try { await mcp.start(); } catch (error) { core.state.disposed = true; throw error; }
   logger({code:'service_started'});
   return {core, mcp, provider, settings, logger,

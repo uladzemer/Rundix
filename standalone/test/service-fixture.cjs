@@ -3,7 +3,7 @@ const {spawn} = require('node:child_process');
 const {once} = require('node:events');
 const {install} = require('./service-provider-fixture.cjs');
 const {ServiceAppServer} = require('../runtime/service-cli.cjs');
-function fixture(root, {installed = install(root), observeCli = () => {}} = {}) {
+function fixture(root, {installed = install(root), observeCli = () => {}, cliEnv = {}} = {}) {
   const children = [];
   const launch = (exe, argv, options) => {
     const child = spawn(exe, argv, options); children.push({child, closed:once(child, 'close')}); return child;
@@ -13,7 +13,7 @@ function fixture(root, {installed = install(root), observeCli = () => {}} = {}) 
       spawnProcess:(_exe, argv, childOptions) => {
         if (!argv.includes('cli_auth_credentials_store="ephemeral"')) throw Error('Missing ephemeral config');
         observeCli({ephemeral:true});
-        return launch(process.execPath, [path.join(__dirname, 'fake-headless-cli.cjs')], childOptions);
+        return launch(process.execPath, [path.join(__dirname, 'fake-headless-cli.cjs')], {...childOptions, env:{...childOptions.env, ...cliEnv}});
       }})}};
   return {installed, hostOptions, children, async close() {
     for (const value of children) value.child.kill(); await Promise.allSettled(children.map(value => value.closed));

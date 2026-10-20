@@ -255,6 +255,19 @@ class ServiceAppServer extends EventEmitter {
     this.#requests.delete(String(id)); this.#claimedRequests.delete(String(id));
     return this.#cli.respond(id, result);
   }
+  refuseProvider(id, code, fence) {
+    const request = this.#requests.get(String(id));
+    if (!this.#cli || !request || !this.#claimedRequests.has(String(id)) || request.method !== 'account/chatgptAuthTokens/refresh' ||
+        !sameFence(fence, this.fence)) throw unavailable('connection_changed');
+    const numeric = {AUTH_REQUIRED:-32001, AUTH_REVOKED:-32002, PROVIDER_PROCESS_UNCERTAIN:-32003}[code] || -32000;
+    this.#requests.delete(String(id)); this.#claimedRequests.delete(String(id));
+    // Consume before sending. A lost error ACK never permits refresh replay.
+    this.invalidateProvider();
+    return this.#cli.respond(id, null, {code:numeric, message:'Provider access is unavailable. Open connection settings and reconnect.', data:{code}});
+  }
+  ownsProviderRequest(request, fence) {
+    return this.#requests.get(String(request?.id)) === request && this.#claimedRequests.has(String(request?.id)) && sameFence(fence, this.fence);
+  }
   respond(id, result, error) {
     if (!this.#cli) return false;
     // A negative reply can always release a pending request. Positive replies

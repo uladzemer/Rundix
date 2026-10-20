@@ -89,8 +89,9 @@ class ServiceProvider extends EventEmitter {
     });
     cli.on('request', request => {
       if (request.method === 'account/chatgptAuthTokens/refresh') {
+        const fence = cli.fence;
         void this.handleRequest(request).catch(() => {
-          if (this.#cli === cli) { cli.respond(request.id, null, {code:-32000, message:'Provider access is unavailable.'}); cli.invalidateProvider(); }
+          if (this.#cli === cli) {try {this.#refuseRefresh(cli, request, 'PROVIDER_PROCESS_UNCERTAIN', fence);} catch {}}
         });
       }
     });
@@ -199,6 +200,7 @@ class ServiceProvider extends EventEmitter {
       return result;
     } catch (error) {
       this.#cli?.invalidateProvider();
+      if (method === 'handleRequest' && UNAVAILABLE_CODES.includes(error?.code)) throw actionRequired(error.code);
       if (['STALE_FENCE', 'INVALID_REVISION_STEP', 'METHOD_NOT_SUPPORTED'].includes(error?.code)) throw error;
       throw error?.reason === 'action_required' ? error : actionRequired('PROVIDER_UNAVAILABLE');
     } finally {
@@ -367,12 +369,33 @@ class ServiceProvider extends EventEmitter {
     if (!cli.claimProviderRequest(request)) return false;
     // This does not acquire the prepare mutex or idle grant. A busy prepare can
     // require refresh itself; serializing them would deadlock authorization.
-    const result = await this.#call('handleRequest', {request}, {fence});
+    let result;
+    try { result = await this.#call('handleRequest', {request}, {fence}); }
+    catch (error) {
+      result = unavailable(UNAVAILABLE_CODES.includes(error?.code) ? error.code : 'PROVIDER_PROCESS_UNCERTAIN');
+    }
+    const refusal = result.kind === 'unavailable' && validUnavailable(result) ? result.code
+      : result.kind === 'cliResponse' && result.requestId === request.id && isObject(result.response) &&
+        ['AUTH_REQUIRED', 'AUTH_REVOKED'].includes(result.response.code) && typeof result.response.messageKey === 'string' &&
+        Object.keys(result.response).every(key => ['code', 'messageKey'].includes(key)) ? result.response.code : null;
+    if (refusal) {
+      if (!equal(cli.fence, fence)) throw rpcError('STALE_FENCE');
+      return this.#refuseRefresh(cli, request, refusal, fence);
+    }
     if (result.kind !== 'cliResponse' || result.requestId !== request.id || !isObject(result.response) ||
         !['accessToken', 'chatgptAccountId'].every(key => typeof result.response[key] === 'string' && !!result.response[key]) ||
         (result.response.chatgptPlanType !== undefined && typeof result.response.chatgptPlanType !== 'string') ||
         Object.keys(result.response).some(key => !['accessToken', 'chatgptAccountId', 'chatgptPlanType'].includes(key)) || !equal(cli.fence, fence)) throw rpcError('STALE_FENCE');
     return cli.respondProvider(request.id, result.response, fence);
+  }
+  #refuseRefresh(cli, request, code, fence) {
+    if (this.#cli !== cli || !cli.ownsProviderRequest(request, fence)) return false;
+    try { return cli.refuseProvider(request.id, code, fence); }
+    finally {
+      const account = this.#account; this.#account = null;
+      try {this.#revoke(account);}
+      finally {this.emit('actionRequired', {code, turns:[...this.#turns.values()].map(grant => ({taskId:grant.taskId, turnLeaseId:grant.leaseId}))});}
+    }
   }
   async configureByClient(params) {
     if (this.#turns.size || this.#idle || this.#preparing || this.#configurationPending || params.expectedSelectionRevision !== this.#selectionRevision) throw rpcError('STALE_FENCE');

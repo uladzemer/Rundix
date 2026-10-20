@@ -224,7 +224,7 @@ The original normative prose does not settle every concrete payload choice.
 | Public status `{status,counts?}` vs `{authenticated,activeTurns,preparing}` | Public status validates/projects the three companion fields; optional numeric method `counts` remain a synthetic diagnostics extension. |
 | Current public nested grants, idle/account binding lifecycle, opaque generation, terminal payloads | Retained unchanged. Owner correction: the private provider now follows the current public contract; the former item-6 reshaping is cancelled. |
 | Candidate scan login followed by waitUntil/unavailable | Public driver now accepts validated prepare outcomes after login and routes them through the existing task-state table. Quota waits retain confirmed login evidence but create no turn grant; action-required closes the turn gate. |
-| Refresh provider refusal | Public forwarding fix tracked separately below; arbitrary diagnostic/credential payloads must never be forwarded or logged. |
+| Refresh provider refusal | Implemented below: fixed error response, account invalidation, no refresh replay. Arbitrary diagnostic/credential payloads are never forwarded or logged. |
 
 The owner reports that the private provider now passes integration against the
 current public ServiceProvider/ServiceAppServer. This repository's checks remain
@@ -399,3 +399,34 @@ Malformed waits, unsupported outcomes and invalid revisions still fail closed.
 Synthetic provider cases cover same/changed account, waitUntil, every unavailable
 code and malformed wait identity. Real-IPC task tests verify waiting_limit versus
 error/action_required, no wake before wait timeout, no active grant, and cancellation.
+
+
+## Refresh refusal forwarding
+
+A successful handleRequest result may contain
+`{kind:"cliResponse",requestId,response:{code:"AUTH_REQUIRED"|"AUTH_REVOKED",messageKey:string}}`
+instead of token fields. Only these refusal fields are allowed, never mixed with
+accessToken. The requestId must match, including its original numeric/string type.
+The existing unavailable outcome is also a refusal. RPC/pre-check failures map to
+PROVIDER_PROCESS_UNCERTAIN when no supported public unavailable code is available.
+The existing RPC framing and nested grant/callback shapes are unchanged.
+
+The CLI receives a JSON-RPC error with a fixed message and public code in
+`error.data.code`; numeric mappings are AUTH_REQUIRED=-32001, AUTH_REVOKED=-32002,
+PROVIDER_PROCESS_UNCERTAIN=-32003, other supported unavailable codes=-32000.
+Provider messageKey/text is never rendered, logged or forwarded. The outstanding
+refresh is consumed before replying, with exact generation/binding checks. It is
+never retried. Account proof/grant becomes unusable, while live/uncertain turn
+grants stay reserved until typed terminal evidence.
+
+The headless host persists action_required on affected tasks, wakes waiters and
+keeps recoveryRequired until terminal reconciliation. A terminal error retains
+that action-required text and cannot drain queued continuations. A later explicit
+continuation still needs fresh authentication/admission. Tests cover both refusal
+codes, unavailable, RPC refusal, exactly one safe CLI error and real-IPC task
+snapshots before and after terminal. All fixtures are synthetic.
+
+Read-only review of these two fixes reported no outstanding confirmed findings.
+It found terminal reconciliation clearing the action-required text; that was
+fixed and covered by the real-IPC test. The final focused round reran wrong-ID,
+mixed token/refusal and lost-reply cases, verifying no duplicate fallback reply.

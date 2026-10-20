@@ -5,6 +5,10 @@ const threads = new Map(); let sequence = 0, turnSequence = 0;
 const output = message => process.stdout.write(JSON.stringify(message) + '\n');
 readline.createInterface({input:process.stdin}).on('line', line => {
   const message = JSON.parse(line);
+  if (message.id === 'synthetic-refresh-request' && !message.method) {
+    if (!message.error) throw Error('Synthetic refresh expected refusal');
+    return;
+  }
   if (!message.method || message.id === undefined) return;
   const params = message.params || {}; let result = {};
   if (message.method === 'account/login/start') result = {type:'chatgptAuthTokens'};
@@ -24,6 +28,11 @@ readline.createInterface({input:process.stdin}).on('line', line => {
     const turn = {id:'synthetic-turn-' + ++turnSequence, status:'inProgress'}; thread.turns.push(turn);
     output({id:message.id, result:{turn}});
     output({method:'turn/started', params:{threadId:thread.id, turn:{...turn}}});
+    if (process.env.RUNDIX_SYNTHETIC_REFRESH === '1') {
+      output({id:'synthetic-refresh-request', method:'account/chatgptAuthTokens/refresh', params:{reason:'synthetic-refresh'}});
+      setTimeout(() => {turn.status = 'failed';output({method:'turn/completed', params:{threadId:thread.id, turn:{...turn}}});}, 250);
+      return;
+    }
     setTimeout(() => {
       if (turn.status !== 'inProgress') return;
       const item = {id:'synthetic-report-' + turn.id, turnId:turn.id, type:'agentMessage',

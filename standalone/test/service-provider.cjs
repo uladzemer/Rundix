@@ -123,6 +123,27 @@ async function main() {
     assert.equal(badRefresh.provider.activeTurns, 1);
     badRefresh.provider.terminal({turnLeaseId:refreshing.grant.leaseId, taskId:'bad-refresh', runId:refreshing.grant.runId, turnId:'synthetic-turn'});
     await badRefresh.provider.dispose();
+    for (const [scenario, code, numeric, lostAck] of [['refresh-refuse-AUTH_REQUIRED','AUTH_REQUIRED',-32001], ['refresh-refuse-AUTH_REVOKED','AUTH_REVOKED',-32002], ['refresh-unavailable','PROVIDER_PROCESS_UNCERTAIN',-32003], ['refresh-rpc-refusal','PROVIDER_PROCESS_UNCERTAIN',-32003], ['refresh-wrong-id','PROVIDER_PROCESS_UNCERTAIN',-32003], ['refresh-mixed-refusal','PROVIDER_PROCESS_UNCERTAIN',-32003], ['refresh-refuse-AUTH_REQUIRED','AUTH_REQUIRED',-32001,true]]) {
+      const refused = await create(scenario + (lostAck ? '-lost-ack' : '')); await refused.provider.authenticate(); await refused.configure(scenario);
+      if (lostAck) {const original = refused.cli.refuseProvider.bind(refused.cli);refused.cli.refuseProvider = (...args) => {original(...args);throw Error('Synthetic reply outcome lost');};}
+      const admitted = await refused.provider.prepareTurn(task('refused'));
+      await refused.provider.dispatchTurn(admitted.grant, {threadId:'synthetic-thread'});
+      const event = once(refused.provider, 'actionRequired'); let captured;
+      refused.cli.on('request', request => {captured = request;});
+      await refused.cli.request('thread/read', {threadId:'synthetic-refresh'}); await event;
+      let observed;
+      for (let attempt = 0; attempt < 30; attempt++) {observed = await refused.cli.request('config/read');if (observed.refreshReplies.length) break;await pause(5);}
+      assert.equal(observed.refreshReplies.length, 1);
+      assert.deepEqual(observed.refreshReplies[0].error, {code:numeric, message:'Provider access is unavailable. Open connection settings and reconnect.', data:{code}});
+      assert(!JSON.stringify(observed).includes('SYNTHETIC_PRIVATE_DIAGNOSTIC'));
+      assert(!JSON.stringify(observed).includes('SYNTHETIC_MUST_NOT_ESCAPE'));
+      assert(!refused.cli.authenticated);assert.equal(refused.provider.accountGrant, null);assert.equal(refused.provider.activeTurns, 1);
+      assert.equal(await refused.provider.handleRequest(captured), false, 'Never replay a claimed refresh');
+      assert.equal((await refused.provider.status()).counts.handleRequest, 1);
+      await assert.rejects(refused.cli.request('turn/start', {}), {code:'connection_unavailable'});
+      refused.provider.terminal({turnLeaseId:admitted.grant.leaseId, taskId:'refused', runId:admitted.grant.runId, turnId:'synthetic-turn'});
+      await refused.provider.dispose();
+    }
     const badStatus = await create('bad-status'); await badStatus.configure('bad-status');
     await assert.rejects(badStatus.provider.status(), {code:'PROVIDER_PROTOCOL_INVALID'}); await badStatus.provider.dispose();
     const altered = await create('altered-config'); await altered.provider.authenticate();

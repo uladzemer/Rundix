@@ -58,6 +58,12 @@ const peer = new ProviderPeer({readable:process.stdin, writable:process.stdout, 
   if (method === 'handleRequest') {
     counts.handleRequest++;
     releasePrepare?.(); releasePrepare = null;
+    if (scenario.startsWith('refresh-refuse-')) return {kind:'cliResponse', requestId:params.request.id,
+      response:{code:scenario.slice(15), messageKey:'SYNTHETIC_PRIVATE_DIAGNOSTIC'}};
+    if (scenario === 'refresh-unavailable') return {kind:'unavailable', code:'PROVIDER_PROCESS_UNCERTAIN', retryable:false, retryAfterMs:0, messageKey:'SYNTHETIC_PRIVATE_DIAGNOSTIC'};
+    if (scenario === 'refresh-rpc-refusal') throw rpcError('STALE_FENCE');
+    if (scenario === 'refresh-wrong-id') return {kind:'cliResponse', requestId:'foreign-request', response:{code:'AUTH_REQUIRED',messageKey:'synthetic.auth'}};
+    if (scenario === 'refresh-mixed-refusal') return {kind:'cliResponse', requestId:params.request.id, response:{code:'AUTH_REQUIRED',accessToken:'SYNTHETIC_MUST_NOT_ESCAPE',messageKey:'synthetic.auth'}};
     return {kind:'cliResponse', requestId:params.request.id,
       response:{accessToken:'SYNTHETIC_REFRESH_NOT_A_CREDENTIAL', chatgptAccountId:scenario === 'refresh-other-account' ? 'synthetic-other-account' : 'synthetic-account', chatgptPlanType:'plus'}};
   }

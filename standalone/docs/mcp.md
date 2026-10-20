@@ -40,6 +40,12 @@ The panel displays up to 100 recent tasks, state, directory and report. **Open c
 
 Each task opens a visible Rundix chat titled `MCP · <first line of the description>`. Its access mode comes from the user setting **Rundix: Mcp Access Mode** (`rundix.mcpAccessMode`): `workspace` (default, asks for extended actions), `manual`, `auto` (Codex automatic review) or `full`. With `full`, Codex may change files and use the network outside the project without approval requests, so `pendingRequests` normally stays empty. The mode is applied once, when the task's chat is created; continuations keep whatever mode the chat has, including changes you make in the chat. The value is read only from your user settings: workspace settings of a repository cannot grant MCP access. Plan mode is not offered because MCP tasks run unattended.
 
+`rundix.mcpThreadConfig` (user settings only) is sent as the per-thread Codex `config` of MCP task chats on `thread/start` and `thread/resume`; ordinary chats are unaffected. Codex starts the MCP servers and plugins from `~/.codex/config.toml` for every thread with the thread's folder as their working directory, and some of them (for example the computer-use `node_repl` server and the browser/computer-use plugins) keep running after the task, so on Windows the task's worktree cannot be removed until VS Code reloads. Disabling the ones unattended tasks do not need avoids that, for example:
+
+```json
+"rundix.mcpThreadConfig": {"mcp_servers": {"node_repl": {"enabled": false}}, "plugins": {"browser@openai-bundled": {"enabled": false}, "computer-use@openai-bundled": {"enabled": false}}}
+```
+
 ## Tools
 
 Every mutation requires a caller-generated, globally unique `requestId` (for example a UUID). On timeout, resend **identical arguments with the same ID**. Reusing an ID with different arguments fails. JSON-RPC transport IDs are not task idempotency keys.

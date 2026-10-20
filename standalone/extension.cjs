@@ -879,6 +879,7 @@ function activate(context) {
       usageModel: s.usageModel,
       usageStale: !!s.usageStale,
       lastTurnStatus:s.lastTurnStatus,
+      mcpTask:!!s.mcpTask,
     };
     const written = store.saveSession(record, s.persistedRecord);
     for (const key of Object.keys(record))
@@ -1224,6 +1225,12 @@ function activate(context) {
     await saveHost(host);
     treeEvents.fire();
   }
+  // Per-thread Codex config for MCP task chats only, from the user's own settings (for example disabling helpers that pin the task folder).
+  function mcpThreadConfig(s) {
+    if(!s.mcpTask)return null;
+    const value=vscode.workspace.getConfiguration('rundix').inspect('mcpThreadConfig')?.globalValue;
+    return value && typeof value==='object' && !Array.isArray(value) && Object.keys(value).length?value:null;
+  }
   async function resume(s, id) {
     if (s.loading) return s.loading;
     s.loading = resumeThread(s, id);
@@ -1248,7 +1255,7 @@ function activate(context) {
     const result = await server.request("thread/resume", {
       threadId: id,
       excludeTurns: true,
-      ...(s.preflight?.enabled?{config:await preparationConfig(s),...(preflight.preparing(s.preflight)?{sandbox:'read-only',approvalPolicy:'never'}:{})}:{}),
+      ...(s.preflight?.enabled?{config:await preparationConfig(s),...(preflight.preparing(s.preflight)?{sandbox:'read-only',approvalPolicy:'never'}:{})}:mcpThreadConfig(s)?{config:mcpThreadConfig(s)}:{}),
     });
     s.id = id;
     s.cwd = result.thread.cwd || s.cwd;
@@ -1385,7 +1392,7 @@ function activate(context) {
         approvalsReviewer,
         sandbox: policy.sandbox,
         serviceTier:serviceTier==='default'?null:serviceTier,
-        ...(s.preflight?.enabled?{config:await preparationConfig(s)}:{}),
+        ...(s.preflight?.enabled?{config:await preparationConfig(s)}:mcpThreadConfig(s)?{config:mcpThreadConfig(s)}:{}),
       });
       s.id = result.thread.id;
       s.cwd = result.thread.cwd || s.cwd;

@@ -28,6 +28,7 @@
   "configuration.mcpAccessMode.manual": "Вручную: чтение без изменений; запись требует разрешения.",
   "configuration.mcpAccessMode.auto": "Подтверждать за меня: запросы разрешений проверяет автоматическая проверка Codex.",
   "configuration.mcpAccessMode.full": "Полный доступ: файлы и сеть, включая действия вне проекта, без запросов разрешений.",
+  "configuration.mcpThreadConfig.description": "Переопределения конфигурации Codex только для чатов, созданных задачами Claude Code через MCP; передаются как `config` треда в `thread/start` и `thread/resume` (те же ключи, что в `~/.codex/config.toml`). Например, отключите вспомогательные MCP-серверы или плагины, которые не нужны в автоматических задачах и держат папку задачи. Учитываются только пользовательские настройки.",
   "configuration.mcpMaxParallelTasks.description": "Сколько задач Claude Code через MCP могут одновременно выполнять ходы Codex (1–5). Задачи одного проекта или git worktree всегда идут по очереди; для параллельной работы используйте отдельные worktree.",
   "configuration.activityMotion.description": "Анимировать индикатор активности и менять его подписи в конце переписки.",
   "configuration.activityMotion.auto": "Учитывать системную настройку уменьшения анимации.",

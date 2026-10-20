@@ -17,6 +17,24 @@ async function main(){
     assert.deepEqual(created[0].prefs,{mode:'full',access:'full',ide:false,plan:false});
     assert.equal(full.accessMode,'full');
     assert.equal(created[0].name,'MCP · Synthetic refactor of the greeting module');assert.equal(created[0].customName,true);
+    assert.equal(created[0].mcpTask,true,'MCP chats are marked for per-thread config');
+
+    // Per-thread Codex config applies only to MCP chats and only from user settings.
+    {
+      const source=fs.readFileSync(path.join(__dirname,'../extension.cjs'),'utf8');
+      const start=source.indexOf('  function mcpThreadConfig(s) {'),end=source.indexOf('  async function resume(',start);
+      assert.ok(start>=0 && end>start);
+      let inspected={globalValue:{mcp_servers:{synthetic:{enabled:false}}},workspaceValue:{features:{synthetic:true}}};
+      const fn=require('node:vm').runInNewContext('('+source.slice(start,end).replace(/^\s*\/\/.*\n/m,'').trim()+')',{vscode:{workspace:{getConfiguration:()=>({inspect:()=>inspected})}}});
+      assert.deepEqual(fn({mcpTask:true}),{mcp_servers:{synthetic:{enabled:false}}});
+      assert.equal(fn({mcpTask:false}),null,'Ordinary chats get no override');
+      inspected={workspaceValue:{features:{synthetic:true}}};assert.equal(fn({mcpTask:true}),null,'Workspace settings are ignored');
+      inspected={globalValue:{}};assert.equal(fn({mcpTask:true}),null);
+      assert.equal((source.match(/mcpThreadConfig\(s\)\?\{config:mcpThreadConfig\(s\)\}/g) || []).length,2,'Used for thread/start and thread/resume');
+      assert.match(source,/mcpTask:!!s\.mcpTask/,'The marker is persisted for resumes after reload');
+      const setting=require('../package.json').contributes.configuration.properties['rundix.mcpThreadConfig'];
+      assert.equal(setting.scope,'application');assert.deepEqual(setting.default,{});
+    }
 
     mode='plan';await adapter.status(task('Synthetic plan request'));
     assert.equal(created[1].prefs.mode,'workspace','Plan or unknown modes fall back to the default');

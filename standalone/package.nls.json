@@ -28,6 +28,7 @@
   "configuration.mcpAccessMode.manual": "Manual: read without changes; writing needs approval.",
   "configuration.mcpAccessMode.auto": "Approve for me: Codex's automatic review answers permission requests.",
   "configuration.mcpAccessMode.full": "Full access: files and network, including actions outside the project, without approval requests.",
+  "configuration.mcpThreadConfig.description": "Codex configuration overrides applied only to chats created by Claude Code MCP tasks, sent as the per-thread `config` of `thread/start` and `thread/resume` (same keys as `~/.codex/config.toml`). For example, disable helper MCP servers or plugins that you do not need in unattended tasks and that keep the task folder in use. Only user settings are read.",
   "configuration.mcpMaxParallelTasks.description": "How many Claude Code MCP tasks may run Codex turns at the same time (1–5). Tasks for the same project or git worktree always run one after another; use separate worktrees for parallel work.",
   "configuration.activityMotion.description": "Animate the live activity indicator and rotate its phrases at the end of the conversation.",
   "configuration.activityMotion.auto": "Follow the system preference for reduced motion.",

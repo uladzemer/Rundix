@@ -295,6 +295,12 @@
           ],
           "markdownDescription": "%configuration.mcpAccessMode.description%"
         },
+        "rundix.mcpThreadConfig": {
+          "type": "object",
+          "scope": "application",
+          "default": {},
+          "markdownDescription": "%configuration.mcpThreadConfig.description%"
+        },
         "rundix.mcpMaxParallelTasks": {
           "type": "integer",
           "scope": "application",

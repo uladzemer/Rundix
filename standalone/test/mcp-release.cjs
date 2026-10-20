@@ -55,7 +55,7 @@ async function reload(root,project) {
     if(method==='turn/start')return {turn:{id:'synthetic-next-turn'}};
     throw Error('Unexpected synthetic method');
   }};
-  const context={threadReleases,connect:noop,sessions,server,save:noop,publish(){},select(){throw Error('Unexpected synthetic select');},
+  const context={threadReleases,mcpThreadConfig:()=>null,connect:noop,sessions,server,save:noop,publish(){},select(){throw Error('Unexpected synthetic select');},
     readItem:require('../runtime/session.cjs').readItem,questionRecords:{restore(){}},authBusy:false,store,
     taskDirectory:require('../runtime/task-directory.cjs'),cwd:()=>project,locale:{t:text=>text},vscode:{workspace:{isTrusted:true}},
     syncExternal:noop,applyPendingMode:noop,accountReadRevision:1,activeConnection:{},connections:{assertCurrent(){}},

@@ -1,3 +1,11 @@
+const server_connection = require('./runtime/server-connection.cjs');
+const account_lifecycle = require('./runtime/account-lifecycle.cjs');
+const session_persistence = require('./runtime/session-persistence.cjs');
+const mcp_access = require('./runtime/mcp-access.cjs');
+const session_resume = require('./runtime/session-resume.cjs');
+const send_queue = require('./runtime/send-queue.cjs');
+const question_policy = require('./runtime/question-policy.cjs');
+const question_answer = require('./runtime/question-answer.cjs');
 const locale = require("./ui/i18n.js");
 // Independent implementation using the documented Codex App Server protocol.
 const vscode = require("vscode");
@@ -44,6 +52,90 @@ const { tabTitle } = require("./runtime/titles.cjs");
 const { CompletionNotifications, capture: captureCompletion } = require('./runtime/completion-notifications.cjs');
 const { NotificationSettings } = require('./runtime/notification-settings.cjs');
 function activate(context) {
+  const hostDeps = {
+    get AppServer() { return AppServer; },
+    get PendingLogin() { return PendingLogin; },
+    get account() { return account; }, set account(value) { account = value; },
+    get accountReadRevision() { return accountReadRevision; },
+    get acquireQueuedSession() { return acquireQueuedSession; },
+    get activeConnection() { return activeConnection; }, set activeConnection(value) { activeConnection = value; },
+    get applyPendingMode() { return applyPendingMode; },
+    get assertQueueCurrent() { return assertQueueCurrent; },
+    get asyncQuestions() { return asyncQuestions; },
+    get authBusy() { return authBusy; }, set authBusy(value) { authBusy = value; },
+    get authOwner() { return authOwner; }, set authOwner(value) { authOwner = value; },
+    get broadcast() { return broadcast; },
+    get browserSignInMessage() { return browserSignInMessage; },
+    get buildInput() { return buildInput; },
+    get captureCompletion() { return captureCompletion; },
+    get catalog() { return catalog; }, set catalog(value) { catalog = value; },
+    get catalogUpdatedAt() { return catalogUpdatedAt; }, set catalogUpdatedAt(value) { catalogUpdatedAt = value; },
+    get checkCliUpdates() { return checkCliUpdates; },
+    get cliCheckRequest() { return cliCheckRequest; },
+    get cliPrepared() { return cliPrepared; }, set cliPrepared(value) { cliPrepared = value; },
+    get cliUpdates() { return cliUpdates; },
+    get completionNotifications() { return completionNotifications; },
+    get connect() { return connect; },
+    get connecting() { return connecting; }, set connecting(value) { connecting = value; },
+    get connectionStarting() { return connectionStarting; }, set connectionStarting(value) { connectionStarting = value; },
+    get connections() { return connections; },
+    get context() { return context; },
+    get cwd() { return cwd; },
+    get disposed() { return disposed; },
+    get drainFollowUps() { return drainFollowUps; },
+    get fs() { return fs; },
+    get hasPendingQuestions() { return hasPendingQuestions; },
+    get isActive() { return isActive; },
+    get lastEditor() { return lastEditor; },
+    get library() { return library; },
+    get limits() { return limits; }, set limits(value) { limits = value; },
+    get limitsEpoch() { return limitsEpoch; }, set limitsEpoch(value) { limitsEpoch = value; },
+    get limitsRequest() { return limitsRequest; }, set limitsRequest(value) { limitsRequest = value; },
+    get loadSelected() { return loadSelected; },
+    get locale() { return locale; },
+    get loginId() { return loginId; }, set loginId(value) { loginId = value; },
+    get mcpTasks() { return mcpTasks; },
+    get mcpThreadConfig() { return mcpThreadConfig; },
+    get modes() { return modes; },
+    get notification() { return notification; },
+    get output() { return output; },
+    get path() { return path; },
+    get pendingLogin() { return pendingLogin; },
+    get pendingRequests() { return pendingRequests; },
+    get preflight() { return preflight; },
+    get preparationConfig() { return preparationConfig; },
+    get projectFiles() { return projectFiles; },
+    get providerClient() { return providerClient; },
+    get publish() { return publish; },
+    get questionRecords() { return questionRecords; },
+    get queueFollowUp() { return queueFollowUp; },
+    get randomUUID() { return randomUUID; },
+    get readItem() { return readItem; },
+    get refreshAccount() { return refreshAccount; },
+    get refreshCatalog() { return refreshCatalog; },
+    get refreshLimits() { return refreshLimits; },
+    get resetConnection() { return resetConnection; },
+    get resolveCli() { return resolveCli; },
+    get resume() { return resume; },
+    get resumeThread() { return resumeThread; },
+    get save() { return save; },
+    get select() { return select; },
+    get send() { return send; },
+    get server() { return server; }, set server(value) { server = value; },
+    get sessions() { return sessions; },
+    get speed() { return speed; },
+    get steer() { return steer; },
+    get store() { return store; },
+    get syncExternal() { return syncExternal; },
+    get target() { return target; },
+    get taskDirectory() { return taskDirectory; },
+    get threadReleases() { return threadReleases; },
+    get treeEvents() { return treeEvents; },
+    get turnLeases() { return turnLeases; },
+    get updateDraftModel() { return updateDraftModel; },
+    get vscode() { return vscode; },
+  };
+
   const languageChoice = () =>
     vscode.workspace.getConfiguration("rundix").get("language", "auto");
   locale.setLanguage(locale.resolve(languageChoice(), vscode.env.language));
@@ -69,16 +161,7 @@ function activate(context) {
     defaultEffort,
     lastEditor = vscode.window.activeTextEditor;
   let authBusy = false, authOwner = null;
-  const pendingLogin = new PendingLogin({timeout: 5 * 60 * 1000, onFinish: (error, record) => {
-    loginId = null;
-    if (authOwner === record.release) { authOwner = null; authBusy = false; }
-    if (record.disposed && server === record.client) {
-      server = null; connecting = null; activeConnection = null;
-      account = null; catalog = []; catalogUpdatedAt = 0;
-    }
-    if (error && target()) target().error = error;
-    broadcast();
-  }});
+  const pendingLogin = account_lifecycle.createPendingLogin(hostDeps);
   const pastedImageRoot=path.join(context.globalStorageUri.fsPath,'pasted-images');
   const cliUpdates = new CliUpdates({root:path.join(context.globalStorageUri.fsPath,'cli')});
   let cliOverride = null, cliPrepared = null, cliCheckRequest = null, disposed = false;
@@ -580,207 +663,7 @@ function activate(context) {
     })().catch(()=>{cliInfo={...cliInfo,phase:'error',error:true};}).finally(()=>{cliCheckRequest=null;broadcast();if(!disposed&&channel!==cliChannel())void checkCliUpdates(true);});
     return cliCheckRequest;
   }
-  async function connect() {
-    if (connecting) {
-      if (activeConnection) connections.assertCurrent(activeConnection);
-      return connecting;
-    }
-    connectionStarting = true;
-    connecting = (async () => {
-      activeConnection = await connections.resolve();
-      if (cwd()) fs.mkdirSync(context.globalStorageUri.fsPath, { recursive: true });
-      server = new AppServer({
-        executable: path.resolve(await resolveCli()),
-        // The shared server outlives turns. Its Windows cwd must not pin a worktree.
-        // Chat/project directories are supplied by thread/start and turn/start.
-        cwd: cwd() ? context.globalStorageUri.fsPath : undefined,
-        configArgs:['-c','features.default_mode_request_user_input=true'],
-      });
-      const notificationServer=server;
-      server.on("notification", (message) => {
-        if(server!==notificationServer)return;
-        if (message.method === "account/rateLimits/updated") {
-          const update = require("./ui/limits.js").normalize(message.params);
-          if (update.length) {
-            const merged = new Map(limits.buckets.map((b) => [b.id, b]));
-            for (const bucket of update) merged.set(bucket.id, bucket);
-            limits = {
-              buckets: [...merged.values()],
-              loading: false,
-              updatedAt: Date.now(),
-              error: false,
-            };
-            broadcast();
-          }
-          return;
-        }
-        if (message.method === "serverRequest/resolved") {
-          pendingRequests.delete(String(message.params.requestId));
-          broadcast();
-          return;
-        }
-        if (message.method === "account/login/completed") {
-          const pending = pendingLogin.current;
-          if (pending?.client === notificationServer && !pending.id) {
-            // A response and its notification may share a transport chunk;
-            // login/start's await continuation has not assigned the ID yet.
-            (pending.completions ||= []).push(message);
-            return;
-          }
-          if (!pendingLogin.complete(notificationServer, message.params.loginId)) return;
-          if (!message.params.success) {
-            const active = target();
-            if (active)
-              active.error = message.params.error || "Login cancelled";
-            broadcast();
-          }
-        }
-        if (
-          message.method === "account/updated" ||
-          message.method === "account/login/completed"
-        ) {
-          limitsEpoch++;
-          limitsRequest = null;
-          limits = {
-            buckets: [],
-            loading: false,
-            updatedAt: null,
-            error: false,
-          };
-          broadcast();
-          void refreshAccount()
-            .then(() => refreshLimits())
-            .then(() => refreshCatalog())
-            .then(async () => {
-              if (
-                message.method === "account/login/completed" &&
-                message.params.success
-              ) {
-                const active = target();
-                if (active?.panel) void loadSelected(active);
-              }
-            })
-            .catch((error) => {
-              const active = target();
-              if (active) {
-                active.error = error.message;
-                publish(active);
-              }
-            });
-        }
-        if (
-          message.method === "item/completed" &&
-          message.params?.item?.type === "fileChange"
-        )
-          projectFiles.clear();
-        for (const s of sessions.values()) {
-          const completion = captureCompletion(s, message);
-          // A duplicate/stale completion must not approve a different preparation turn.
-          if(s.preflight?.enabled && message.method==='turn/completed' && message.params?.turn?.id!==s.turnId)continue;
-          if (notification(s, message)) {
-            if(message.method==='item/completed' && message.params?.item?.type==='userMessage'){
-              questionRecords.restore(s);
-            }
-            if (message.method === "turn/completed") {
-              completionNotifications.dispatch(completion);
-              if(s.preflight?.enabled)
-                preflight.finish(s.preflight,s.items,message.params.turn.id,message.params.turn.status,hasPendingQuestions(s));
-              turnLeases.get(s.id)?.();
-              turnLeases.delete(s.id);
-              s.lastTurnStatus=message.params.turn.status;
-              void save(s);
-              void applyPendingMode(s).catch(error=>{s.error=error.message;publish(s);});
-              if(s.lastTurnStatus==='completed' && !s.stopRequested)void drainFollowUps(s).catch(error=>{s.error=error.message;publish(s);});
-              if (!isActive(s))
-                void library.update(s, { unread: true }).then(broadcast);
-            }
-            publish(s);
-            if (!s.panel && !s.busy) sessions.delete(s.key);
-          }
-        }
-        treeEvents.fire();
-      });
-      server.on("request", (request) => {
-        const provider = activeConnection?.provider;
-        if (provider?.requestMethods?.includes(request.method)) {
-          const owner = activeConnection, client = server;
-          void Promise.resolve().then(() => {
-            connections.assertCurrent(owner);
-            return provider.handleRequest(providerClient(client, owner), request);
-          }).catch(() => {
-            if (server === client) client.respond(request.id, null, {code:-32000,message:'Connection authorization is unavailable. Retry after reconnecting.'});
-          });
-          return;
-        }
-        const owner=[...sessions.values()].find(s=>s.id===request.params?.threadId);
-        if(preflight.preparing(owner?.preflight) && request.method!=='item/tool/requestUserInput'){
-          server.respond(request.id,null,{code:-32600,message:'Task preparation does not grant tool approvals.'});
-          return;
-        }
-        const known = [
-          "item/commandExecution/requestApproval",
-          "item/fileChange/requestApproval",
-          "item/tool/requestUserInput",
-          "item/permissions/requestApproval",
-          "mcpServer/elicitation/request",
-        ];
-        if (!known.includes(request.method)) {
-          server.respond(request.id, null, {
-            code: -32601,
-            message: "This local client does not implement " + request.method,
-          });
-          return;
-        }
-        pendingRequests.set(String(request.id), request);
-        broadcast();
-        if (
-          ![...sessions.values()].some(
-            (s) => s.id === request.params?.threadId && s.panel,
-          )
-        )
-          void vscode.window.showWarningMessage(
-            locale.t(
-              "Codex ожидает ответа в другой сессии. Откройте её в Rundix.",
-            ),
-          );
-      });
-      server.on("disconnected", (message) => {
-        if (server !== notificationServer) return;
-        if (pendingLogin.current?.client === notificationServer) pendingLogin.finish();
-        connecting = null;
-        limitsEpoch++;
-        limitsRequest = null;
-        limits = { buckets: [], loading: false, updatedAt: null, error: true };
-        pendingRequests.clear();
-        for (const release of turnLeases.values()) release();
-        turnLeases.clear();
-        for (const s of sessions.values()) {
-          s.loaded = false;
-          s.turnId = null;
-          s.busy = false;
-          // A compaction cut off by the crash will never report completion.
-          s.compacting = false;
-          s.error = message;
-          publish(s);
-        }
-        output.appendLine(message);
-      });
-      server.on("protocolError", (message) => output.appendLine(message));
-      await server.start();
-      if (activeConnection.provider) await activeConnection.provider.authenticate(providerClient(server, activeConnection));
-      connections.assertCurrent(activeConnection);
-      await refreshAccount();
-      await refreshCatalog();
-      if(cliPrepared && server.executable===cliPrepared.executable){cliUpdates.accept(cliPrepared.channel,cliPrepared);cliPrepared=null;}
-      if(!cliCheckRequest) setTimeout(()=>{if(!disposed)void checkCliUpdates();},0);
-      return server;
-    })().catch((error) => {
-      connecting = null;
-      server?.dispose();
-      throw error;
-    }).finally(() => { connectionStarting = false; });
-    return connecting;
-  }
+  function connect(...args) { return server_connection.connect(hostDeps, ...args); }
   async function refreshAccount() {
     const client = server, requestEpoch = ++accountRequestEpoch;
     const previous = identity(account);
@@ -823,11 +706,7 @@ function activate(context) {
       broadcast();
     }
   }
-  function browserSignInMessage(otherWindow = false) {
-    return locale.language === 'en'
-      ? (otherWindow ? 'Account access is busy in another window. Complete or cancel any browser sign-in from the account menu in that window, or wait for the connection change to finish.' : 'Complete or cancel the browser sign-in from the account menu before sending or changing connections.')
-      : (otherWindow ? 'Аккаунт занят в другом окне. Завершите или отмените вход через браузер в меню аккаунта того окна либо дождитесь смены подключения.' : 'Завершите или отмените вход через браузер в меню аккаунта перед отправкой или сменой подключения.');
-  }
+  function browserSignInMessage(...args) { return account_lifecycle.browserSignInMessage(hostDeps, ...args); }
   function refreshAccountStatus() {
     if (authBusy) return Promise.reject(Error('Wait for the connection change to finish.'));
     if (accountStatusRequest) return accountStatusRequest;
@@ -930,41 +809,7 @@ function activate(context) {
     catalogRequest={client,epoch,promise:request};
     try{return await request;}finally{if(catalogRequest?.promise===request)catalogRequest=null;}
   }
-  async function save(s) {
-    const record = {
-      key: s.key,
-      id: s.id,
-      name: s.name,
-      customName: s.customName,
-      model: s.model,
-      effort: s.effort,
-      prefs: s.prefs,
-      draft: s.draft || "",
-      attachments: s.attachments,
-      followUps:s.followUps || [],
-      queuePaused: !!s.queuePaused,
-      asyncQuestionReplies:s.asyncQuestionReplies || {},
-      questionHistory:s.questionHistory || [],
-      preflight:s.preflight || null,
-      cwd: s.cwd,
-      parentId: s.parentId,
-      items: s.items.slice(-200),
-      tokenUsage: s.tokenUsage,
-      usageModel: s.usageModel,
-      usageStale: !!s.usageStale,
-      lastTurnStatus:s.lastTurnStatus,
-      mcpTask:!!s.mcpTask,
-    };
-    const written = store.saveSession(record, s.persistedRecord);
-    for (const key of Object.keys(record))
-      if (
-        s.persistedRecord &&
-        JSON.stringify(record[key]) === JSON.stringify(s.persistedRecord[key])
-      )
-        s[key] = written[key];
-    s.persistedRecord = JSON.parse(JSON.stringify(written));
-    await context.workspaceState.update("session:" + s.key, written);
-  }
+  function save(...args) { return session_persistence.save(hostDeps, ...args); }
   function html(webview) {
     const nonce = randomBytes(18).toString("base64");
     const uri = (name) =>
@@ -995,50 +840,7 @@ function activate(context) {
       true,
     );
   }
-  async function syncExternal(s) {
-    if (s.busy) return;
-    const latest = store.session(s.key),
-      base = s.persistedRecord;
-    if (!latest || latest.revision === base?.revision) return;
-    const changedHistory =
-      !!s.id && JSON.stringify(latest.items) !== JSON.stringify(base?.items);
-    if (changedHistory && s.loaded) {
-      if ([...sessions.values()].some((other) => other.busy))
-        throw Error(
-          locale.t(
-            "История обновилась в другом окне. Завершите текущие задачи в этом окне перед продолжением.",
-          ),
-        );
-      if (pendingLogin.current?.client === server) pendingLogin.finish();
-      server?.dispose();
-      connecting = null;
-    }
-    for (const key of [
-      "name",
-      "customName",
-      "draft",
-      "attachments",
-      "followUps",
-      "queuePaused",
-      "prefs",
-      "preflight",
-      "model",
-      "effort",
-      "cwd",
-      "parentId",
-      "items",
-      "tokenUsage",
-      "usageModel",
-      "usageStale",
-    ])
-      if (
-        JSON.stringify(s[key]) === JSON.stringify(base?.[key]) ||
-        (key === "items" && changedHistory) || key==='preflight'
-      )
-        s[key] = latest[key];
-    s.persistedRecord = JSON.parse(JSON.stringify(latest));
-    if (changedHistory) { s.loaded = false; s.lastStartedTurnId = null; }
-  }
+  function syncExternal(...args) { return session_persistence.syncExternal(hostDeps, ...args); }
   async function loadSelected(s) {
     try {
       await syncExternal(s);
@@ -1301,341 +1103,17 @@ function activate(context) {
     treeEvents.fire();
   }
   // Per-thread Codex config for MCP task chats only, from the user's own settings (for example disabling helpers that pin the task folder).
-  function mcpThreadConfig(s) {
-    if(!s.mcpTask)return null;
-    const value=vscode.workspace.getConfiguration('rundix').inspect('mcpThreadConfig')?.globalValue;
-    return value && typeof value==='object' && !Array.isArray(value) && Object.keys(value).length?value:null;
-  }
-  async function resume(s, id) {
-    if (s.loading) return s.loading;
-    s.loading = resumeThread(s, id);
-    try {
-      return await s.loading;
-    } finally {
-      s.loading = null;
-    }
-  }
-  async function resumeThread(s, id) {
-    // Serialize reloads with best-effort MCP cleanup, including a tab reopened while it is in flight.
-    await threadReleases.get(id)?.catch(()=>{});
-    await connect();
-    if (s.id === id && s.loaded) return;
-    const existing = [...sessions.values()].find(
-      (other) => other !== s && other.id === id && other.panel,
-    );
-    if (existing) {
-      select(existing);
-      return;
-    }
-    const result = await server.request("thread/resume", {
-      threadId: id,
-      excludeTurns: true,
-      ...(s.preflight?.enabled?{config:await preparationConfig(s),...(preflight.preparing(s.preflight)?{sandbox:'read-only',approvalPolicy:'never'}:{})}:mcpThreadConfig(s)?{config:mcpThreadConfig(s)}:{}),
-    });
-    s.id = id;
-    s.cwd = result.thread.cwd || s.cwd;
-    s.parentId = result.thread.forkedFromId || s.parentId;
-    s.model = result.model;
-    s.turnModel = result.model;
-    s.effort = result.reasoningEffort;
-    if(typeof s.prefs.fast!=='boolean')s.prefs.fast=['fast','priority'].includes(result.serviceTier);
-    s.name = result.thread.name || result.thread.preview || "Rundix";
-    s.busy = result.thread.status?.type === "active";
-    if(!s.busy&&s.preflight?.phase==='executing')s.preflight.phase='review';
-    {
-      const turns = await server.request("thread/turns/list", {
-        threadId: id,
-        limit: 1,
-        sortDirection: "desc",
-        itemsView: "summary",
-      });
-      if (s.busy)
-        s.turnId = turns.data?.find((turn) => turn.status === "inProgress")?.id;
-      else s.lastTurnStatus=turns.data?.[0]?.status;
-    }
-    const page = await server.request("thread/items/list", {
-      threadId: id,
-      limit: 200,
-      sortDirection: "desc",
-    });
-    const previousTimes = new Map(s.items.map(item => [item.id, item.timestamp]));
-    s.items = (page.data || []).slice().reverse().map(entry => {
-      const item = readItem(entry);
-      item.timestamp ??= previousTimes.get(item.id);
-      return item;
-    });
-    s.cursor = page.nextCursor;
-    questionRecords.restore(s);
-    s.loaded = true;
-    await save(s);
-    publish(s);
-  }
-  async function send(s, text, attached=s.attachments, options={}) {
-    // retryable marks failures that happen before anything is sent and clear up by themselves; MCP tasks wait and retry.
-    if (authBusy) throw Object.assign(Error(pendingLogin.current ? browserSignInMessage() : locale.t('Дождитесь переключения аккаунта.')),{notSent:true,retryable:true});
-    if(s.sendingTask)throw Object.assign(Error(locale.t('Дождитесь обработки уточнений перед согласованием.')),{notSent:true,retryable:true});
-    let accountLease;
-    // Only a held lease is 'busy in another window'; file-system failures keep their own message and are not retried.
-    try{accountLease = store.acquire('account-credentials');}catch(error){if(error?.syscall)throw Object.assign(error,{notSent:true});throw Object.assign(Error(browserSignInMessage(true)),{notSent:true,retryable:true});}
-    let directoryLease=null, leasedDirectory=null;
-    const ensureDirectory=()=>{
-      const actual=taskDirectory.canonical(s.cwd || cwd());
-      if(options.projectDirectory && actual!==options.projectDirectory)throw Error('MCP chat project directory changed.');
-      if(actual!==leasedDirectory){const next=taskDirectory.acquire(store,actual,options.taskId);directoryLease?.();directoryLease=next;leasedDirectory=actual;}
-    };
-    s.sendingTask=true;
-    // Everything thrown before turn/start is requested provably sent nothing; callers may retry or re-answer.
-    let turnRequested=false;
-    try {
-    if (s.busy)
-      throw Error(locale.t("Дождитесь ответа или остановите текущую задачу."));
-    if (typeof text !== "string" || (!text.trim() && !attached.some(file=>file.kind==='image')) || text.length > 200000)
-      throw Error(locale.t("Введите сообщение длиной до 200 000 символов."));
-    if (!vscode.workspace.isTrusted)
-      throw Error(
-        locale.t("Сначала разрешите доверие рабочему пространству VS Code."),
-      );
-    await syncExternal(s);
-    ensureDirectory();
-    await applyPendingMode(s);
-    const accountRevisionBeforeConnect=accountReadRevision;
-    await connect();
-    if(options.requiredConnection && (activeConnection?.id!==options.requiredConnection.id || activeConnection?.revision!==options.requiredConnection.revision || !activeConnection?.provider))throw Error('MCP task connection changed.');
-    connections.assertCurrent(activeConnection);
-    if (activeConnection.provider) await activeConnection.provider.authenticate(providerClient(server, activeConnection));
-    // A cold connection already read the account and loaded its model catalog.
-    const initializedHere=accountReadRevision!==accountRevisionBeforeConnect;
-    const accountChanged=initializedHere ? false : await refreshAccount();
-    if (!account) throw Error(locale.t("Войдите в Codex через /account."));
-    await Promise.all([
-      initializedHere && limits.updatedAt && !limits.error ? (limitsRequest || Promise.resolve()) : refreshLimits(),
-      accountChanged || Date.now()-catalogUpdatedAt>60000 ? refreshCatalog() : Promise.resolve(),
-    ]);
-    if (activeConnection.provider?.prepareTurn) {
-      const connection = activeConnection;
-      const assertCanChange = () => {
-        connections.assertCurrent(connection);
-        if ([...sessions.values()].some(session => session.busy || session.compacting)) throw Object.assign(Error('Finish active tasks before changing the connection.'),{retryable:true});
-        try{store.assertNoActiveTurns();}catch(error){throw Object.assign(error,{retryable:true});}
-      };
-      const decision = await connection.provider.prepareTurn({
-        limits: {...limits},
-        assertCanChange,
-        reconnect: async () => {
-          assertCanChange();
-          await resetConnection();
-        },
-        readLimits: async () => { await refreshLimits(); return {...limits}; },
-      });
-      connections.assertCurrent(connection);
-      if (decision?.waitUntil) return {waitUntil:decision.waitUntil,connection};
-    }
-    const exhausted = require('./ui/limits.js').exhaustion(limits);
-    if(options.requiredConnection && (activeConnection?.id!==options.requiredConnection.id || activeConnection?.revision!==options.requiredConnection.revision || !activeConnection?.provider))throw Error('MCP task connection changed.');
-    if(exhausted){
-      const date=exhausted.resetAt?new Intl.DateTimeFormat(undefined,{dateStyle:'short',timeStyle:'short'}).format(exhausted.resetAt):null;
-      throw Error(date?locale.t('Лимиты аккаунта закончились. Дождитесь сброса: {0}. Запрос сохранён.',date):locale.t('Лимиты аккаунта закончились. Дождитесь сброса лимитов. Запрос сохранён.'));
-    }
-    updateDraftModel(s);
-    const selection={model:s.model,effort:s.effort,fast:s.prefs.fast,...options.modelSelection};
-    if (s.id && !s.loaded) await resume(s, s.id);
-    ensureDirectory();
-    const selectedModel=catalog.find(model=>model.model===selection.model);
-    if (!selectedModel)
-      throw Error(
-        locale.t(
-          "Выберите модель, доступную текущему аккаунту. Контекст сессии сохранён.",
-        ),
-      );
-    if(selection.effort && !selectedModel.supportedReasoningEfforts.some(option=>option.reasoningEffort===selection.effort))
-      throw Error(locale.t("Эта модель не поддерживает выбранную глубину."));
-    if(options.approvedTask && (!s.preflight?.enabled || hasPendingQuestions(s)))
-      throw Error(locale.t('План изменился или ещё не готов к согласованию.'));
-    if(s.preflight?.enabled){
-      if(options.approvedTask){
-        preflight.approve(s.preflight,options.approvedTask.id,options.approvedTask.revision);
-      }else preflight.revise(s.preflight);
-      await save(s);
-    }
-    const preparing=preflight.preparing(s.preflight);
-    const mode = modes.current(s.prefs),
-      policy = preparing?preflight.policy():modes.policy(mode.id, s.cwd || cwd()),
-      { approvalPolicy, approvalsReviewer, sandboxPolicy } = policy;
-    const serviceTier=speed.effectiveTier(selectedModel,selection.fast===true);
-    if (!s.id) {
-      const result = await server.request("thread/start", {
-        cwd: s.cwd || cwd(),
-        model: selection.model,
-        approvalPolicy,
-        approvalsReviewer,
-        sandbox: policy.sandbox,
-        serviceTier:serviceTier==='default'?null:serviceTier,
-        ...(s.preflight?.enabled?{config:await preparationConfig(s)}:mcpThreadConfig(s)?{config:mcpThreadConfig(s)}:{}),
-      });
-      s.id = result.thread.id;
-      s.cwd = result.thread.cwd || s.cwd;
-      await library.migrate(s.key, s.id);
-      s.loaded = true;
-      s.model = result.model;
-      s.effort = s.effort || result.reasoningEffort;
-      if (!s.customName) s.name = text.trim().replace(/\s+/g, " ").slice(0, 64) || locale.t('Изображение');
-      await server.request("thread/name/set", { threadId: s.id, name: s.name });
-      await save(s);
-    }
-    ensureDirectory();
-    const input = buildInput(text, attached, options.includeIde!==false && s.prefs.ide && lastEditor?.document.uri.scheme==='file'
-      ? {path:lastEditor.document.uri.fsPath,text:lastEditor.document.getText(lastEditor.selection).slice(0,20000)} : null);
-    const sessionRelease = store.acquire(s.id), releaseDirectory=directoryLease;
-    const client=server, connection=activeConnection, threadId=s.id,
-      previousTurnId=s.turnId || s.lastStartedTurnId || [...s.items].reverse().find(item=>item.turnId)?.turnId;
-    let unresolved=true, startPending=true, startUncertain=false, released=false, observed=null;
-    let reconciliationTimer, reconciliationDeadline;
-    const stopReconciliation=()=>{
-      if(reconciliationTimer!==undefined)clearTimeout(reconciliationTimer);
-      if(reconciliationDeadline!==undefined)clearTimeout(reconciliationDeadline);
-    };
-    const current=()=>server===client && activeConnection===connection && s.id===threadId;
-    const release = () => {
-      // Disconnect cleanup cannot turn an unanswered mutation into a clean failure.
-      if(unresolved || (startPending || startUncertain) && observed?.status==='inProgress' || released)return;
-      released=true;stopReconciliation();sessionRelease();releaseDirectory?.();
-      client.removeListener?.('notification',observeTurn);
-      client.removeListener?.('disconnected',observeDisconnect);
-      if(turnLeases.get(threadId)===release)turnLeases.delete(threadId);
-    };
-    const observeTurn=message=>{
-      const p=message.params;
-      if(!current() || p?.threadId!==threadId || !p.turn?.id || p.turn.id===previousTurnId ||
-        !['turn/started','turn/completed'].includes(message.method))return;
-      if(observed && observed.id!==p.turn.id)return;
-      observed={id:p.turn.id,status:message.method==='turn/started'?'inProgress':p.turn.status};
-      s.lastStartedTurnId=p.turn.id;
-      stopReconciliation();
-      unresolved=false;
-      s.busy=message.method==='turn/started';s.turnId=s.busy?p.turn.id:null;
-      if(!s.busy){s.lastTurnStatus=p.turn.status;release();}
-    };
-    // The Codex process is gone, so no turn of this request can still run: free the chat.
-    // The pending request still rejects as deliveryUncertain, so queued input is never replayed.
-    const observeDisconnect=()=>{unresolved=false;startPending=false;startUncertain=false;observed=null;release();};
-    client.on?.('notification',observeTurn);
-    client.on?.('disconnected',observeDisconnect);
-    directoryLease=null;
-    turnLeases.set(s.id, release);
-    s.error = null;
-    s.stopRequested=false;
-    s.busy = true;
-    s.turnId = null;
-    s.turnModel = selection.model;
-    s.turnStartedAt=Date.now();
-    publish(s);
-    try {
-      turnRequested=true;
-      const result = await client.request("turn/start", {
-        threadId: s.id,
-        serviceTierForTurn:serviceTier,
-        input,
-        cwd: s.cwd,
-        model: selection.model,
-        effort: selection.effort,
-        approvalPolicy,
-        approvalsReviewer,
-        sandboxPolicy,
-        ...(preparing?{outputSchema:preflight.schema}:options.outputSchema?{outputSchema:options.outputSchema}:{}),
-        collaborationMode: {
-          // Our JSON proposal has its own workflow; native Plan uses a different final format.
-          mode: s.preflight?.enabled ? 'default' : s.prefs.plan ? 'plan' : 'default',
-          settings: {
-            model: selection.model,
-            reasoning_effort: selection.effort,
-            developer_instructions: (options.taskId || options.projectDirectory
-              ? 'The requester is an automated agent client; no human watches this task chat. Decide routine implementation details yourself. When a decision really requires the client, use the blocking request_user_input tool with concise options. Put the recommended option first and mark its label (Recommended). Never use request_user_input_async and never wait for a human in the chat. A skipped question or empty answers are not consent or a selection; continue with reasonable assumptions where possible.'
-              : s.preflight?.enabled?preflight.instructions(s.preflight):'When a clarification would materially improve the task, ask a concise structured quiz using request_user_input or request_user_input_async when available. Put the recommended option first and mark its label (Recommended). Ask when the user requests a quiz. Do not ask about routine implementation details. A skipped quiz or empty answers are not consent or a selection; continue with reasonable assumptions where possible.') +
-              (s.prefs.focus?' Before using tools for a task, send a brief user-facing commentary explaining your next action. During longer work, send concise commentary at meaningful progress boundaries before the related tool steps. Use commentary messages for these updates, not tool output or private reasoning. Do not invent progress or delay direct answers that require no tools.':''),
-          },
-        },
-      });
-      startPending=false;unresolved=false;
-      if(current())s.lastStartedTurnId=result.turn.id;
-      observed ||= {id:result.turn.id,status:s.busy?'inProgress':'completed'};
-      if(!s.busy)release();
-      if (current() && s.busy) s.turnId = result.turn.id;
-      if(current() && s.busy && s.stopRequested)await client.request('turn/interrupt',{threadId,turnId:result.turn.id});
-      const consumed=new Set(attached.map(file=>file.id));s.attachments=s.attachments.filter(file=>!consumed.has(file.id));
-      return {turnId:result.turn.id};
-    } catch (error) {
-      startPending=false;
-      if(!observed && error.deliveryUncertain===false){
-        unresolved=false;release();
-        if(current())s.busy=false;
-      }else{
-        // Unknown errors are conservative too: never automatically resend input.
-        startUncertain=true;
-        error.deliveryUncertain=true;
-        if(!observed && current()){
-          const owns=()=>!observed && !released && current() && turnLeases.get(threadId)===release;
-          const reconciliationStarted=Date.now();
-          // Bound even repeated RPC failures; expiry never makes input safe to replay.
-          const expire=()=>{
-            if(!owns())return;
-            unresolved=false;s.busy=false;s.turnId=null;
-            s.error=locale.language==='en'
-              ? 'Message delivery could not be confirmed. Check the chat before resending.'
-              : 'Не удалось подтвердить доставку сообщения. Проверьте чат перед повторной отправкой.';
-            release();publish(s);
-          };
-          const reconcile=async()=>{
-            if(!owns())return;
-            try{
-            const turns=await client.request('thread/turns/list',{
-              threadId,limit:1,sortDirection:'desc',itemsView:'summary',
-            },5000);
-            // A notification wins over a stale list response, as does a new owner.
-            if(owns() && Array.isArray(turns.data)){
-              const turn=turns.data[0];
-              if(turn?.id && turn.id!==previousTurnId && ['inProgress','completed','interrupted','failed'].includes(turn.status)){
-                observed={id:turn.id,status:turn.status};unresolved=false;stopReconciliation();
-                s.lastStartedTurnId=turn.id;
-                s.busy=turn.status==='inProgress';s.turnId=s.busy?turn.id:null;
-                if(!s.busy){s.lastTurnStatus=turn.status;release();}
-                publish(s);
-              }
-            }
-            }catch{ /* An unavailable list is unresolved, just like an empty or previous turn. */ }
-            if(owns()){
-              reconciliationTimer=setTimeout(()=>{void reconcile();},5000);
-              reconciliationTimer.unref?.();
-            }
-          };
-          await reconcile();
-          if(owns()){
-            reconciliationDeadline=setTimeout(expire,Math.max(0,30000-(Date.now()-reconciliationStarted)));
-            reconciliationDeadline.unref?.();
-          }
-        }
-      }
-      throw error;
-    } finally {
-      publish(s);
-    }
-    } catch (error) {
-      if (!turnRequested && error && typeof error === 'object') error.notSent = true;
-      throw error;
-    } finally { s.sendingTask=false;directoryLease?.();accountLease(); }
-  }
+  function mcpThreadConfig(...args) { return mcp_access.mcpThreadConfig(hostDeps, ...args); }
+  function resume(...args) { return session_resume.resume(hostDeps, ...args); }
+  function resumeThread(...args) { return session_resume.resumeThread(hostDeps, ...args); }
+  function send(...args) { return send_queue.send(hostDeps, ...args); }
   async function preparationConfig(s){
     const client=server;
     const result=await client.request('config/read',{includeLayers:false,cwd:s.cwd||cwd()});
     if(client!==server)throw Error(locale.t('Соединение изменилось. Повторите подготовку задачи.'));
     return preflight.restrictedConfig(result.config);
   }
-  function hasPendingQuestions(s) {
-    const unanswered = s.items.some(item =>
-      asyncQuestions.questions(item).length &&
-      (!s.asyncQuestionReplies?.[item.id] || s.asyncQuestionReplies[item.id]==='unknown' && !s.mcpTask) &&
-      !asyncQuestions.hasReply(s.items, item.id));
-    return unanswered || [...pendingRequests.values()].some(request => request.params?.threadId === s.id);
-  }
+  function hasPendingQuestions(...args) { return question_policy.hasPendingQuestions(hostDeps, ...args); }
   async function setMode(s, id) {
     const selected = modes.modes.find((m) => m.id === id);
     if (!selected) throw Error(locale.t("Неизвестный режим работы."));
@@ -1646,79 +1124,9 @@ function activate(context) {
     s.prefs.pendingMode=null;
     await applyMode(s,id);
   }
-  async function queueFollowUp(s,text,attachments){
-    if(s.queueMutation)throw Error(locale.t('Дождитесь сохранения очереди.'));
-    const releaseQueue=acquireQueuedSession(s,key=>store.acquire(key));
-    let finishEnqueue;
-    s.queueEnqueue=new Promise(resolve=>{finishEnqueue=resolve;});
-    s.queueMutation=true;s.queueDrainDeferred=false;
-    try {
-      assertQueueCurrent(s,store.session(s.key));
-      const queue=s.followUps || [];
-      if(queue.length>=20)throw Error(locale.t('В очереди уже 20 сообщений.'));
-      const item={id:randomUUID(),text,attachments:[...attachments],
-        modelSelection:typeof s.model==='string'?{model:s.model,effort:s.effort,fast:s.prefs.fast===true}:undefined};
-      const consumed=new Set(attachments.map(file=>file.id)), draft=s.draft, previousRecord=s.persistedRecord;
-      const snapshot={...s,followUps:[...queue,item],attachments:s.attachments.filter(file=>!consumed.has(file.id)),
-        draft:draft===text?'':draft};
-      try{await save(snapshot);}catch(error){
-        if(snapshot.persistedRecord===previousRecord)throw error;
-        // The local atomic record is authoritative even if the VS Code cache failed.
-        output.appendLine('[queue] workspace-state-update-failed');
-      }
-      s.followUps=snapshot.followUps;s.persistedRecord=snapshot.persistedRecord;
-      s.attachments=s.attachments.filter(file=>!consumed.has(file.id));
-      if(s.draft===draft)s.draft=snapshot.draft;
-      publish(s);return item;
-    } finally {
-      const deferred=s.queueDrainDeferred;
-      s.queueMutation=false;s.queueDrainDeferred=false;s.queueEnqueue=null;finishEnqueue();releaseQueue();
-      if(deferred && !s.busy && !s.queuePaused && !s.error)
-        void drainFollowUps(s).catch(error=>{s.error=error.message;publish(s);});
-    }
-  }
-  async function steer(s,text,attachments){
-    if(!s.id || !s.turnId || s.compacting)return false;
-    const expectedTurnId=s.turnId;
-    try{
-      await server.request('turn/steer',{threadId:s.id,expectedTurnId,input:buildInput(text,attachments)});
-      const consumed=new Set(attachments.map(file=>file.id));s.attachments=s.attachments.filter(file=>!consumed.has(file.id));
-      await save(s);publish(s);return true;
-    }catch(error){
-      // Only a definite refusal can be queued; a timeout might already have been accepted.
-      if(/no active turn|not active|expected.*turn.*(?:match|different)|turn.*mismatch/i.test(error.message))return false;
-      throw error;
-    }
-  }
-  async function drainFollowUps(s,{manual=false}={}){
-    if(s.busy || s.followUpSending || s.queuePaused && !manual || !s.followUps?.length)return;
-    if(s.queueMutation){if(!manual)s.queueDrainDeferred=true;return;}
-    const releaseQueue=acquireQueuedSession(s,key=>store.acquire(key));
-    try {
-      assertQueueCurrent(s,store.session(s.key));
-      const item=s.followUps[0];s.followUpSending=true;publish(s);
-      try{
-        if(item.deliveryUncertain)throw Error(locale.t('Доставка сообщения не подтверждена. Проверьте чат перед повторной отправкой.'));
-        await applyPendingMode(s);
-        const result=await send(s,item.text,item.attachments,{modelSelection:item.modelSelection});
-        if(result?.waitUntil)throw Error(locale.t('Очередь ожидает сброса лимитов. Повторите отправку позже.'));
-        // Enqueue may be persisting a snapshot containing this in-flight item.
-        await s.queueEnqueue;
-        s.followUps=s.followUps.filter(row=>row.id!==item.id);await save(s);publish(s);
-      }catch(error){
-        if(error.deliveryUncertain){
-          await s.queueEnqueue;
-          const queued=s.followUps.find(row=>row.id===item.id);
-          if(queued){queued.deliveryUncertain=true;await save(s);}
-        }
-        s.error=error.message;throw error;
-      }finally{
-        s.followUpSending=false;publish(s);
-        if(!s.busy && s.lastTurnStatus==='completed' && !s.stopRequested && s.followUps?.length && !s.error)
-          setTimeout(()=>void drainFollowUps(s).catch(error=>{s.error=error.message;publish(s);}),0);
-      }
-    } finally {releaseQueue();}
-  }
+  function queueFollowUp(...args) { return send_queue.queueFollowUp(hostDeps, ...args); }
+  function steer(...args) { return send_queue.steer(hostDeps, ...args); }
+  function drainFollowUps(...args) { return send_queue.drainFollowUps(hostDeps, ...args); }
   async function applyPendingMode(s){
     if(s.modeChange)return s.modeChange;
     if(s.busy || !s.prefs.pendingMode)return;
@@ -1923,56 +1331,7 @@ function activate(context) {
         }
       } finally {releaseQueue();}
     } else if(msg.action==='answerAsync') {
-      const delivery=require('./runtime/mcp-delivery.cjs');
-      if(s.asyncQuestionSending)throw Error('Wait for the question answer to finish sending.');
-      const item=s.items.find(item=>item.id===msg.itemId);
-      const previousReply=s.asyncQuestionReplies?.[msg.itemId];
-      if(!item || (s.asyncQuestionReplies?.[item.id] && (s.asyncQuestionReplies[item.id]!=='unknown' || s.mcpTask || typeof msg.sendReply==='function')) || asyncQuestions.hasReply(s.items,item.id))throw Error('This question has already been answered or is unavailable.');
-      if(mcpTasks && [...mcpTasks.tasks.values()].some(task=>task.sessionKey===s.key && task.cancelledAsyncItems?.includes(item.id)))throw Error('This question belongs to a cancelled task run.');
-      const text=asyncQuestions.buildReply(item,msg.answers,{skip:msg.skip===true});
-      // In an MCP task chat, answer through the task so its directory lease, connection and report stay consistent.
-      const owner=typeof msg.sendReply!=='function' && mcpTasks?[...mcpTasks.tasks.values()].find(task=>task.sessionKey===s.key && mcpTasks.adapter.pending(task).some(request=>request.id==='async-question:'+item.id)):null;
-      if(owner){
-        await mcpTasks.call('continue_task',{requestId:randomUUID(),taskId:owner.taskId,approval:{id:'async-question:'+item.id,...(msg.skip===true?{skip:true}:{answers:msg.answers})}});
-        return;
-      }
-      if(preflight.preparing(s.preflight))s.preflight.skipped=msg.skip===true;
-      s.asyncQuestionSending=item.id;publish(s);
-      let attempted=false;
-      try{
-        // Persist before any mutating RPC so a crash or lost reply preserves delivery uncertainty.
-        s.asyncQuestionReplies={...s.asyncQuestionReplies,[item.id]:'unknown'};
-        await save(s);
-        let queued=false;
-        const sendReply=async()=>{
-          attempted=true;
-          const result=await (typeof msg.sendReply==='function'?msg.sendReply(text):send(s,text,[],{includeIde:false}));
-          if(result?.waitUntil)throw Object.assign(Error(locale.t('Очередь ожидает сброса лимитов. Повторите отправку позже.')),{notSent:true});
-        };
-        if(s.busy){
-          attempted=true;
-          if(!await steer(s,text,[])){
-            attempted=false;
-            if(typeof msg.sendReply==='function'){
-              if(s.busy)throw Object.assign(Error('The turn is finishing. Retry the question answer after its status updates.'),{notSent:true});
-              await sendReply();
-            }else{await queueFollowUp(s,text,[]);queued=true;}
-          }
-        }else await sendReply();
-        s.asyncQuestionReplies={...s.asyncQuestionReplies,[item.id]:queued?'queued':msg.skip===true?'skipped':'sent'};
-        questionRecords.remember(s,{id:'a:'+item.id,origin:'async',parentItemId:item.id,questions:questionRecords.fromAsync(item),answers:msg.answers,skipped:msg.skip===true,status:queued?'queued':'sent'});
-        await save(s);
-      }catch(error){
-        s.asyncQuestionReplies={...s.asyncQuestionReplies};
-        if(!attempted || delivery.refused(error)){
-          if(previousReply==='unknown')s.asyncQuestionReplies[item.id]='unknown';
-          else delete s.asyncQuestionReplies[item.id];
-          await save(s);throw Object.assign(error,{deliveryOutcome:'rejected'});
-        }
-        s.asyncQuestionReplies[item.id]='unknown';
-        try{await save(s);}catch{}
-        throw delivery.unknown(error);
-      }finally{s.asyncQuestionSending=null;publish(s);}
+      return question_answer.answerAsync(hostDeps, s, msg);
     } else if (msg.action === "send" || msg.action === 'enqueue') {
       if(s.approvingTask)throw Error(locale.t('Дождитесь обработки уточнений перед согласованием.'));
       if(preflight.preparing(s.preflight))s.preflight.skipped=false;

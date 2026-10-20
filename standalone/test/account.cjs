@@ -5,24 +5,22 @@ const assert=require('node:assert/strict');const {startLogin,identity}=require('
  await assert.rejects(startLogin({request:async()=>({authUrl:'file:///fixture'})},{openExternal:async()=>{throw Error('Must not open');}}),/адрес/);
  const {PendingLogin} = require('../runtime/pending-login.cjs');
  const fs=require('node:fs'), os=require('node:os'), path=require('node:path');
- const vm=require('node:vm'),source=fs.readFileSync(path.join(__dirname,'../extension.cjs'),'utf8');
- const section=(start,end)=>source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start)));
  // Run the real host pending-login callback and external-history disposal path.
  const synthetic={key:'synthetic-session',id:'synthetic-thread',loaded:true,lastStartedTurnId:'synthetic-stale-turn',items:[],persistedRecord:{revision:1,items:[]}};
- const context=vm.createContext({PendingLogin,authBusy:true,authOwner:null,loginId:'synthetic-login',
+ const context=({PendingLogin,authBusy:true,authOwner:null,loginId:'synthetic-login',
   server:{dispose(){this.disposed=true;}},connecting:{},activeConnection:{},account:{},catalog:[],catalogUpdatedAt:0,
   target:()=>synthetic,broadcast(){},sessions:new Map([[synthetic.key,synthetic]]),
   store:{session:()=>({revision:2,items:[{id:'synthetic-item'}]})},locale:{t:text=>text}});
- vm.runInContext(section('  const pendingLogin = new PendingLogin(', '  const pastedImageRoot')+'\nglobalThis.pending=pendingLogin;',context);
+ context.pending=context.pendingLogin=require('../runtime/account-lifecycle.cjs').createPendingLogin(context);
  assert.equal(context.pending.timeout,5*60*1000,'Host limits pending browser sign-in to five minutes');
  let releases=0;context.release=()=>releases++;
- vm.runInContext('authOwner=release;pending.begin(server,release).id="synthetic-login";',context);
- const sync=vm.runInContext('('+section('  async function syncExternal(', '  async function loadSelected(').trim()+')',context);
+ context.authOwner=context.release;context.pending.begin(context.server,context.release).id="synthetic-login";
+ const sync=s=>require('../runtime/session-persistence.cjs').syncExternal(context,s);
  await sync(synthetic);
  assert.equal(context.pending.current,null);assert.equal(context.authBusy,false);assert.equal(context.authOwner,null);
  assert.equal(context.loginId,null);assert.equal(releases,1);assert.equal(context.server.disposed,true);
  assert.equal(synthetic.loaded,false);assert.equal(synthetic.lastStartedTurnId,null,'External history invalidates the locally remembered turn');
- const message=vm.runInContext('('+section('  function browserSignInMessage(', '  function refreshAccountStatus').trim()+')',context);
+ const message=(...args)=>require('../runtime/account-lifecycle.cjs').browserSignInMessage(context,...args);
  for(const language of ['ru','en']){
   context.locale.language=language;
   assert.match(message(),language==='en'?/account menu/:/меню аккаунта/);

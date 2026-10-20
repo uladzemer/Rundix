@@ -1,15 +1,10 @@
 // Synthetic integration: real task orchestration/executor and the host's existing answer/steer paths.
-const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),vm=require('node:vm');
+const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {executor}=require('../runtime/mcp-executor.cjs');
 const {McpTasks}=require('../runtime/mcp-tasks.cjs');
 const {SessionStore}=require('../runtime/store.cjs');
 const {canonical}=require('../runtime/task-directory.cjs');
 const asyncQuestions=require('../runtime/async-questions.cjs'),questionRecords=require('../runtime/question-records.cjs');
-const source=fs.readFileSync(path.join(__dirname,'../extension.cjs'),'utf8');
-const answerStart=source.indexOf("    } else if(msg.action==='answerAsync') {");
-const answerEnd=source.indexOf('    } else if (msg.action === "send"',answerStart);
-const steerStart=source.indexOf('  async function steer('),steerEnd=source.indexOf('  async function drainFollowUps(',steerStart);
-assert(answerStart>=0 && answerEnd>answerStart && steerStart>=0 && steerEnd>steerStart);
 const question=id=>({id,type:'agentMessage',questions:[{title:'Synthetic choice',options:['Synthetic A (Recommended)','Synthetic B']},{title:'Synthetic details'}]});
 const answers={'0':'Synthetic B','1':'Synthetic details answer'};
 (async()=>{
@@ -32,10 +27,10 @@ const answers={'0':'Synthetic B','1':'Synthetic details answer'};
    const result=await server.request('turn/start',{threadId:session.id,input:[{type:'text',text}]});
    session.turnId=result.turn.id;session.busy=true;session.error=null;return {turnId:session.turnId};
   };
-  const context={require:id=>{assert.equal(id,'./runtime/mcp-delivery.cjs');return require('../runtime/mcp-delivery.cjs');},asyncQuestions,questionRecords,mcpTasks:null,preflight:{preparing:()=>false},publish:noop,save,send,server,
+  const context={asyncQuestions,questionRecords,mcpTasks:null,preflight:{preparing:()=>false},publish:noop,save,send,server,
    locale:{t:text=>text},buildInput:text=>[{type:'text',text}],queueFollowUp:async()=>{queued++;}};
-  context.steer=vm.runInNewContext('('+source.slice(steerStart,steerEnd).trim()+')',context);
-  const handle=vm.runInNewContext('(async function(s,msg){'+source.slice(answerStart+"    } else if(msg.action==='answerAsync') {".length,answerEnd)+'})',context);
+  context.steer=(...args)=>require('../runtime/send-queue.cjs').steer(context,...args);
+  const handle=(...args)=>require('../runtime/question-answer.cjs').answerAsync(context,...args);
   const adapter=executor({connections:{selection:()=>connection},sessions,store,create(){throw Error('Unexpected synthetic session creation');},send,
    resume:async session=>{session.loaded=true;},handle:async(session,msg)=>{
     if(msg.action==='stop'){session.stopRequested=true;if(session.busy)interrupts++;return;}

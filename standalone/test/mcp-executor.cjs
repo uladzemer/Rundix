@@ -3,16 +3,13 @@ const {executor,report}=require('../runtime/mcp-executor.cjs');
 const {SessionStore}=require('../runtime/store.cjs');
 const {canonical,reserve,acquire}=require('../runtime/task-directory.cjs');
 async function hostSendChecks(project,store) {
- const source=fs.readFileSync(path.join(__dirname,'../extension.cjs'),'utf8');
- const start=source.indexOf('  async function send('),end=source.indexOf('  async function preparationConfig(',start);
- assert(start>=0 && end>start);
  const turns=[],turnLeases=new Map();let complete=true,lostReply=false;
  const noop=async()=>{};
  const context={authBusy:false,store,taskDirectory:require('../runtime/task-directory.cjs'),cwd:()=>project,
   locale:{t:text=>text},vscode:{workspace:{isTrusted:true}},syncExternal:noop,applyPendingMode:noop,connect:noop,
   accountReadRevision:1,activeConnection:{},connections:{assertCurrent(){}},refreshAccount:async()=>false,account:{},
-  limits:{updatedAt:1},limitsRequest:null,refreshLimits:noop,refreshCatalog:noop,catalogUpdatedAt:Date.now(),
-  require:id=>{assert.equal(id,'./ui/limits.js');return {exhaustion:()=>null};},updateDraftModel(){},resume:noop,
+  limits:{updatedAt:Date.now(),buckets:[{id:'codex',windows:[{remaining:100}]}]},limitsRequest:null,refreshLimits:noop,refreshCatalog:noop,catalogUpdatedAt:Date.now(),
+  updateDraftModel(){},resume:noop,
   catalog:['synthetic-default','synthetic-other'].map(model=>({model,supportedReasoningEfforts:['low','medium','high'].map(reasoningEffort=>({reasoningEffort}))})),
   preflight:{preparing:()=>false},modes:{current:()=>({id:'workspace'}),policy:()=>({})},
   speed:{effectiveTier:(_,fast)=>fast?'fast':'default'},buildInput:text=>[{type:'text',text}],turnLeases,publish(){},
@@ -25,7 +22,7 @@ async function hostSendChecks(project,store) {
    return {turn:{id:'synthetic-host-turn-'+turns.length}};
   }},
  };
- const send=require('node:vm').runInNewContext('('+source.slice(start,end).trim()+')',context);
+ const send=(...args)=>require('../runtime/send-queue.cjs').send(context,...args);
  const s={id:'synthetic-host-chat',cwd:project,loaded:true,busy:false,model:'synthetic-default',effort:'low',prefs:{fast:true},attachments:[],items:[]};
  const result=await send(s,'Synthetic effort-only host input',[],{modelSelection:{effort:'high'},includeIde:false});
  assert.equal(result.turnId,'synthetic-host-turn-1','Host returns accepted turn ID even if it already completed');

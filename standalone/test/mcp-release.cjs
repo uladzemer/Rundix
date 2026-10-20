@@ -1,11 +1,11 @@
 // Synthetic only: no CLI, account files, inference or real child processes.
-const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),vm=require('node:vm');
+const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {McpTasks}=require('../runtime/mcp-tasks.cjs');
 const {executor}=require('../runtime/mcp-executor.cjs');
 const {notification}=require('../runtime/session.cjs');
 const {SessionStore}=require('../runtime/store.cjs');
 const {canonical}=require('../runtime/task-directory.cjs');
-const source=fs.readFileSync(path.join(__dirname,'../extension.cjs'),'utf8');
+
 const noop=async()=>{};
 async function transitions(root,project) {
   let status={done:false,pending:false},releaseFailure=null;
@@ -59,16 +59,13 @@ async function reload(root,project) {
     readItem:require('../runtime/session.cjs').readItem,questionRecords:{restore(){}},authBusy:false,store,
     taskDirectory:require('../runtime/task-directory.cjs'),cwd:()=>project,locale:{t:text=>text},vscode:{workspace:{isTrusted:true}},
     syncExternal:noop,applyPendingMode:noop,accountReadRevision:1,activeConnection:{},connections:{assertCurrent(){}},
-    refreshAccount:async()=>false,account:{},limits:{updatedAt:1},limitsRequest:null,refreshLimits:noop,refreshCatalog:noop,catalogUpdatedAt:Date.now(),
-    require:id=>{assert.equal(id,'./ui/limits.js');return {exhaustion:()=>null};},updateDraftModel(){},
+    refreshAccount:async()=>false,account:{},limits:{updatedAt:Date.now(),buckets:[{id:'codex',windows:[{remaining:100}]}]},limitsRequest:null,refreshLimits:noop,refreshCatalog:noop,catalogUpdatedAt:Date.now(),
+    updateDraftModel(){},
     catalog:[{model:'synthetic-model',supportedReasoningEfforts:[]}],preflight:{preparing:()=>false},
     modes:{current:()=>({id:'workspace'}),policy:()=>({})},speed:{effectiveTier:()=> 'default'},buildInput:text=>[{type:'text',text}],turnLeases};
-  function hostFunction(name,next) {
-    const start=source.indexOf('  async function '+name+'('),end=source.indexOf('  async function '+next+'(',start);
-    assert(start>=0 && end>start);return vm.runInNewContext('('+source.slice(start,end).trim()+')',context);
-  }
-  context.resumeThread=hostFunction('resumeThread','send');context.resume=hostFunction('resume','resumeThread');
-  const send=hostFunction('send','preparationConfig');
+  context.resumeThread=(...args)=>require('../runtime/session-resume.cjs').resumeThread(context,...args);
+  context.resume=(...args)=>require('../runtime/session-resume.cjs').resume(context,...args);
+  const send=(...args)=>require('../runtime/send-queue.cjs').send(context,...args);
   const task={taskId:'synthetic-task',sessionKey:s.key,chatId:s.id,projectDirectory:project,connection};
   const adapter=executor({connections:{selection:()=>selected},sessions,store,pending,client:()=>server,releases:threadReleases,
     create(){throw Error('Release must not reopen a tab');},send,resume:context.resume,save:noop,alive:()=>true});

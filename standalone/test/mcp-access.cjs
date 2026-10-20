@@ -1,7 +1,29 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {executor,taskTitle}=require('../runtime/mcp-executor.cjs');
 const {canonical}=require('../runtime/task-directory.cjs');
+function hostDepsChecks(){
+  // Static wiring contract only: never extract or execute extension function source.
+  const host=fs.readFileSync(path.join(__dirname,'../extension.cjs'),'utf8');
+  const block=host.match(/^  const hostDeps = \{([\s\S]*?)^  \};/m);
+  assert.ok(block,'Host dependency object is declared');
+  const getters=new Set([...block[1].matchAll(/\bget\s+(\w+)\s*\(/g)].map(match=>match[1]));
+  const setters=new Set([...block[1].matchAll(/\bset\s+(\w+)\s*\(/g)].map(match=>match[1]));
+  const optional=new Set(['Date','setTimeout','clearTimeout']);
+  for(const name of ['account-lifecycle','mcp-access','question-answer','question-policy','send-queue','server-connection','session-persistence','session-resume']){
+    const source=fs.readFileSync(path.join(__dirname,'../runtime/'+name+'.cjs'),'utf8');
+    for(const match of source.matchAll(/\bdeps\.([\w$]+)/g)){
+      const key=match[1];if(optional.has(key))continue;
+      assert.ok(getters.has(key),name+': missing hostDeps getter '+key);
+      const after=source.substring(match.index+match[0].length);
+      const before=source.substring(0,match.index);
+      if(/^\s*(?:\+\+|--|(?:\*\*|>>>|>>|<<|&&|\|\||\?\?|[+\-*/%&|^])?=(?!=|>))/.test(after) || /(?:\+\+|--)\s*$/.test(before))
+        assert.ok(setters.has(key),name+': missing hostDeps setter '+key);
+    }
+  }
+  console.log('Host deps: getters and assignment setters cover all eight runtime modules.');
+}
 async function main(){
+  hostDepsChecks();
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-mcp-access-synthetic-'));
   try{
     const project=canonical(root);
@@ -21,17 +43,15 @@ async function main(){
 
     // Per-thread Codex config applies only to MCP chats and only from user settings.
     {
-      const source=fs.readFileSync(path.join(__dirname,'../extension.cjs'),'utf8');
-      const start=source.indexOf('  function mcpThreadConfig(s) {'),end=source.indexOf('  async function resume(',start);
-      assert.ok(start>=0 && end>start);
       let inspected={globalValue:{mcp_servers:{synthetic:{enabled:false}}},workspaceValue:{features:{synthetic:true}}};
-      const fn=require('node:vm').runInNewContext('('+source.slice(start,end).replace(/^\s*\/\/.*\n/m,'').trim()+')',{vscode:{workspace:{getConfiguration:()=>({inspect:()=>inspected})}}});
+      const fn=s=>require('../runtime/mcp-access.cjs').mcpThreadConfig({vscode:{workspace:{getConfiguration:()=>({inspect:()=>inspected})}}},s);
       assert.deepEqual(fn({mcpTask:true}),{mcp_servers:{synthetic:{enabled:false}}});
       assert.equal(fn({mcpTask:false}),null,'Ordinary chats get no override');
       inspected={workspaceValue:{features:{synthetic:true}}};assert.equal(fn({mcpTask:true}),null,'Workspace settings are ignored');
       inspected={globalValue:{}};assert.equal(fn({mcpTask:true}),null);
-      assert.equal((source.match(/mcpThreadConfig\(s\)\?\{config:mcpThreadConfig\(s\)\}/g) || []).length,2,'Used for thread/start and thread/resume');
-      assert.match(source,/mcpTask:!!s\.mcpTask/,'The marker is persisted for resumes after reload');
+      const source=fs.readFileSync(path.join(__dirname,'../runtime/send-queue.cjs'),'utf8')+fs.readFileSync(path.join(__dirname,'../runtime/session-resume.cjs'),'utf8');
+      assert.equal((source.match(/deps\.mcpThreadConfig\(s\)\?\{config:deps\.mcpThreadConfig\(s\)\}/g) || []).length,2,'Used for thread/start and thread/resume');
+      assert.match(fs.readFileSync(path.join(__dirname,'../runtime/session-persistence.cjs'),'utf8'),/mcpTask:!!s\.mcpTask/,'The marker is persisted for resumes after reload');
       const setting=require('../package.json').contributes.configuration.properties['rundix.mcpThreadConfig'];
       assert.equal(setting.scope,'application');assert.deepEqual(setting.default,{});
     }

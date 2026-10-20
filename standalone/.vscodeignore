@@ -56,3 +56,11 @@
 !docs/mcp.md
 !runtime/connection-companions.cjs
 !runtime/mcp-panel.cjs
+!runtime/server-connection.cjs
+!runtime/account-lifecycle.cjs
+!runtime/session-persistence.cjs
+!runtime/mcp-access.cjs
+!runtime/session-resume.cjs
+!runtime/send-queue.cjs
+!runtime/question-policy.cjs
+!runtime/question-answer.cjs

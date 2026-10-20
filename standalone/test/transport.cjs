@@ -1,10 +1,7 @@
 const assert=require('node:assert/strict');const {spawn}=require('node:child_process');const path=require('node:path');
 const {AppServer}=require('../runtime/transport.cjs');const {notification}=require('../runtime/session.cjs');
 async function hostCwdChecks(){
- const fs=require('node:fs'),os=require('node:os'),vm=require('node:vm');
- const source=fs.readFileSync(path.join(__dirname,'../extension.cjs'),'utf8');
- const start=source.indexOf('  async function connect() {'),end=source.indexOf('  async function refreshAccount()',start);
- assert(start>=0 && end>start);
+ const fs=require('node:fs'),os=require('node:os');
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-server-cwd-synthetic-'));
  const project=path.join(root,'task'),storage=path.join(root,'storage');
  fs.mkdirSync(project);fs.mkdirSync(storage);
@@ -21,7 +18,7 @@ async function hostCwdChecks(){
      return spawn(process.execPath,[path.join(__dirname,'fake-server.cjs')],options);
     }});}},
    };
-   const connect=vm.runInNewContext('('+source.slice(start,end).trim()+')',context);
+   const connect=()=>require('../runtime/server-connection.cjs').connect(context);
    client=await connect();
    // Exercise the host's launch options, then handle synthetic turn events locally.
    client.removeAllListeners();

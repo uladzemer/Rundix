@@ -1,23 +1,13 @@
 // All sessions, messages, paths and server replies in this file are synthetic.
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const vm = require('node:vm');
 const { EventEmitter } = require('node:events');
 const { AppServer } = require('../runtime/transport.cjs');
 const { notification } = require('../runtime/session.cjs');
 const { acquireQueuedSession } = require('../runtime/queued-session-transfer.cjs');
 const { assertQueueCurrent } = require('../runtime/queued-edits.cjs');
-const source = fs.readFileSync(path.join(__dirname, '../extension.cjs'), 'utf8');
 const clone = value => JSON.parse(JSON.stringify(value));
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const uncertain = () => Object.assign(Error('Synthetic lost reply'), { deliveryUncertain: true });
-
-function extract(startText, endText) {
-  const start = source.indexOf(startText), end = source.indexOf(endText, start);
-  assert(start >= 0 && end > start, startText);
-  return source.slice(start, end);
-}
 
 function fixture() {
   const leases = new Set(), records = new Map(), calls = [], diagnostics = [];
@@ -51,10 +41,10 @@ function fixture() {
     return () => leases.delete(id);
   };
   const noop = async () => {};
-  const context = vm.createContext({
+  const context = ({
     Date:class extends Date {static now(){return now;}},
     authBusy: false, accountReadRevision: 1, activeConnection: {}, account: {},
-    limits: { updatedAt: 1 }, limitsRequest: null, catalogUpdatedAt: Date.now(),
+    limits: { updatedAt: Date.now(), buckets: [{ id: 'codex', windows: [{ remaining: 100 }] }] }, limitsRequest: null, catalogUpdatedAt: Date.now(),
     catalog: [{ model: s.model, supportedReasoningEfforts: [] }],
     store: { acquire, session: key => records.get(key), saveSession(record) {
       if (diskFailure) throw Error('Synthetic atomic write failure');
@@ -68,28 +58,19 @@ function fixture() {
     updateDraftModel() {}, resume: noop, preflight: { preparing: () => false },
     modes: { current: () => ({ id: 'workspace' }), policy: () => ({}) },
     speed: { effectiveTier: () => 'default' }, buildInput: text => [{ type: 'text', text }],
-    require: id => { assert.equal(id, './ui/limits.js');return { exhaustion: () => null }; },
     server, turnLeases: new Map(), publish() {}, randomUUID: () => 'synthetic-queued-' + ++sequence,
     acquireQueuedSession, assertQueueCurrent, output: { appendLine: text => diagnostics.push(text) },
     setTimeout:schedule, clearTimeout:id=>timers.delete(id), notification, sessions: new Map([[s.key, s]]),
     captureCompletion() {}, completionNotifications: { dispatch() {} },
     isActive: () => true, treeEvents: { fire() {} },
   });
-  context.browserSignInMessage=vm.runInContext('('+extract('  function browserSignInMessage(', '  function refreshAccountStatus').trim()+')',context);
-  for (const [name, next] of [['save', 'function html'], ['send', 'async function preparationConfig'],
-    ['queueFollowUp', 'async function steer'], ['drainFollowUps', 'async function applyPendingMode']]) {
-    context[name] = vm.runInContext('(' + extract('  async function ' + name + '(', '  ' + next).trim() + ')', context);
-  }
-  const notificationStart = source.indexOf('        for (const s of sessions.values()) {', source.indexOf('const completion = captureCompletion') - 100);
-  const notificationEnd = source.indexOf('        treeEvents.fire();', notificationStart);
-  assert(notificationStart >= 0 && notificationEnd > notificationStart);
-  server.on('notification', vm.runInContext('(message)=>{' + source.slice(notificationStart, notificationEnd) + '}', context));
-  // Use the real host disconnect cleanup, before the per-send listener.
-  const disconnected = extract('      server.on("disconnected", (message) => {', '      server.on("protocolError"');
-  Object.assign(context, { notificationServer: context.server, pendingLogin: { current: null, finish() {} }, connecting: null, limitsEpoch: 0, pendingRequests: new Map(), output: {
-    appendLine: text => diagnostics.push(text),
-  } });
-  vm.runInContext(disconnected, context);
+  context.browserSignInMessage=(...args)=>require('../runtime/account-lifecycle.cjs').browserSignInMessage(context,...args);
+  context.save=(...args)=>require('../runtime/session-persistence.cjs').save(context,...args);
+  for (const name of ['send','queueFollowUp','drainFollowUps'])
+    context[name]=(...args)=>require('../runtime/send-queue.cjs')[name](context,...args);
+  server.on('notification', message=>require('../runtime/server-connection.cjs').notifySessions(context,message));
+  Object.assign(context, { pendingLogin: { current: null, finish() {} }, connecting: null, limitsEpoch: 0, pendingRequests: new Map() });
+  server.on('disconnected', message=>require('../runtime/server-connection.cjs').disconnect(context,server,message));
   const emit = (method, id = 'synthetic-turn', status = 'completed', threadId = s.id) =>
     server.emit('notification', { method, params: { threadId, turn: { id, status } } });
   return { s, server, context, leases, calls, records, diagnostics, emit, advance, timers,

@@ -69,7 +69,7 @@ function activate(context) {
     defaultEffort,
     lastEditor = vscode.window.activeTextEditor;
   let authBusy = false, authOwner = null;
-  const pendingLogin = new PendingLogin({onFinish: (error, record) => {
+  const pendingLogin = new PendingLogin({timeout: 5 * 60 * 1000, onFinish: (error, record) => {
     loginId = null;
     if (authOwner === record.release) { authOwner = null; authBusy = false; }
     if (record.disposed && server === record.client) {
@@ -794,7 +794,7 @@ function activate(context) {
     return changed;
   }
   async function withLocalSignIn(operation) {
-    if (pendingLogin.current) throw Error('Browser sign-in is pending. Complete or cancel it before sending or changing connections.');
+    if (pendingLogin.current) throw Error(browserSignInMessage());
     if (authBusy || connectionStarting || accountStatusRequest || [...sessions.values()].some(session => session.busy || session.compacting || session.sendingTask))
       throw Error(locale.t('Дождитесь завершения задач перед сменой аккаунта.'));
     const release = store.acquire('account-credentials');
@@ -809,6 +809,11 @@ function activate(context) {
       }
       broadcast();
     }
+  }
+  function browserSignInMessage(otherWindow = false) {
+    return locale.language === 'en'
+      ? (otherWindow ? 'Account access is busy in another window. Complete or cancel any browser sign-in from the account menu in that window, or wait for the connection change to finish.' : 'Complete or cancel the browser sign-in from the account menu before sending or changing connections.')
+      : (otherWindow ? 'Аккаунт занят в другом окне. Завершите или отмените вход через браузер в меню аккаунта того окна либо дождитесь смены подключения.' : 'Завершите или отмените вход через браузер в меню аккаунта перед отправкой или сменой подключения.');
   }
   function refreshAccountStatus() {
     if (authBusy) return Promise.reject(Error('Wait for the connection change to finish.'));
@@ -991,6 +996,7 @@ function activate(context) {
             "История обновилась в другом окне. Завершите текущие задачи в этом окне перед продолжением.",
           ),
         );
+      if (pendingLogin.current?.client === server) pendingLogin.finish();
       server?.dispose();
       connecting = null;
     }
@@ -1018,7 +1024,7 @@ function activate(context) {
       )
         s[key] = latest[key];
     s.persistedRecord = JSON.parse(JSON.stringify(latest));
-    if (changedHistory) s.loaded = false;
+    if (changedHistory) { s.loaded = false; s.lastStartedTurnId = null; }
   }
   async function loadSelected(s) {
     try {
@@ -1353,10 +1359,10 @@ function activate(context) {
   }
   async function send(s, text, attached=s.attachments, options={}) {
     // retryable marks failures that happen before anything is sent and clear up by themselves; MCP tasks wait and retry.
-    if (authBusy) throw Object.assign(Error(locale.t('Дождитесь переключения аккаунта.')),{retryable:true});
+    if (authBusy) throw Object.assign(Error(pendingLogin.current ? browserSignInMessage() : locale.t('Дождитесь переключения аккаунта.')),{notSent:true,retryable:true});
     if(s.sendingTask)throw Object.assign(Error(locale.t('Дождитесь обработки уточнений перед согласованием.')),{notSent:true,retryable:true});
     let accountLease;
-    try{accountLease = store.acquire('account-credentials');}catch(error){throw Object.assign(error,{retryable:true});}
+    try{accountLease = store.acquire('account-credentials');}catch(error){throw Object.assign(Error(browserSignInMessage(true)),{retryable:true});}
     let directoryLease=null, leasedDirectory=null;
     const ensureDirectory=()=>{
       const actual=taskDirectory.canonical(s.cwd || cwd());
@@ -1466,13 +1472,19 @@ function activate(context) {
     const input = buildInput(text, attached, options.includeIde!==false && s.prefs.ide && lastEditor?.document.uri.scheme==='file'
       ? {path:lastEditor.document.uri.fsPath,text:lastEditor.document.getText(lastEditor.selection).slice(0,20000)} : null);
     const sessionRelease = store.acquire(s.id), releaseDirectory=directoryLease;
-    const client=server, connection=activeConnection, threadId=s.id, previousTurnId=s.turnId;
+    const client=server, connection=activeConnection, threadId=s.id,
+      previousTurnId=s.turnId || s.lastStartedTurnId || [...s.items].reverse().find(item=>item.turnId)?.turnId;
     let unresolved=true, startPending=true, startUncertain=false, released=false, observed=null;
+    let reconciliationTimer, reconciliationDeadline;
+    const stopReconciliation=()=>{
+      if(reconciliationTimer!==undefined)clearTimeout(reconciliationTimer);
+      if(reconciliationDeadline!==undefined)clearTimeout(reconciliationDeadline);
+    };
     const current=()=>server===client && activeConnection===connection && s.id===threadId;
     const release = () => {
       // Disconnect cleanup cannot turn an unanswered mutation into a clean failure.
       if(unresolved || (startPending || startUncertain) && observed?.status==='inProgress' || released)return;
-      released=true;sessionRelease();releaseDirectory?.();
+      released=true;stopReconciliation();sessionRelease();releaseDirectory?.();
       client.removeListener?.('notification',observeTurn);
       client.removeListener?.('disconnected',observeDisconnect);
       if(turnLeases.get(threadId)===release)turnLeases.delete(threadId);
@@ -1483,6 +1495,8 @@ function activate(context) {
         !['turn/started','turn/completed'].includes(message.method))return;
       if(observed && observed.id!==p.turn.id)return;
       observed={id:p.turn.id,status:message.method==='turn/started'?'inProgress':p.turn.status};
+      s.lastStartedTurnId=p.turn.id;
+      stopReconciliation();
       unresolved=false;
       s.busy=message.method==='turn/started';s.turnId=s.busy?p.turn.id:null;
       if(!s.busy){s.lastTurnStatus=p.turn.status;release();}
@@ -1528,6 +1542,7 @@ function activate(context) {
         },
       });
       startPending=false;unresolved=false;
+      if(current())s.lastStartedTurnId=result.turn.id;
       observed ||= {id:result.turn.id,status:s.busy?'inProgress':'completed'};
       if(!s.busy)release();
       if (current() && s.busy) s.turnId = result.turn.id;
@@ -1544,22 +1559,45 @@ function activate(context) {
         startUncertain=true;
         error.deliveryUncertain=true;
         if(!observed && current()){
-          try{
+          const owns=()=>!observed && !released && current() && turnLeases.get(threadId)===release;
+          const reconciliationStarted=Date.now();
+          // Bound even repeated RPC failures; expiry never makes input safe to replay.
+          const expire=()=>{
+            if(!owns())return;
+            unresolved=false;s.busy=false;s.turnId=null;
+            s.error=locale.language==='en'
+              ? 'Message delivery could not be confirmed. Check the chat before resending.'
+              : 'Не удалось подтвердить доставку сообщения. Проверьте чат перед повторной отправкой.';
+            release();publish(s);
+          };
+          const reconcile=async()=>{
+            if(!owns())return;
+            try{
             const turns=await client.request('thread/turns/list',{
               threadId,limit:1,sortDirection:'desc',itemsView:'summary',
             },5000);
             // A notification wins over a stale list response, as does a new owner.
-            if(!observed && current() && turnLeases.get(threadId)===release && Array.isArray(turns.data)){
+            if(owns() && Array.isArray(turns.data)){
               const turn=turns.data[0];
-              if(turn?.status==='inProgress'){
-                observed={id:turn.id,status:turn.status};unresolved=false;
-                s.busy=true;s.turnId=turn.id;
-              }else if(!turn || ['completed','interrupted','failed'].includes(turn.status)){
-                // A successful, ordered query confirms there is no active turn.
-                unresolved=false;s.busy=false;s.turnId=null;release();
+              if(turn?.id && turn.id!==previousTurnId && ['inProgress','completed','interrupted','failed'].includes(turn.status)){
+                observed={id:turn.id,status:turn.status};unresolved=false;stopReconciliation();
+                s.lastStartedTurnId=turn.id;
+                s.busy=turn.status==='inProgress';s.turnId=s.busy?turn.id:null;
+                if(!s.busy){s.lastTurnStatus=turn.status;release();}
+                publish(s);
               }
             }
-          }catch{ /* Failed reconciliation keeps ownership until a turn notification. */ }
+            }catch{ /* An unavailable list is unresolved, just like an empty or previous turn. */ }
+            if(owns()){
+              reconciliationTimer=setTimeout(()=>{void reconcile();},5000);
+              reconciliationTimer.unref?.();
+            }
+          };
+          await reconcile();
+          if(owns()){
+            reconciliationDeadline=setTimeout(expire,Math.max(0,30000-(Date.now()-reconciliationStarted)));
+            reconciliationDeadline.unref?.();
+          }
         }
       }
       throw error;

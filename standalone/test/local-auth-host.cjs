@@ -76,7 +76,7 @@ exports.run = async () => {
     usedPercent = 20;
     await api.handle(session, {action: 'accountRefresh'});
     await api.handle(session, {action: 'account'});
-    await assert.rejects(api.handle(session, {action: 'send', text: session.draft}), /./);
+    await assert.rejects(api.handle(session, {action: 'send', text: session.draft}), /меню аккаунта|account menu/);
     await assert.rejects(api.handle(session, {action: 'connectionSettings'}), /sign-in/i);
     assert.equal(session.draft, 'Preserve my draft');
     client.emit('notification', {method:'account/login/completed',params:{loginId:'stale-login',success:true}});
@@ -96,6 +96,20 @@ exports.run = async () => {
     await assert.rejects(api.handle(session, {action:'send',text:session.draft}));
     await api.handle(session, {action:'accountCancel'});
     report.staleLoginKeepsNewOwnerBusy = true;
+    // External history invalidates a loaded server without emitting disconnected.
+    // Its browser-login lease and authBusy must both finish before reconnecting.
+    session.id='synthetic-history-thread';session.loaded=true;
+    session.items=[];
+    await api.handle(session,{action:'account'});
+    const external=api.store.session(session.key);
+    api.store.saveSession({...external,items:[{id:'synthetic-history-item',type:'userMessage',text:'Synthetic history'}]});
+    session.host.ready=true;api.select(session,false);
+    for(let attempt=0;session.loaded && attempt<100;attempt++)await new Promise(resolve=>setTimeout(resolve,10));
+    assert.equal(session.loaded,false);
+    await api.handle(session,{action:'accountRefresh'});
+    api.store.acquire('account-credentials')();
+    report.externalHistoryFinishesPendingLogin = true;
+    session.id=null;session.loaded=false;session.items=[];
     immediateCompletion = true;
     await api.handle(session, {action:'account'});
     report.immediateLoginCompletionHandled = true;

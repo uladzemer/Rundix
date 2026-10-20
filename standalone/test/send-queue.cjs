@@ -21,6 +21,17 @@ function extract(startText, endText) {
 
 function fixture() {
   const leases = new Set(), records = new Map(), calls = [], diagnostics = [];
+  const timers = new Map();let timerId=0, now=0;
+  const schedule=(fn, delay)=>{const id=++timerId;timers.set(id,{fn,at:now+delay});return id;};
+  const advance=async milliseconds=>{
+    const end=now+milliseconds;
+    for(;;){
+      const next=[...timers].filter(([,timer])=>timer.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];
+      if(!next)break;
+      now=next[1].at;timers.delete(next[0]);next[1].fn();await tick();
+    }
+    now=end;await tick();
+  };
   let sequence = 0, diskFailure = false, cacheUpdate = async () => {};
   const s = { key: 'synthetic-session', id: 'synthetic-thread', cwd: 'synthetic-project',
     loaded: true, busy: false, model: 'synthetic-model', prefs: {}, items: [],
@@ -41,6 +52,7 @@ function fixture() {
   };
   const noop = async () => {};
   const context = vm.createContext({
+    Date:class extends Date {static now(){return now;}},
     authBusy: false, accountReadRevision: 1, activeConnection: {}, account: {},
     limits: { updatedAt: 1 }, limitsRequest: null, catalogUpdatedAt: Date.now(),
     catalog: [{ model: s.model, supportedReasoningEfforts: [] }],
@@ -59,10 +71,11 @@ function fixture() {
     require: id => { assert.equal(id, './ui/limits.js');return { exhaustion: () => null }; },
     server, turnLeases: new Map(), publish() {}, randomUUID: () => 'synthetic-queued-' + ++sequence,
     acquireQueuedSession, assertQueueCurrent, output: { appendLine: text => diagnostics.push(text) },
-    setTimeout, notification, sessions: new Map([[s.key, s]]),
+    setTimeout:schedule, clearTimeout:id=>timers.delete(id), notification, sessions: new Map([[s.key, s]]),
     captureCompletion() {}, completionNotifications: { dispatch() {} },
     isActive: () => true, treeEvents: { fire() {} },
   });
+  context.browserSignInMessage=vm.runInContext('('+extract('  function browserSignInMessage(', '  function refreshAccountStatus').trim()+')',context);
   for (const [name, next] of [['save', 'function html'], ['send', 'async function preparationConfig'],
     ['queueFollowUp', 'async function steer'], ['drainFollowUps', 'async function applyPendingMode']]) {
     context[name] = vm.runInContext('(' + extract('  async function ' + name + '(', '  ' + next).trim() + ')', context);
@@ -79,7 +92,7 @@ function fixture() {
   vm.runInContext(disconnected, context);
   const emit = (method, id = 'synthetic-turn', status = 'completed', threadId = s.id) =>
     server.emit('notification', { method, params: { threadId, turn: { id, status } } });
-  return { s, server, context, leases, calls, records, diagnostics, emit,
+  return { s, server, context, leases, calls, records, diagnostics, emit, advance, timers,
     start: fn => { start = fn; }, list: fn => { list = fn; },
     failDisk: value => { diskFailure = value; }, cache: fn => { cacheUpdate = fn; },
     assertOwned() {
@@ -109,6 +122,15 @@ async function transportChecks() {
 }
 
 async function sendChecks() {
+  // Local and cross-window credential guards explain how to finish browser sign-in.
+  for(const language of ['ru','en']){
+    const guard=fixture();guard.context.locale.language=language;guard.context.authBusy=true;
+    guard.context.pendingLogin.current={};
+    await assert.rejects(guard.context.send(guard.s,'Synthetic input'),error=>error.retryable && (language==='en'?/account menu/:/меню аккаунта/).test(error.message));
+    guard.context.authBusy=false;guard.context.pendingLogin.current=null;guard.leases.add('account-credentials');
+    await assert.rejects(guard.context.send(guard.s,'Synthetic input'),error=>error.retryable && (language==='en'?/another window.*account menu/:/другом окне.*меню аккаунта/).test(error.message));
+    assert.equal(guard.calls.length,0);assert.equal(guard.s.draft,'Synthetic input');
+  }
   // Started notification already arrived when the reply times out.
   let f = fixture();
   f.start(async () => { f.emit('turn/started');throw uncertain(); });
@@ -144,12 +166,43 @@ async function sendChecks() {
   f.emit('turn/started');resolveList({ data: [] });
   await assert.rejects(starting);f.assertOwned();f.emit('turn/completed');f.assertReleased();
 
-  // Successful ordered check confirms absence; malformed checks cannot unlock.
-  for (const data of [[], [{ id: 'synthetic-old-turn', status: 'completed' }]]) {
-    f = fixture();f.list(async () => ({ data }));
-    await assert.rejects(f.context.send(f.s, 'Synthetic input'));f.assertReleased();
+  // Empty, previous, malformed and failed lists all keep leases until the same bound.
+  for (const result of [{data:[]}, {data:[{id:'synthetic-old-turn',status:'completed'}]}, {}, null]) {
+    f = fixture();f.s.turnId='synthetic-old-turn';
+    f.list(async () => {if(!result)throw Error('Synthetic list timeout');return result;});
+    await assert.rejects(f.context.send(f.s, 'Synthetic input'),error=>error.deliveryUncertain===true);
+    f.assertOwned();await f.advance(29999);f.assertOwned();
+    await f.advance(1);f.assertReleased();assert.match(f.s.error,/Проверьте чат/);
+    assert.equal(f.calls.filter(call=>call.method==='thread/turns/list').length,6);
     assert.equal(f.calls.filter(call => call.method === 'turn/start').length, 1);
   }
+  // A delayed new turn resolves polling, whether running or already finished.
+  for(const status of ['inProgress','completed','interrupted','failed']){
+    f=fixture();f.s.turnId='synthetic-old-turn';f.list(async()=>({data:[{id:'synthetic-old-turn',status:'completed'}]}));
+    await assert.rejects(f.context.send(f.s,'Synthetic input'));f.assertOwned();
+    f.list(async()=>({data:[{id:'synthetic-new-turn',status}]}));await f.advance(5000);
+    if(status==='inProgress'){f.assertOwned();assert.equal(f.s.turnId,'synthetic-new-turn');f.emit('turn/completed','synthetic-new-turn');}
+    f.assertReleased();assert.equal(f.timers.size,0);
+  }
+  // Notifications stop retries, and the deadline cannot overwrite a known running turn.
+  f=fixture();await assert.rejects(f.context.send(f.s,'Synthetic input'));
+  f.emit('turn/started');assert.equal(f.timers.size,0);await f.advance(30000);f.assertOwned();
+  f.emit('turn/completed');f.assertReleased();
+  // A reply still pending at the deadline cannot reclaim released ownership.
+  f=fixture();f.context.locale.language='en';f.list(async()=>({data:[]}));
+  await assert.rejects(f.context.send(f.s,'Synthetic input'),error=>error.deliveryUncertain===true);
+  f.list(()=>new Promise(resolve=>{resolveList=resolve;}));
+  await f.advance(30000);f.assertReleased();assert.match(f.s.error,/Check the chat before resending/);
+  resolveList({data:[{id:'synthetic-late-turn',status:'inProgress'}]});await tick();f.assertReleased();
+  // A normal completed send clears turnId; the next send must still recognize that previous turn.
+  f=fixture();f.start(async()=>{f.emit('turn/started');f.emit('turn/completed');return {turn:{id:'synthetic-turn'}};});
+  await f.context.send(f.s,'Synthetic first input');assert.equal(f.s.turnId,null);
+  f.start(async()=>{throw uncertain();});f.list(async()=>({data:[{id:'synthetic-turn',status:'completed'}]}));
+  await assert.rejects(f.context.send(f.s,'Synthetic second input'));f.assertOwned();
+  await f.advance(30000);f.assertReleased();
+  f=fixture();f.s.items=[{id:'synthetic-history-item',turnId:'synthetic-history-turn'}];
+  f.list(async()=>({data:[{id:'synthetic-history-turn',status:'completed'}]}));
+  await assert.rejects(f.context.send(f.s,'Synthetic input'));f.assertOwned();await f.advance(30000);f.assertReleased();
   f = fixture();f.list(async () => ({}));
   await assert.rejects(f.context.send(f.s, 'Synthetic input'));f.assertOwned();
   f.emit('turn/completed');f.assertReleased();
@@ -242,6 +295,11 @@ async function queueChecks() {
     assert.equal(f.calls.filter(call => call.method === 'turn/start').length, 1);
     assert.equal(f.s.followUps.length, 1);
   }
+  f=fixture();await f.context.queueFollowUp(f.s,f.s.draft,[]);
+  await assert.rejects(f.context.drainFollowUps(f.s));await f.advance(30000);f.assertReleased();
+  assert.equal(f.records.get(f.s.key).followUps[0].deliveryUncertain,true);
+  await assert.rejects(f.context.drainFollowUps(f.s,{manual:true}));
+  assert.equal(f.calls.filter(call=>call.method==='turn/start').length,1);
 }
 
 (async () => {

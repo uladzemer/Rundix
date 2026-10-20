@@ -241,13 +241,5 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
   };
   return adapter;
 }
-// The final structured report of an MCP turn is JSON for the client; in the chat it is shown as readable text.
-function reportMarkdown(text,language) {
-  let value;
-  try { value=JSON.parse(text); } catch { return null; }
-  if(!value || typeof value.result!=='string' || !['changedFiles','checks','remainingIssues'].every(key=>Array.isArray(value[key])))return null;
-  const ru=language!=='en';
-  const list=(title,items)=>items.length?'\n\n**'+title+'**\n'+items.map(item=>'- '+String(item)).join('\n'):'';
-  return value.result+list(ru?'Изменённые файлы':'Changed files',value.changedFiles)+list(ru?'Проверки':'Checks',value.checks)+list(ru?'Что осталось':'Remaining issues',value.remainingIssues);
-}
+const {markdown:reportMarkdown}=require('../ui/task-report.js');
 module.exports={executor,reportSchema,report,taskTitle,reportMarkdown};

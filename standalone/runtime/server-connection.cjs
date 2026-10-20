@@ -58,6 +58,13 @@ async function connect(deps) {
         message.method === "account/updated" ||
         message.method === "account/login/completed"
       ) {
+        // Provider login may notify before its account revision/lease is stable.
+        // Bootstrap already awaits authentication and then reads account/catalog;
+        // don't let an earlier background read poison that shared catalog promise.
+        if (deps.connectionStarting && deps.activeConnection?.provider) {
+          deps.onDeferredProviderRefresh?.();
+          return;
+        }
         deps.limitsEpoch++;
         deps.limitsRequest = null;
         deps.limits = {

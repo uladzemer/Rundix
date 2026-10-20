@@ -13,10 +13,13 @@ const {parseStrict} = require('./service-json.cjs');
 const {boundedRead, actionRequired} = require('./service-provider-config.cjs');
 
 const {plainSettings}=require('./service-settings.cjs');
+const {startupFailure}=require('./service-readiness.cjs');
 function boundedLogger(root) {
   const directory = path.join(root, 'diagnostics'); fs.mkdirSync(directory, {recursive:true, mode:0o700});
   const file = index => path.join(directory, 'service-' + index + '.log');
-  const codes = new Set(['host_error', 'cli_stopped', 'service_started', 'service_stopped', 'idle_exit_failed', 'provider_unavailable','archive_record_corrupt','archive_record_unavailable','archive_index_corrupt','archive_index_unavailable']);
+  const codes = new Set(['host_error', 'cli_stopped', 'service_started', 'service_stopped', 'idle_exit_failed', 'provider_unavailable','archive_record_corrupt','archive_record_unavailable','archive_index_corrupt','archive_index_unavailable',
+    'provider_auth_started','provider_auth_ready','provider_auth_failed','cli_read_binding_changed','cli_read_failed',
+    'provider_admission_ready','provider_admission_failed','provider_admission_auth_required','provider_account_refresh_deferred']);
   return input => {
     const code = codes.has(input?.code) ? input.code : 'host_error';
     try {
@@ -62,7 +65,8 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
   class HeadlessTransport extends EventEmitter {
     constructor(options) { super(); this.options = options; this.executable = options.executable; this.listeners = []; }
     async start() {
-      settings.assertValid();await provider.start();
+      settings.assertValid();
+      try {await provider.start();}catch(error){throw startupFailure(error,'provider');}
       const cli = provider.cli || provider.createCli(this.options); this.cli = cli;
       const on = (event, handler) => { cli.on(event, handler); this.listeners.push([event, handler]); };
       on('notification', message => {
@@ -86,22 +90,27 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       });
       on('disconnected', message => this.emit('disconnected', message));
       on('protocolError', message => this.emit('protocolError', message));
-      return cli.start();
+      try {return await cli.start();}catch(error){throw startupFailure(error,'cli');}
     }
     async request(method, params = {}, timeoutMs) {
       if (!this.cli || disposed) throw actionRequired('PROVIDER_UNAVAILABLE');
-      if (method !== 'turn/start') return this.cli.request(method, params, timeoutMs);
+      if (method !== 'turn/start') {
+        try {return await this.cli.request(method, params, timeoutMs);}
+        catch(error) {logger({code:error?.reason==='connection_changed'?'cli_read_binding_changed':'cli_read_failed'});throw error;}
+      }
       const task = taskForThread(params.threadId);
       if (!task || runs.has(params.threadId)) throw Object.assign(actionRequired('BUSY_ACTIVE'), {notSent:true, deliveryUncertain:false});
       let outcome;
       try {outcome = await provider.prepareTurn({taskId:task.taskId, spaceId:task.space || 'unbound',
         attemptId:randomUUID(), runId:randomUUID(), ...(task.waitId ? {waitId:task.waitId} : {})});}
-      catch(error) {throw Object.assign(error,{notSent:true,deliveryUncertain:false});}
+      catch(error) {logger({code:error?.code==='AUTH_REQUIRED'?'provider_admission_auth_required':'provider_admission_failed'});throw Object.assign(error,{notSent:true,deliveryUncertain:false});}
       if (outcome.kind !== 'ready') {
+        logger({code:outcome.code==='AUTH_REQUIRED'?'provider_admission_auth_required':'provider_admission_failed'});
         const wait = providerWait(outcome);
         throw Object.assign(actionRequired(outcome.code || 'PROVIDER_UNAVAILABLE'),
           {notSent:true, deliveryUncertain:false, providerWait:wait, retryable:outcome.code === 'BUSY_ACTIVE'});
       }
+      logger({code:'provider_admission_ready'});
       if (task.cancelRequested || disposed) { provider.releaseReserved(outcome.grant); throw Object.assign(actionRequired(), {notSent:true, deliveryUncertain:false}); }
       const row = {threadId:params.threadId, taskId:task.taskId, grant:outcome.grant, completed:new Set()}; runs.set(params.threadId, row);
       delete task.providerFailureCode;
@@ -127,6 +136,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     }
   }
   core = createSessionCore({paths:{storage:root}, workspaceState, settings, logger:coreLogger, clock,
+    onDeferredProviderRefresh:()=>logger({code:'provider_account_refresh_deferred'}),
     trusted:() => true, events:{changed:noop, sessionChanged:onSessionChanged, treeChanged:noop, notify:noop, completed:noop},
     hasChat:() => true, isActive:() => false, activeSession:() => null, openChat:noop, loadSelected:noop,
     defaultDirectory:() => root, editorSelection:() => null, activateConnectionOwner:noop,
@@ -134,7 +144,11 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     checkCliUpdates:noop, cliCheckPending:() => true, acceptCli:noop, clearProjectFiles:noop,
     applyPendingMode:async () => {}, taskSessions:() => mcp?.tasks, createTransport:HeadlessTransport});
   core.connections.register('rundix.service', {id:'service-provider', label:'Service provider',
-    authenticate:() => provider.authenticate(), configure:async () => {throw actionRequired('CLIENT_REQUIRED');}});
+    authenticate:async () => {
+      logger({code:'provider_auth_started'});
+      try {const result=await provider.authenticate();logger({code:'provider_auth_ready'});return result;}
+      catch(error) {logger({code:'provider_auth_failed'});throw startupFailure(error,'authentication');}
+    }, configure:async () => {throw actionRequired('CLIENT_REQUIRED');}});
   if (core.connections.selection().id === 'local') core.connections.select('service-provider');
   const transport = {
     privateDirectory:directory => fs.mkdirSync(directory, {recursive:true, mode:0o700}),

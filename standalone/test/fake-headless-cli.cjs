@@ -23,6 +23,20 @@ readline.createInterface({input:process.stdin}).on('line', line => {
   }
   if (!message.method || message.id === undefined) return;
   const params = message.params || {}; let result = {};
+  if (process.env.RUNDIX_SYNTHETIC_COLD_ACCOUNT_UPDATE === '1') {
+    if (message.method === 'account/login/start') {
+      output({method:'account/updated',params:{authMode:'chatgptAuthTokens'}});
+      setTimeout(() => output({id:message.id,result:{type:'chatgptAuthTokens'}}),50);
+      return;
+    }
+    if (['model/list','config/read'].includes(message.method)) {
+      const result=message.method==='model/list'
+        ? {data:[{model:'synthetic-model',isDefault:true,defaultReasoningEffort:'medium',supportedReasoningEfforts:[{reasoningEffort:'medium'}]}]}
+        : {config:{model:'synthetic-model',model_reasoning_effort:'medium'}};
+      setTimeout(() => output({id:message.id,result}),180);
+      return;
+    }
+  }
   if (message.method === 'account/login/start') result = {type:'chatgptAuthTokens'};
   if (message.method === 'account/read') result = {account:{type:'chatgpt', planType:'plus'}};
   if (message.method === 'account/rateLimits/read') result = {rateLimits:{primary:{usedPercent:1, windowDurationMins:300, resetsAt:Date.now() / 1000 + 3600}}};

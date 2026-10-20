@@ -2,6 +2,8 @@ require('./test-isolation.cjs').isolate();
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),puppeteer=require('puppeteer-core');
 const chrome=[process.env.CHROME_PATH,'C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(file=>file&&fs.existsSync(file));
 if(!chrome)throw Error('Set CHROME_PATH.');
+const artifacts=process.env.RUNDIX_BROWSER_ARTIFACT_DIR || path.join(__dirname,'../.verification');
+fs.mkdirSync(artifacts,{recursive:true});
 (async()=>{
   const browser=await puppeteer.launch({executablePath:chrome,headless:true,pipe:true});
   try{
@@ -18,8 +20,27 @@ if(!chrome)throw Error('Set CHROME_PATH.');
         window.update=()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'serviceChat',data:window.fixture}}));
         window.ack=ok=>{const last=window.calls.findLast(message=>message.requestId);window.dispatchEvent(new MessageEvent('message',{data:{type:'chatResult',ok,action:last.action,requestId:last.requestId}}));};
       },{language,theme});
-      for(const file of ['translations.js','i18n.js','forms.js','questions.js','markdown.js','markdown-view.js','service-chat.js'])await page.addScriptTag({content:fs.readFileSync(path.join(__dirname,'../ui',file),'utf8')});
+      for(const file of ['translations.js','i18n.js','forms.js','questions.js','markdown.js','markdown-view.js','task-report.js','service-chat.js'])await page.addScriptTag({content:fs.readFileSync(path.join(__dirname,'../ui',file),'utf8')});
       await page.evaluate(()=>window.update());assert.deepEqual(errors,[]);
+      const rawReport=JSON.stringify({result:'Synthetic **readable** report\n\n```js\nconst reportSynthetic = 2;\n```',changedFiles:['synthetic-'+ 'x'.repeat(120)+'.txt'],checks:['Synthetic passed'],remainingIssues:['Synthetic follow-up <img src=x onerror="window.injected=true">']});
+      await page.evaluate(raw=>{
+        window.fixture.items.push({id:'synthetic-report',type:'agentMessage',text:raw},{id:'synthetic-user-json',type:'userMessage',text:raw},
+          {id:'synthetic-partial',type:'agentMessage',text:'{"result":"Synthetic partial'});
+        window.fixture.viewRevision++;window.update();
+      },rawReport);
+      assert.equal(await page.$eval('[data-item-id="synthetic-report"] .message-content strong',node=>node.textContent),'readable');
+      assert.deepEqual(await page.$$eval('[data-item-id="synthetic-report"] .message-content p > strong',nodes=>nodes.filter(n=>n.parentElement.textContent===n.textContent).map(n=>n.textContent)),
+        language==='ru'?['Изменённые файлы','Проверки','Что осталось']:['Changed files','Checks','Remaining issues']);
+      assert.equal(await page.$$eval('[data-item-id="synthetic-report"] li',nodes=>nodes.length),3);
+      assert(!(await page.$eval('[data-item-id="synthetic-report"]',node=>node.textContent)).includes('"changedFiles"'));
+      assert((await page.$eval('[data-item-id="synthetic-user-json"]',node=>node.textContent)).includes('"changedFiles"'),'User JSON remains literal');
+      assert((await page.$eval('[data-item-id="synthetic-partial"]',node=>node.textContent)).includes('{"result"'),'Partial report remains literal');
+      assert.equal(await page.evaluate(()=>window.fixture.items.find(i=>i.id==='synthetic-report').text),rawReport,'Display formatting does not rewrite the transcript');
+      await page.click('[data-item-id="synthetic-report"] .code-copy');
+      assert.match(await page.evaluate(()=>window.calls.at(-1).text),/reportSynthetic/,'Copy uses displayed Markdown code blocks');
+      await page.evaluate(()=>{window.fixture.language=window.fixture.language==='ru'?'en':'ru';window.fixture.viewRevision++;window.update();});
+      assert((await page.$eval('[data-item-id="synthetic-report"]',node=>node.textContent)).includes(language==='ru'?'Changed files':'Изменённые файлы'));
+      await page.evaluate(language=>{window.fixture.language=language;window.fixture.viewRevision++;window.update();},language);
       assert.equal(await page.$eval('#service-draft',node=>node.value),'Synthetic restored host draft');
       assert.equal(await page.$$('img').then(nodes=>nodes.length),0);assert.equal(await page.evaluate(()=>window.injected),undefined);
       await page.$eval('#service-draft',node=>{node.value='';node.dispatchEvent(new Event('input'));});
@@ -45,14 +66,14 @@ if(!chrome)throw Error('Set CHROME_PATH.');
       });
       assert.equal(await page.evaluate(()=>window.calls.at(-1).cursor),'synthetic-next','Live snapshots preserve history traversal cursor');
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-      await page.screenshot({path:path.join(__dirname,`../.verification/service-chat-${language}-${theme}-${width}.png`),fullPage:true});
+      await page.screenshot({path:path.join(artifacts,`service-chat-${language}-${theme}-${width}.png`),fullPage:true});
       await page.evaluate(()=>{window.fixture.readOnly=true;window.fixture.owner='legacy';window.fixture.pendingRequests=[];window.fixture.viewRevision++;window.update();});
       assert.equal(await page.$eval('.composer button',node=>node.disabled),true,'Imported chats never send continuations');
       assert.equal(await page.$eval('.actions button:nth-child(2)',node=>node.disabled),true,'Imported chats never cancel a task');
       assert.match(await page.$eval('.service-note',node=>node.textContent),language==='ru'?/только чтение/:/read only/);
       assert.equal(await page.$eval('#service-draft',node=>node.value),'Synthetic retained draft new');
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-      await page.screenshot({path:path.join(__dirname,`../.verification/service-chat-legacy-${language}-${theme}-${width}.png`),fullPage:true});
+      await page.screenshot({path:path.join(artifacts,`service-chat-legacy-${language}-${theme}-${width}.png`),fullPage:true});
       await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'serviceChat',data:null}})));
       assert.equal(await page.$eval('#service-draft',node=>node.value),'Synthetic retained draft new');assert.equal(await page.$eval('.composer button',node=>node.disabled),true);
       await page.evaluate(()=>{window.fixture.closed=true;window.fixture.pendingRequests=[];window.update();});

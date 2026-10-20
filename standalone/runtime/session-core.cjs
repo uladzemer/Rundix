@@ -56,6 +56,7 @@ function createSessionCore(host) {
     Date: { now: () => clock.now() }, setTimeout: (...args) => clock.setTimeout(...args),
     clearTimeout: (...args) => clock.clearTimeout(...args),
     providerClient, refreshAccount, refreshLimits, refreshCatalog, resetConnection, updateDraftModel, preparationConfig,
+    onDeferredProviderRefresh:()=>host.onDeferredProviderRefresh?.(),
     asyncQuestions: require('./async-questions.cjs'), questionRecords: require('./question-records.cjs'),
     forms: require('../ui/forms.js'), modes: require('../ui/modes.js'), speed: require('../ui/speed.js'),
     buildInput: require('./input.cjs').buildInput,

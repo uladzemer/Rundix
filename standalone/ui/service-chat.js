@@ -1,4 +1,4 @@
-/* global acquireVsCodeApi, WorkbenchI18n, WorkbenchQuestions, WorkbenchMarkdownView, WorkbenchMarkdown */
+/* global acquireVsCodeApi, WorkbenchI18n, WorkbenchQuestions, WorkbenchMarkdownView, WorkbenchMarkdown, WorkbenchTaskReport */
 (()=>{
   const api=acquireVsCodeApi(),root=document.getElementById('app');
   let saved=api.getState() || {},state=null,initialized=false,pending=null,version=0;
@@ -50,13 +50,15 @@
   function showItems(rows,prepend=false){
     const atBottom=scrollY+innerHeight>=document.documentElement.scrollHeight-80;
     for(const item of rows){
-      const signature=JSON.stringify(item),existing=items.get(item.id);
+      const signature=JSON.stringify([item,state?.language]),existing=items.get(item.id);
       if(existing?.signature===signature)continue;
+      const display=item.type==='agentMessage'
+        ? {...item,text:WorkbenchTaskReport.markdown(item.text,state?.language) ?? item.text} : item;
       const article=el('article',null,'message '+(item.type==='userMessage'?'user':'agent'));
-      article.dataset.itemId=item.id;article.append(el('strong',item.type==='userMessage'?tr('You','Вы'):item.type==='agentMessage'?'Codex':item.type),markdown.render(item));
+      article.dataset.itemId=item.id;article.append(el('strong',item.type==='userMessage'?tr('You','Вы'):item.type==='agentMessage'?'Codex':item.type),markdown.render(display));
       if(item.truncated)article.append(el('small',tr('Display shortened','Отображение сокращено')));
       if(existing)existing.node.replaceWith(article);else if(prepend)transcript.insertBefore(article,transcript.firstChild);else transcript.append(article);
-      items.set(item.id,{node:article,signature,item});
+      items.set(item.id,{node:article,signature,item:display});
     }
     if(atBottom && !prepend)scrollTo(0,document.documentElement.scrollHeight);
   }

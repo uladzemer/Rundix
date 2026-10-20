@@ -439,7 +439,7 @@ class McpTasks {
         task.nextCheckAt=Date.now() + (error.providerWait.retryAfterMs || 0);task.retryNotBefore=task.nextCheckAt;
         task.progress='Waiting for provider availability';task.error=null;this.save(task);return;
       }
-      if(error?.reason==='action_required' && error?.notSent && !task.cancelRequested){
+      if(error?.reason==='action_required' && error?.notSent && !error.retryable && !task.cancelRequested){
         inputRecovery.remember(task,input); task.state='error';task.recoveryRequired=false;task.needsReconcile=false;
         task.error='action_required: Open companion connection settings and reconnect.';task.progress='Provider action required';
         this.release(task);this.save(task);return;

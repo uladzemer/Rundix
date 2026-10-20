@@ -205,7 +205,7 @@ function activate(context) {
     panel.webview.options={enableScripts:true,localResourceRoots:[vscode.Uri.joinPath(context.extensionUri,'ui')]};
     panel.iconPath=vscode.Uri.joinPath(context.extensionUri,'resources','extension-icon.png');
     const nonce=randomBytes(18).toString('base64'),uri=file=>panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri,'ui',file));
-    const scripts=['translations.js','i18n.js','forms.js','questions.js','markdown.js','markdown-view.js','service-chat.js'];
+    const scripts=['translations.js','i18n.js','forms.js','questions.js','markdown.js','markdown-view.js','task-report.js','service-chat.js'];
     panel.webview.html=`<!doctype html><html lang="${locale.language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${panel.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('mcp-panel.css')}"><link rel="stylesheet" href="${uri('service-chat.css')}"></head><body><main id="app"></main>${scripts.map(file=>`<script nonce="${nonce}" src="${uri(file)}"></script>`).join('')}</body></html>`;
     panel.webview.onDidReceiveMessage(async message=>{
       try{await serviceChatAction(record,message);await panel.webview.postMessage({type:'chatResult',ok:true,action:message.action,requestId:message.requestId});}

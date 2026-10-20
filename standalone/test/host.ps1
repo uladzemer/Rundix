@@ -22,7 +22,10 @@ if($TestFile -eq 'service-mode-host.cjs'){
   New-Item -ItemType Directory -Path $serviceTestUser -Force | Out-Null
   Set-Content -LiteralPath (Join-Path $serviceTestUser 'settings.json') -Value '{"rundix.mcpService":"service","rundix.cliAutoUpdate":false}' -Encoding utf8
 }
-$workbenchArgs=@(('--user-data-dir="{0}"' -f $workbenchProfile),('--extensions-dir="{0}"' -f $workbenchExtensions),('--extensionDevelopmentPath="{0}"' -f $workbenchRoot),('--extensionTestsPath="{0}"' -f (Join-Path $PSScriptRoot $TestFile)),'--skip-welcome','--skip-release-notes','--disable-workspace-trust','--new-window',('"{0}"' -f $workbenchProject))
+$workbenchDevelopment=Join-Path $workbenchProfile 'development-extension'
+& node (Join-Path $PSScriptRoot 'prepare-host.cjs') $workbenchDevelopment (Join-Path $PSScriptRoot $TestFile)
+if($LASTEXITCODE -ne 0){throw 'Failed to prepare isolated source extension.'}
+$workbenchArgs=@(('--user-data-dir="{0}"' -f $workbenchProfile),('--extensions-dir="{0}"' -f $workbenchExtensions),('--extensionDevelopmentPath="{0}"' -f $workbenchDevelopment),('--extensionTestsPath="{0}"' -f (Join-Path $PSScriptRoot $TestFile)),'--skip-welcome','--skip-release-notes','--disable-workspace-trust','--new-window',('"{0}"' -f $workbenchProject))
 if($ForceReducedMotion){$workbenchArgs+='--force-prefers-reduced-motion'}
 $workbenchReport=Join-Path $workbenchRoot ('.verification/' + [IO.Path]::GetFileNameWithoutExtension($TestFile) + '.json')
 Remove-Item -LiteralPath $workbenchReport -Force -ErrorAction SilentlyContinue

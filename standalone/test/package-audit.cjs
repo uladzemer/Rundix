@@ -47,6 +47,10 @@ function audit(file) {
     }
     offset += 46 + nameLength + extraLength + commentLength;
   }
+  // Check the source extracted from the actual ZIP, not the test-patched module cache.
+  const contract = require('./production-service-contract.cjs');
+  contract.validatePaths(sources.get('extension/runtime/service-paths.cjs'));
+  contract.validateEnvironment(sources.get('extension/runtime/service-environment.cjs'));
   // Experimental service mode ships its complete runtime, never synthetic fixtures.
   for (const module of ['service-paths','service-endpoint','service-ipc','service-process','service-lifecycle','service-space','service-cli',
     'service-json','service-provider-config','service-provider-rpc','service-provider-contract','service-provider',

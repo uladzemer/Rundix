@@ -8,6 +8,7 @@ const {locations} = require('../runtime/service-endpoint.cjs');
 const {configLocation} = require('../runtime/service-provider-config.cjs');
 const {serviceEnvironment} = require('../runtime/service-environment.cjs');
 const root = fs.mkdtempSync(path.join(os.tmpdir(),'rundix-guard-synthetic-'));
+(async()=>{
 try {
   const watched = [path.join(root,'local'),path.join(root,'roaming')];
   let before = snapshot(watched); assertUnchanged(before,watched);
@@ -28,16 +29,26 @@ try {
   assert.equal(servicePaths({root}).directory,root,'Explicit root takes precedence');
   const options = {platform:'win32',sid:'S-1-5-21-42420',root:defaults.directory};
   const production = locations({...options,pathEnv:{},localAppData:path.join(root,'local')});
-  const isolated = locations({...options,pathEnv:{RUNDIX_SERVICE_ENDPOINT_NAMESPACE:'synthetic'}});
-  assert.notEqual(isolated.address,production.address,'Namespace isolates even an explicitly passed default root');
+  const isolated = locations({...options,root});
+  assert.notEqual(isolated.address,production.address,'Temporary roots isolate IPC without environment-controlled namespaces');
   const launcher = require('../runtime/service-launcher.cjs').installLauncher();
   assert.equal(launcher.root,process.env.RUNDIX_SERVICE_ROOT,'Launcher without options uses the isolated default');
   assert(fs.existsSync(path.join(path.dirname(require('../runtime/service-launcher.cjs').registration(launcher.root).entryPath),'service-paths.cjs')));
   assert.throws(() => require('../runtime/service-provider-config.cjs').readProviderConfig(),{code:'PROVIDER_NOT_CONFIGURED'});
-  const inherited = serviceEnvironment();
-  for (const key of ['RUNDIX_SERVICE_ROOT','RUNDIX_PROVIDER_CONFIG_DIR','RUNDIX_SERVICE_ENDPOINT_NAMESPACE']) assert.equal(inherited[key],process.env[key]);
-  const child = spawnSync(process.execPath,['-e',"const assert=require('node:assert/strict');const p=require('./runtime/service-paths.cjs').servicePaths();assert.equal(p.directory,process.env.RUNDIX_SERVICE_ROOT);assert.equal(p.providerConfig,require('node:path').join(process.env.RUNDIX_PROVIDER_CONFIG_DIR,'provider.json'));"],
+  const contract = require('./production-service-contract.cjs');
+  contract.validatePaths(fs.readFileSync(require.resolve('../runtime/service-paths.cjs'),'utf8'));
+  const installedRuntime = path.dirname(require('../runtime/service-launcher.cjs').registration(launcher.root).entryPath);
+  contract.validatePaths(fs.readFileSync(path.join(installedRuntime,'service-paths.cjs'),'utf8'));
+  contract.validateEnvironment(fs.readFileSync(require.resolve('../runtime/service-environment.cjs'),'utf8'));
+  await assert.rejects(require('../runtime/service-provider-config.cjs').readProviderConfigAsync(),{code:'PROVIDER_NOT_CONFIGURED'});
+  assert.equal((await require('../runtime/service-launcher.cjs').installLauncherAsync()).root,process.env.RUNDIX_SERVICE_ROOT);
+  const inherited = serviceEnvironment({...process.env,rundix_unknown:'synthetic'});
+  assert(!Object.keys(inherited).some(key=>/^RUNDIX_/i.test(key)));
+  const child = spawnSync(process.execPath,['-e',
+    "const assert=require('node:assert/strict');assert(!Object.keys(process.env).some(key=>/^RUNDIX_/i.test(key)));"],
     {env:inherited,windowsHide:true,stdio:'pipe',timeout:10000});
-  assert.equal(child.status,0,'Filtered service children retain isolation overrides');
-  console.log('PASS isolation: defaults, overrides, endpoint namespace, child environment; guard detects creation/modification/deletion and skips junction targets.');
+  assert.equal(child.status,0,'Filtered service children never receive RUNDIX_*');
+  console.log('PASS isolation: source-only overrides, production/installed override rejection, stripped child environment; guard detects creation/modification/deletion and skips junction targets.');
 } finally {fs.rmSync(root,{recursive:true,force:true});}
+
+})().catch(error=>{console.error(error);process.exitCode=1;});

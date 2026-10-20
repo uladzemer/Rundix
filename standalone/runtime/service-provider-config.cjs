@@ -103,7 +103,7 @@ function readProviderConfigAsync(options = {}) {
   const {Worker} = require('node:worker_threads');
   return new Promise((resolve, reject) => {
     // Never serialize credentials, environment or injected functions.
-    const worker = new Worker(__filename, {workerData:{providerConfig:{configPath:options.configPath}}});
+    const worker = new Worker(__filename, {workerData:{providerConfig:{configPath:options.configPath || configLocation()}}});
     const timer = setTimeout(() => {worker.terminate();reject(actionRequired('PROVIDER_UNAVAILABLE'));}, 60000);
     worker.once('message', value => {clearTimeout(timer);value.error ? reject(actionRequired(value.error)) : resolve(value.result);});
     worker.once('error', () => {clearTimeout(timer);reject(actionRequired());});

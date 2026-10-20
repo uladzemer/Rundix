@@ -39,6 +39,17 @@ function isolate() {
   const root = inherited ? null : fs.mkdtempSync(path.join(os.tmpdir(),'rundix-test-isolation-'));
   if (root) Object.assign(process.env, {RUNDIX_TEST_ISOLATED:'1', RUNDIX_SERVICE_ROOT:path.join(root,'service'),
     RUNDIX_PROVIDER_CONFIG_DIR:path.join(root,'provider-config'), RUNDIX_SERVICE_ENDPOINT_NAMESPACE:randomUUID()});
+  // Mutate only the source-tree module export, never copied/installed runtimes.
+  // No runtime file imports this helper; it is absent from the VSIX.
+  const sourcePaths = require('../runtime/service-paths.cjs');
+  const productionPaths = sourcePaths.servicePaths;
+  sourcePaths.servicePaths = (options = {}) => {
+    const env = options.pathEnv || process.env;
+    const paths = productionPaths({...options,root:options.root || env.RUNDIX_SERVICE_ROOT});
+    if (env.RUNDIX_PROVIDER_CONFIG_DIR) paths.providerConfig = path.join(path.resolve(env.RUNDIX_PROVIDER_CONFIG_DIR),'provider.json');
+    // A unique temporary root already namespaces IPC, including installed copies.
+    return paths;
+  };
   active = {before, root};
   process.on('exit', () => {
     try {assertUnchanged(before); console.log('PASS real-root guard: unchanged (metadata only).');}

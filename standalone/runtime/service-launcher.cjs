@@ -77,6 +77,8 @@ function installLauncher({source = path.join(__dirname, '..'), nodePath = proces
   } finally {unlock();}
 }
 function installLauncherAsync(options={}) {
+  // Resolve in the caller; source-tree tests inject their root before the worker starts.
+  options={...options,root:locations(options).directory};
   const {Worker}=require('node:worker_threads');
   return new Promise((resolve,reject)=>{
     const worker=new Worker(__filename,{workerData:{install:options}});

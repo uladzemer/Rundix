@@ -184,6 +184,9 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
       },
     });
     startPending=false;unresolved=false;
+    // Consume recoverable input at confirmed delivery, including a retry after
+    // companion preparation failed. Later bookkeeping must not leave it unsent.
+    if(current() && s.draft===text)s.draft='';
     if(current())s.lastStartedTurnId=result.turn.id;
     observed ||= {id:result.turn.id,status:s.busy?'inProgress':'completed'};
     if(!s.busy)release();

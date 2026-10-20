@@ -2,6 +2,25 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('nod
 const {executor,report}=require('../runtime/mcp-executor.cjs');
 const {SessionStore}=require('../runtime/store.cjs');
 const {canonical,reserve,acquire}=require('../runtime/task-directory.cjs');
+async function rotationCheckpointChecks(project) {
+ const connection={id:'synthetic-pool',owner:'synthetic.owner',revision:'synthetic-revision'};
+ const s={key:'synthetic-rotation-session',id:'synthetic-rotation-chat',loaded:true,cwd:project,items:[],draft:''};
+ const task={taskId:'synthetic-rotation-task',sessionKey:s.key,projectDirectory:project,connection};
+ let attempts=0,acknowledged=0;
+ const adapter=executor({connections:{selection:()=>connection,resolve:async()=>({...connection,provider:{}})},
+  sessions:new Map([[s.key,s]]),store:{},save:async()=>{},alive:()=>true,pending:new Map(),
+  send:async()=>{
+   if(++attempts===1)throw Object.assign(Error('Synthetic rotation pending'),{retryable:true,notSent:true});
+   return {turnId:'synthetic-rotation-turn'};
+  },sent:()=>{acknowledged++;}});
+ await assert.rejects(()=>adapter.start(task,'Synthetic rotation clarification'),error=>error.retryable);
+ assert.equal(s.draft,'Synthetic rotation clarification','Unsent continuation remains recoverable');
+ await assert.rejects(()=>adapter.start(task,'Synthetic rotation clarification',()=>{
+  if(task.turnId)throw Error('Synthetic checkpoint failure');
+ }),/Synthetic checkpoint failure/);
+ assert.equal(s.draft,'','Accepted continuation is consumed even when the following checkpoint fails');
+ assert.equal(acknowledged,1,'The composer receives confirmation before checkpoint failure');
+}
 async function hostSendChecks(project,store) {
  const turns=[],turnLeases=new Map();let complete=true,lostReply=false;
  const noop=async()=>{};
@@ -44,6 +63,7 @@ async function hostSendChecks(project,store) {
   create(){throw Error('Unexpected creation');},pending:new Map(),save:noop,alive:()=>true});
  await assert.rejects(()=>adapter.start(task,'Synthetic checkpoint failure',()=>{if(task.turnId)throw Error('Synthetic persistence failure');}),/Synthetic persistence failure/);
  assert.equal(task.turnId,'synthetic-host-turn-4');assert.equal(s.busy,true,'Post-send checkpoint failure must preserve the active host turn');
+ assert.equal(s.draft,'','Confirmed input is consumed before a post-send checkpoint can fail');
  const agentInstructions=turns[3].collaborationMode.settings.developer_instructions;
  assert.match(agentInstructions,/requester is an automated agent client/);
  assert.match(agentInstructions,/Decide routine implementation details yourself/);
@@ -114,10 +134,20 @@ async function hostSendChecks(project,store) {
   sendMode='edited';await adapter.start(task,'Synthetic accepted input');
   assert.equal(s.draft,'Synthetic newer draft');assert.equal(sent.at(-1).text,'Synthetic accepted input');
   for(const mode of ['failure','quota']){
-   sendMode=mode;
+   sendMode=mode;s.draft='';
    await assert.rejects(()=>adapter.start(task,'Synthetic unsent input'));
    assert.equal(s.draft,'Synthetic unsent input');assert.equal(sent.length,2,'Failed or cancelled sends must not clear the composer');
   }
+  s.draft='Synthetic unrelated user draft';sendMode='success';
+  await adapter.start(task,'Synthetic separate continuation');
+  assert.equal(s.draft,'Synthetic unrelated user draft','A continuation preserves an existing unrelated draft');
+  // The task scheduler re-enters start() after a definite retryable refusal.
+  s.draft='';sendMode='failure';
+  await assert.rejects(()=>adapter.start(task,'Synthetic rotation continuation'));
+  assert.equal(s.draft,'Synthetic rotation continuation');
+  s.draft='Synthetic edit during rotation';sendMode='success';
+  await adapter.start(task,'Synthetic rotation continuation');
+  assert.equal(s.draft,'Synthetic edit during rotation','Retry setup must not overwrite user edits');
   sendMode='success';
   s.items.push({id:'synthetic-commentary',type:'agentMessage',text:'Synthetic progress commentary'});
   s.items.push({id:'synthetic-new-report',type:'agentMessage',text:JSON.stringify({result:'Synthetic new result',changedFiles:[],checks:[],remainingIssues:[]})});
@@ -147,7 +177,7 @@ async function hostSendChecks(project,store) {
   assert.deepEqual(sendOptions.at(-1).modelSelection,{effort:'high'});
   task.model='synthetic-model';await adapter.start(task,'Synthetic model input');
   assert.deepEqual(sendOptions.at(-1).modelSelection,{model:'synthetic-model',effort:'high',fast:false});
-  await hostSendChecks(project,store);
+  await rotationCheckpointChecks(project);await hostSendChecks(project,store);
   selected={id:'local',revision:'synthetic-local'};assert.throws(()=>adapter.assertConnection());await assert.rejects(()=>adapter.cancel(task));
   selected={...task.connection,revision:'synthetic-new-revision'};await assert.rejects(()=>adapter.start(task,'Synthetic input'));
   reserve(store,project,'synthetic-task');

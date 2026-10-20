@@ -35,12 +35,12 @@ module.exports=async({page,suffix=''})=>{
       assert.equal(await page.$eval('textarea',n=>n.value),'Synthetic newer draft','Delayed acknowledgement preserves new input');
       await page.evaluate(()=>{
         window.fixture={...window.fixture,key:'synthetic-other-'+window.fixture.key,draft:'Synthetic other draft'};window.update();
-        window.dispatchEvent(new MessageEvent('message',{data:{type:'sent',key:'synthetic-mcp-'+innerWidth,text:'Synthetic newer draft'}}));
+        window.dispatchEvent(new MessageEvent('message',{data:{type:'sent',key:'synthetic-mcp-'+innerWidth,text:'Synthetic MCP task'}}));
       });
       assert.equal(await page.$eval('textarea',n=>n.value),'Synthetic other draft','Acknowledgement for another session preserves the active input');
-      if(!suffix)assert.equal(await page.evaluate(()=>window.saved.drafts['synthetic-mcp-'+innerWidth]),'','Cleared inactive drafts survive webview recreation');
+      if(!suffix)assert.equal(await page.evaluate(()=>window.saved.drafts['synthetic-mcp-'+innerWidth]),'Synthetic newer draft','Inactive user edits survive delayed acknowledgement and recreation');
       await page.evaluate(()=>{window.fixture={...window.fixture,key:'synthetic-mcp-'+innerWidth};window.update();});
-      assert.equal(await page.$eval('textarea',n=>n.value),'','Acknowledgement also clears the matching cached draft in an inactive session');
+      assert.equal(await page.$eval('textarea',n=>n.value),'Synthetic newer draft','Returning to the task preserves its unrelated local draft');
     }
   }finally{
     await page.evaluate(original=>{window.fixture=original.fixture;window.update();const input=document.querySelector('textarea');input.value=original.draft;input.dispatchEvent(new Event('input',{bubbles:true}));},original);

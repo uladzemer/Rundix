@@ -283,7 +283,27 @@ async function queueChecks() {
   assert.equal(f.calls.filter(call=>call.method==='turn/start').length,1);
 }
 
+async function rotatedDraftChecks() {
+  for(const edited of [false,true]){
+    const f=fixture();let prepares=0;f.context.providerClient=()=>({});
+    f.context.activeConnection.provider={authenticate:async()=>{},prepareTurn:async()=>{
+      if(++prepares===1)throw Object.assign(Error('Synthetic rotation pending'),{retryable:true});
+    }};
+    await assert.rejects(f.context.send(f.s,'Synthetic input'),error=>error.notSent && error.retryable);
+    assert.equal(f.s.draft,'Synthetic input','Pre-send rotation failure preserves recoverable input');
+    f.start(async()=>{
+      if(edited)f.s.draft='Synthetic user edit';
+      f.emit('turn/started');f.emit('turn/completed');return {turn:{id:'synthetic-delivered'}};
+    });
+    await f.context.send(f.s,'Synthetic input');
+    assert.equal(f.calls.filter(call=>call.method==='turn/start').length,1);
+    assert.equal(f.s.draft,edited?'Synthetic user edit':'','Successful retry consumes only the delivered draft');
+    await f.context.save(f.s);
+    assert.equal(f.records.get(f.s.key).draft,f.s.draft,'Consumed draft stays cleared in persistence');
+  }
+}
+
 (async () => {
-  await transportChecks();await sendChecks();await queueChecks();
+  await rotatedDraftChecks();await transportChecks();await sendChecks();await queueChecks();
   console.log('Send/queue: uncertain start reconciliation and leases, no follow-up replay, transactional enqueue passed.');
 })().catch(error => { console.error(error);process.exitCode = 1; });

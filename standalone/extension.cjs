@@ -602,7 +602,7 @@ function activate(context) {
       webview.asWebviewUri(
         vscode.Uri.joinPath(context.extensionUri, "ui", name),
       );
-    return `<!doctype html><html lang="${locale.language}" data-language="${locale.language}" data-ui-version="${require("./package.json").version}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data:;"><link rel="stylesheet" href="${uri("app.css")}"></head><body><main id="app"></main><script nonce="${nonce}" src="${uri("translations.js")}"></script><script nonce="${nonce}" src="${uri("i18n.js")}"></script><script nonce="${nonce}" src="${uri("forms.js")}"></script><script nonce="${nonce}" src="${uri("questions.js")}"></script><script nonce="${nonce}" src="${uri("question-panel.js")}"></script><script nonce="${nonce}" src="${uri("task-preflight.js")}"></script><script nonce="${nonce}" src="${uri("icons.js")}"></script><script nonce="${nonce}" src="${uri("tabs.js")}"></script><script nonce="${nonce}" src="${uri("controls.js")}"></script><script nonce="${nonce}" src="${uri("toggles.js")}"></script><script nonce="${nonce}" src="${uri("modes.js")}"></script><script nonce="${nonce}" src="${uri("speed.js")}"></script><script nonce="${nonce}" src="${uri("changes.js")}"></script><script nonce="${nonce}" src="${uri("limits.js")}"></script><script nonce="${nonce}" src="${uri("limits-view.js")}"></script><script nonce="${nonce}" src="${uri("markdown.js")}"></script><script nonce="${nonce}" src="${uri("markdown-view.js")}"></script><script nonce="${nonce}" src="${uri("messages.js")}"></script><script nonce="${nonce}" src="${uri("activity.js")}"></script><script nonce="${nonce}" src="${uri("transcript-scroll.js")}"></script><script nonce="${nonce}" src="${uri("queued-editor.js")}"></script><script nonce="${nonce}" src="${uri("app.js")}"></script></body></html>`;
+    return `<!doctype html><html lang="${locale.language}" data-language="${locale.language}" data-ui-version="${require("./package.json").version}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data:;"><link rel="stylesheet" href="${uri("app.css")}"></head><body><main id="app"></main><script nonce="${nonce}" src="${uri("translations.js")}"></script><script nonce="${nonce}" src="${uri("i18n.js")}"></script><script nonce="${nonce}" src="${uri("forms.js")}"></script><script nonce="${nonce}" src="${uri("questions.js")}"></script><script nonce="${nonce}" src="${uri("question-panel.js")}"></script><script nonce="${nonce}" src="${uri("task-preflight.js")}"></script><script nonce="${nonce}" src="${uri("icons.js")}"></script><script nonce="${nonce}" src="${uri("tabs.js")}"></script><script nonce="${nonce}" src="${uri("controls.js")}"></script><script nonce="${nonce}" src="${uri("toggles.js")}"></script><script nonce="${nonce}" src="${uri("modes.js")}"></script><script nonce="${nonce}" src="${uri("speed.js")}"></script><script nonce="${nonce}" src="${uri("changes.js")}"></script><script nonce="${nonce}" src="${uri("limits.js")}"></script><script nonce="${nonce}" src="${uri("limits-view.js")}"></script><script nonce="${nonce}" src="${uri("markdown.js")}"></script><script nonce="${nonce}" src="${uri("markdown-view.js")}"></script><script nonce="${nonce}" src="${uri("messages.js")}"></script><script nonce="${nonce}" src="${uri("activity.js")}"></script><script nonce="${nonce}" src="${uri("transcript-scroll.js")}"></script><script nonce="${nonce}" src="${uri("queued-editor.js")}"></script><script nonce="${nonce}" src="${uri("composer-drafts.js")}"></script><script nonce="${nonce}" src="${uri("app.js")}"></script></body></html>`;
   }
   function saveHost(host) {
     const record = {
@@ -1094,7 +1094,7 @@ function activate(context) {
       // Follow-ups wait by default; steering is an explicit action on a pending message.
       if(s.busy || s.followUpSending || s.followUps?.length || msg.action==='enqueue'){
         await queueFollowUp(s,msg.text,[...s.attachments]);
-        await view(s).panel?.webview.postMessage({type:'sent',key:s.key});
+        await view(s).panel?.webview.postMessage({type:'sent',key:s.key,text:msg.text});
         if(!s.busy)await drainFollowUps(s);
         return;
       }
@@ -1109,9 +1109,9 @@ function activate(context) {
         connections.assertCurrent(sendResult.connection);
         sendResult = await send(s, msg.text);
       }
-      s.draft = "";
+      if(s.draft===msg.text)s.draft = "";
       await save(s);
-      await view(s).panel?.webview.postMessage({ type: "sent", key: s.key });
+      await view(s).panel?.webview.postMessage({ type: "sent", key: s.key, text:msg.text });
     } else if (msg.action === "draft") {
       if (typeof msg.text === "string" && msg.text.length <= 200000) {
         s.draft = msg.text;

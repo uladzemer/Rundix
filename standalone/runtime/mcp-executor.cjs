@@ -119,13 +119,21 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       task.baselineItems=s.items.map(item=>item.id);
       delete task.turnId;task.turnIds=[];
       checkpoint();
-      s.draft=input;await save(s);
+      // A retry or continuation must not replace a draft the user has edited.
+      if(!s.draft)s.draft=input;
+      await save(s);
       if(task.cancelRequested){task.awaitingPreparation=true;throw Error('Cancelled before sending.');}
       const options=turnOptions(task);
       const sendTurn=async()=>{
         sending=true;
         const result=await send(s,input,[],options);
-        if(result?.turnId){task.turnId=result.turnId;task.turnIds=[...(task.turnIds || []),result.turnId];checkpoint();}
+        if(result?.turnId){
+          task.turnId=result.turnId;task.turnIds=[...(task.turnIds || []),result.turnId];
+          if(s.draft===input)s.draft='';
+          await save(s);
+          await sent(s,input);
+          checkpoint();
+        }
         return result;
       };
       let result=await sendTurn();
@@ -141,9 +149,6 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
         result=await sendTurn();
         if(task.cancelRequested && !result?.waitUntil)await handle(s,{action:'stop'});
       }
-      if(s.draft===input)s.draft='';
-      await save(s);
-      await sent(s,input);
       } catch(error) {if(!sending)error.notSent=true;throw error;}
     },
     async status(task) {

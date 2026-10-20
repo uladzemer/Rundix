@@ -64,7 +64,7 @@ function audit(file) {
     'extension/runtime/mcp-access.cjs',
     'extension/runtime/mcp-executor.cjs', 'extension/runtime/task-directory.cjs', 'extension/docs/mcp.md',
     'extension/runtime/connection-companions.cjs', 'extension/runtime/mcp-panel.cjs',
-    'extension/ui/mcp-panel.js', 'extension/ui/mcp-panel.css',
+    'extension/ui/mcp-panel.js', 'extension/ui/mcp-panel.css', 'extension/ui/composer-drafts.js',
     'extension/runtime/new-session-settings.cjs',
     'extension/runtime/queued-edits.cjs', 'extension/ui/queued-editor.js',
     'extension/runtime/queued-attachments.cjs',

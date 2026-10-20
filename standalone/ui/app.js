@@ -439,6 +439,7 @@ function send(action, payload = {}) {
   });
 }
 const localDrafts = { ...(previous.drafts || {}) };
+const composerDrafts = new WorkbenchComposerDrafts(previous.composerDrafts);
 function persist() {
   if (state.key) localDrafts[state.key] = input.value;
   vscode.setState({
@@ -446,6 +447,7 @@ function persist() {
     key: state.key,
     draft: input.value,
     drafts: localDrafts,
+    composerDrafts: composerDrafts.records,
     quizDrafts: [...quizDrafts],
     queuedDrafts: [...queuedDrafts],
     historyScope,
@@ -1801,6 +1803,7 @@ function submitText(action='send') {
   state.error=null;
   updateSubmitState();
   pendingSends.set(state.key, input.value);
+  composerDrafts.submit(state.key,input.value);
   if(!state.busy && !state.compacting && !state.followUps?.length && !state.followUpSending && action==='send'){
     const node=el('article',undefined,'item user pending-send');
     const images=el('div',undefined,'message-images');
@@ -2237,6 +2240,7 @@ window.addEventListener("message", (event) => {
       close();
     }
     const changed = !!state.key && state.key !== msg.data.key;
+    let cachedDraft=input.value;
     if (changed) {
       if(imageViewer?.open)imageViewer.close();
       pendingReveal = null;
@@ -2245,11 +2249,15 @@ window.addEventListener("message", (event) => {
       scrollPositions.set(state.key, messages.scrollTop);
       historyGeneration++;
       sending = false;
-      input.value = Object.hasOwn(localDrafts, msg.data.key)
+      cachedDraft = Object.hasOwn(localDrafts, msg.data.key)
         ? localDrafts[msg.data.key]
-        : msg.data.draft || "";
-    } else if (!hydrated && !input.value && msg.data.draft)
-      input.value = msg.data.draft;
+        : undefined;
+    }
+    const reconciled=composerDrafts.receive(msg.data.key,cachedDraft,msg.data.draft || '');
+    input.value=reconciled.text;
+    if(reconciled.delivered){
+      sending=false;pendingSends.delete(msg.data.key);pendingPreviews.delete(msg.data.key);
+    }
     if (!historyScope) historyScope = msg.data.historyScope === "all" ? "all" : "workspace";
     hydrated = true;
     state = { ...state, ...msg.data };
@@ -2265,14 +2273,18 @@ window.addEventListener("message", (event) => {
       submitted = msg.text ?? pendingSends.get(key);
     pendingSends.delete(key);
     if (key !== state.key) {
-      if (localDrafts[key] === submitted) {
+      if (composerDrafts.canConsume(key,submitted,localDrafts[key])) {
         localDrafts[key] = "";
+        composerDrafts.consumed(key);
         persist();
       }
       return;
     }
     sending = false;
-    if (input.value === (submitted ?? draft)) input.value = "";
+    if (composerDrafts.canConsume(key,submitted ?? draft,input.value)) {
+      input.value = "";
+      composerDrafts.consumed(key);
+    }
     resizeComposer();
     updateSubmitState();
     draft = "";
@@ -2363,6 +2375,7 @@ input.addEventListener('paste',event=>{
   }
 });
 input.addEventListener("input", () => {
+  composerDrafts.edit(state.key);
   if (input.value === "/") {
     input.value = "";
     open("commands");

@@ -5,6 +5,9 @@ const unreadableGraceMs=60000,recordLockTimeoutMs=2000,recordLockMaxAgeMs=10000;
 const pause=new Int32Array(new SharedArrayBuffer(4));
 function lockValue(target){try{return JSON.parse(fs.readFileSync(target,'utf8'));}catch(error){if(error.code==='ENOENT'||error instanceof SyntaxError)return null;throw error;}}
 function staleLock(target,maxAgeMs){
+ try{return staleCheck(target,maxAgeMs);}catch{return false;}
+}
+function staleCheck(target,maxAgeMs){
  // Record locks live for milliseconds, so an old one is stale even if its pid was reused or its owner hung.
  if(maxAgeMs){try{if(Date.now()-fs.statSync(target).mtimeMs>maxAgeMs)return true;}catch(error){if(error.code==='ENOENT')return false;throw error;}}
  const owner=lockValue(target);
@@ -37,7 +40,11 @@ function removeGuardOwner(target,owner){
 }
 // Best-effort file removal: antivirus or indexers can briefly hold handles on Windows; that must
 // neither mask a lock that was acquired nor leave the caller without its release function.
-function removeQuietly(file){try{fs.unlinkSync(file);}catch{}}
+function removeQuietly(file,attempts=1){
+ for(let attempt=0;attempt<attempts;attempt++){
+  try{fs.unlinkSync(file);return;}catch(error){if(error.code==='ENOENT')return;if(attempt+1<attempts)Atomics.wait(pause,0,0,25);}
+ }
+}
 function publish(temp,target,content){
  try{fs.linkSync(temp,target);return true;}
  catch(error){
@@ -57,7 +64,8 @@ function tryLock(target,maxAgeMs){
   // Linking a fully written file publishes the owner atomically without replacing a winner.
   fs.writeFileSync(temp,content,{flag:'wx',mode:0o600});
   for(let attempt=0;attempt<2;attempt++){
-   if(publish(temp,target,content))return ()=>{if(lockValue(target)?.nonce===nonce)removeQuietly(target);};
+   // Releasing retries briefly: a lock left behind by a transient handle would block its live owner's next acquire.
+   if(publish(temp,target,content))return ()=>{let owner=null;try{owner=lockValue(target);}catch{}if(owner?.nonce===nonce)removeQuietly(target,5);};
    // Serialize stale removal and re-read under the guard: another reaper may
    // already have replaced the dead lease with a live owner.
    if(!staleLock(target,maxAgeMs)&&fs.existsSync(target))return null;

@@ -474,6 +474,8 @@ function activate(context) {
             id: item.id,
             type: item.type,
             text: s.preflight?.enabled&&item.type==='agentMessage'?preflight.display(itemText(item)):itemText(item),
+            // The webview sees display text, so the host decides from raw items whether a quiz was answered.
+            ...(item.type==='agentMessage' && asyncQuestions.questions(item).length ? {asyncAnswered:asyncQuestions.hasReply(s.items,item.id)} : {}),
             images:messageImages(item,pastedImageRoot,file=>host.panel.webview.asWebviewUri(vscode.Uri.file(file)).toString()),
             status: item.status,
             turnId: item.turnId,
@@ -1362,7 +1364,8 @@ function activate(context) {
     if (authBusy) throw Object.assign(Error(pendingLogin.current ? browserSignInMessage() : locale.t('Дождитесь переключения аккаунта.')),{notSent:true,retryable:true});
     if(s.sendingTask)throw Object.assign(Error(locale.t('Дождитесь обработки уточнений перед согласованием.')),{notSent:true,retryable:true});
     let accountLease;
-    try{accountLease = store.acquire('account-credentials');}catch(error){throw Object.assign(Error(browserSignInMessage(true)),{retryable:true});}
+    // Only a held lease is 'busy in another window'; file-system failures keep their own message and are not retried.
+    try{accountLease = store.acquire('account-credentials');}catch(error){if(error?.syscall)throw Object.assign(error,{notSent:true});throw Object.assign(Error(browserSignInMessage(true)),{notSent:true,retryable:true});}
     let directoryLease=null, leasedDirectory=null;
     const ensureDirectory=()=>{
       const actual=taskDirectory.canonical(s.cwd || cwd());

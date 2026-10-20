@@ -149,17 +149,5 @@
       id:String(index),question:question.title,options:(question.options || []).map(label=>({label})),
     }))}};
   }
-  function hasReply(items,itemId){
-    return (items || []).some(item=>{
-      if(item.type!=='userMessage')return false;
-      const text=item.text || (item.content || []).map(part=>part.text || '').join('\n');
-      const match=/^<send_user_message_question_reply>\s*([\s\S]*?)\s*<\/send_user_message_question_reply>$/.exec(text.trim());
-      if(!match)return false;
-      try{return JSON.parse(match[1]).some(reply=>{
-        const id=JSON.parse(reply.questionItemId);
-        return typeof reply.answer==='string' && Array.isArray(id) && id[0]==='request_user_input_async' && id[1]===itemId;
-      });}catch{return false;}
-    });
-  }
-  root.WorkbenchQuestions = {create,fromAsync,hasReply};
+  root.WorkbenchQuestions = {create,fromAsync};
 })(globalThis);

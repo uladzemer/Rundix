@@ -84,7 +84,7 @@
       for(const item of state.items || []){
         const request=item.type==='agentMessage'?root.WorkbenchQuestions.fromAsync(item):null;
         const marker=state.asyncQuestionReplies?.[item.id];
-        if(request && (!marker || marker==='unknown' && !state.mcpTask) && !root.WorkbenchQuestions.hasReply(state.items,item.id))entries.push({key:'a:'+item.id,request,action:'answerAsync',target:{itemId:item.id},uncertain:marker==='unknown'});
+        if(request && (!marker || marker==='unknown' && !state.mcpTask) && !item.asyncAnswered)entries.push({key:'a:'+item.id,request,action:'answerAsync',target:{itemId:item.id},uncertain:marker==='unknown' && state.asyncQuestionSending!==item.id});
       }
       for(const record of state.questionHistory || []){
         if(entries.some(entry=>entry.key===record.id))continue;

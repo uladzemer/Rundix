@@ -240,8 +240,8 @@ module.exports=async({page})=>{
  assert.ok(await page.$eval(panel+' .primary',node=>!node.disabled));
  await page.click(panel+' .primary');
  assert.equal(await page.evaluate(()=>window.calls.filter(call=>call.itemId==='synthetic-uncertain').length),2,'Ordinary unknown permits an explicit retry');
- const reply='<send_user_message_question_reply>\n'+JSON.stringify([{questionItemId:JSON.stringify(['request_user_input_async',uncertain.id,0]),question:'Synthetic retry choice',answer:'Synthetic retained answer'}])+'\n</send_user_message_question_reply>';
- await set({items:[uncertain,{id:'synthetic-observed',type:'userMessage',text:reply}]});
+ // The host marks answered quizzes from raw items; the webview only sees display text for the reply.
+ await set({items:[{...uncertain,asyncAnswered:true},{id:'synthetic-observed',type:'userMessage',text:'Synthetic retry choice / Synthetic retained answer'}]});
  assert.ok(await page.$eval(panel,node=>node.hidden),'Observed transcript reply suppresses retry even with unknown marker');
  assert.ok(await page.$eval('[data-item-id="synthetic-uncertain"] .quiz-transcript-open',node=>node.textContent.includes('Ответы сохранены')));
  await page.click('[data-item-id="synthetic-uncertain"] .quiz-transcript-open');

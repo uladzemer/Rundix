@@ -19,12 +19,7 @@ function unavailable(reason = 'action_required') {
 function rejected(error) {
   return Object.assign(Error('CLI request failed.'), {code:'rejected', deliveryUncertain:error?.deliveryUncertain !== false});
 }
-function environment(source) {
-  // Preserve CODEX_HOME and the normal user configuration/history. Credential
-  // overrides cannot choose a personal sign-in for the service process.
-  return Object.fromEntries(Object.entries(source).filter(([key]) =>
-    !/^(?:OPENAI|CODEX|CHATGPT)_.*(?:AUTH|TOKEN|KEY|SECRET|PASSWORD)/i.test(key)));
-}
+const {serviceEnvironment:environment} = require('./service-environment.cjs');
 function safeRevision(value) { return Number.isSafeInteger(value) && value >= 0; }
 function sameFence(a, b) {
   if (!a || !b) return false;

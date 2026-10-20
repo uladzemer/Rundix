@@ -430,3 +430,26 @@ Read-only review of these two fixes reported no outstanding confirmed findings.
 It found terminal reconciliation clearing the action-required text; that was
 fixed and covered by the real-IPC test. The final focused round reran wrong-ID,
 mixed token/refusal and lost-reply cases, verifying no duplicate fallback reply.
+
+
+## Final review corrections: input/environment and compatibility
+
+Service, provider and CLI children share a minimal environment allowlist: PATH/Path,
+SystemRoot/windir/COMSPEC/PATHEXT, USERPROFILE/HOME/APPDATA/LOCALAPPDATA/TEMP/TMP,
+CODEX_HOME, LANG/LC_*, NODE_EXTRA_CA_CERTS and HTTP(S)_PROXY/NO_PROXY. A fixed
+ELECTRON_RUN_AS_NODE=1 is supplied internally; no inherited Node injection flags,
+repository credentials or project variables cross into the service children.
+Adapter space selection still uses its original cwd/CLAUDE_PROJECT_DIR.
+
+Linked worktrees must have a gitdir/gitdir back-pointer resolving to their own
+.git marker before sharing a main repository space. Missing/foreign pointers fail
+closed. Submodules/separate git directories without commondir remain independent.
+Task-directory reservation canonicalization retains the exact 0.3.1 algorithm;
+stricter alias/device normalization is confined to service-space identity. Default
+window request validation ordering and wait timer rearming also retain legacy behavior.
+Malformed service waitSeconds is rejected before touching the shared connection.
+
+S2 is an explicit owner decision: projectDirectory may execute outside the launch
+space, including another repository. Tasks belong to the submitting adapter's
+space; execution cwd is not an authorization boundary. This permits cross-repo
+work and must be considered when enabling a service provider for MCP clients.

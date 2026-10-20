@@ -18,6 +18,7 @@ async function main(){
    async start(task){sends++;task.chatId='synthetic-chat';done=false;cancelled=false;},
    async status(){return {chatId:'synthetic-chat',done,pending,cancelled,report:{result:'Synthetic result',changedFiles:['synthetic.js'],checks:['Synthetic check passed'],remainingIssues:[]}};}};
   tasks=new McpTasks({store,adapter});
+  assert.throws(()=>tasks.call('cancel_task',{taskId:'synthetic-unknown',requestId:''}),{code:'invalid_argument'},'Window request validation keeps legacy error precedence');
   const args={requestId:'synthetic-submit',description:'Synthetic task',acceptanceCriteria:'Synthetic check',projectDirectory:project};
   const first=tasks.call('submit_task',args);assert.equal(first.state,'queued');assert.equal(sends,0);
   assert.equal(tasks.call('submit_task',args).taskId,first.taskId);

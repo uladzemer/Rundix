@@ -5,10 +5,13 @@ const {createServiceClient} = require('../runtime/service-adapter.cjs');
 const {installLauncher, registration} = require('../runtime/service-launcher.cjs');
 const {startService, locations, readDiscovery, publish} = require('../runtime/service-endpoint.cjs');
 const {createTaskRpc} = require('../runtime/service-task-rpc.cjs');
+const {serviceEnvironment} = require('../runtime/service-environment.cjs');
 async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rundix-adapter-synthetic-'));
   let endpoint; const clients = [];
   try {
+    const clean=serviceEnvironment({PATH:'synthetic-path',CODEX_HOME:'synthetic-home',LC_ALL:'C',HTTPS_PROXY:'synthetic-proxy',GITHUB_TOKEN:'SYNTHETIC',AWS_PROFILE:'synthetic',DATABASE_URL:'synthetic',NODE_OPTIONS:'synthetic',CLAUDE_PROJECT_DIR:'synthetic'});
+    assert.deepEqual(clean,{PATH:'synthetic-path',CODEX_HOME:'synthetic-home',LC_ALL:'C',HTTPS_PROXY:'synthetic-proxy',ELECTRON_RUN_AS_NODE:'1'});
     for (const platform of ['win32','darwin']) {
       const opts = {platform, sid:'S-1-5-21-123456789', uid:12345, home:path.join(root,'synthetic-home'), localAppData:path.join(root,'synthetic-local')};
       const normal = locations(opts), explicit = locations({...opts, root:normal.directory});
@@ -29,6 +32,8 @@ async function main() {
     assert(!schemas.some(t => t.name === 'reload_window'));
     assert(schemas.find(t => t.name === 'list_tasks').inputSchema.properties.state.enum.includes('waiting_limit'));
     const ar = await a.call(null, 'list_tasks', {}), br = await b.call(null, 'list_tasks', {});
+    for(const waitSeconds of ['30',0,-1,1501,{},null])await assert.rejects(a.call(null,'wait_task',{taskId:'synthetic',waitSeconds}),{code:'invalid_argument'});
+    assert.equal((await a.call(null,'list_tasks',{})).space,ar.space,'Malformed waits retain the shared connection');
     assert.equal(ar.space, a.space); assert.equal(br.space, b.space); assert.notEqual(ar.space, br.space);
     assert.throws(() => createServiceClient({root, cwd, env:{CLAUDE_PROJECT_DIR:path.join(root, 'absent')}}));
     const discovery = readDiscovery(locations({root}));

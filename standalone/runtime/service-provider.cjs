@@ -23,10 +23,7 @@ function validWait(result, waitId) {
     ['low_remaining', 'exhausted'].includes(result.reason);
 }
 const quotaCodes = new Set(['LIMITS_UNKNOWN', 'RESET_UNKNOWN', 'BUSY_ACTIVE']);
-function providerEnvironment(source) {
-  return Object.fromEntries(Object.entries(source).filter(([key]) =>
-    !/^(?:NODE_OPTIONS|NODE_PATH)$|^(?:OPENAI|CODEX|CHATGPT)_.*(?:AUTH|TOKEN|KEY|SECRET|PASSWORD)/i.test(key)));
-}
+const {serviceEnvironment:providerEnvironment} = require('./service-environment.cjs');
 
 // The public service, never the provider child, owns all grants and turn state.
 // Callback authorization is tied to the exact live parent RPC and its deadline.

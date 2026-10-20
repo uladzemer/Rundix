@@ -3,8 +3,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {createHash} = require('node:crypto');
-const {resolveSpace, launchBinding} = require('../runtime/service-space.cjs');
-const {canonical, reserve, acquire, release} = require('../runtime/task-directory.cjs');
+const {resolveSpace, launchBinding, canonical} = require('../runtime/service-space.cjs');
+const {reserve, acquire, release} = require('../runtime/task-directory.cjs');
 const {SessionStore} = require('../runtime/store.cjs');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rundix-space-synthetic-'));
@@ -13,7 +13,7 @@ function linked(relative, gitdir, common) {
   const worktree = mkdir(relative);
   fs.mkdirSync(gitdir, {recursive:true});
   fs.writeFileSync(path.join(worktree, '.git'), 'gitdir: ' + path.relative(worktree, gitdir) + '\n');
-  if (common) fs.writeFileSync(path.join(gitdir, 'commondir'), path.relative(gitdir, common) + '\n');
+  if (common) {fs.writeFileSync(path.join(gitdir, 'commondir'), path.relative(gitdir, common) + '\n');fs.writeFileSync(path.join(gitdir, 'gitdir'), path.join(worktree, '.git') + '\n');}
   return worktree;
 }
 try {
@@ -30,6 +30,11 @@ try {
   assert.equal(a.root, canonical(repo)); assert.equal(a.kind, 'git');
   assert.equal(a.spaceId, createHash('sha256').update('rundix-space-v1\0' + process.platform + '\0git\0' + canonical(repo)).digest('hex'));
   assert.notEqual(a.spaceId, b.spaceId);
+  const spoof = mkdir('spoof'); fs.writeFileSync(path.join(spoof, '.git'), 'gitdir: ' + path.join(common, 'worktrees/synthetic'));
+  assert.throws(() => resolveSpace(spoof), {code:'space_git_invalid'});
+  const back = path.join(common, 'worktrees/external/gitdir');fs.unlinkSync(back);
+  assert.throws(() => resolveSpace(external), {code:'space_git_invalid'});
+  fs.writeFileSync(back, path.join(external,'.git'));
   for (const shared of [worktree, external]) assert.equal(resolveSpace(shared).spaceId, a.spaceId);
   for (const independent of [nested, separate, submodule, fakeClaude]) {
     assert.equal(resolveSpace(independent).root, canonical(independent));

@@ -3,6 +3,7 @@ const {locations, connectService, probeOwner} = require('./service-endpoint.cjs'
 const {launchBinding} = require('./service-space.cjs');
 const {registration} = require('./service-launcher.cjs');
 const {run, tools, wait} = require('./mcp-server.cjs');
+const {serviceEnvironment} = require('./service-environment.cjs');
 
 const failure = code => Object.assign(Error(code === 'service_start_timeout'
   ? 'Service owner is not responding. Check the installed service before retrying with the same requestId.'
@@ -23,8 +24,7 @@ function createServiceClient(options = {}) {
       })]).finally(() => clearTimeout(timer));
       if (['absent','dead'].includes(owner.state)) {
         const installed = registration(root);
-        const env = {...process.env, ELECTRON_RUN_AS_NODE:'1'};
-        delete env.NODE_OPTIONS; delete env.NODE_PATH;
+        const env = serviceEnvironment();
         const child = spawn(installed.nodePath, [installed.entryPath, '--service-root', root],
           {shell:false, detached:true, windowsHide:true, stdio:'ignore', cwd:root, env});
         child.on('error', () => {}); child.unref();
@@ -44,6 +44,10 @@ function createServiceClient(options = {}) {
     return connecting;
   }
   async function call(_descriptor, name, args) {
+    args ||= {};
+    if (['wait_task','wait_tasks'].includes(name) && args.waitSeconds !== undefined &&
+        (!Number.isInteger(args.waitSeconds) || args.waitSeconds < 1 || args.waitSeconds > 1500))
+      throw Object.assign(Error('Invalid waitSeconds'), {code:'invalid_argument'});
     const current = await connect();
     let response;
     try {

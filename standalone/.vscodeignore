@@ -86,3 +86,4 @@
 !runtime/service-limit-poller.cjs
 !runtime/service-adapter.cjs
 !runtime/service-launcher.cjs
+!runtime/service-environment.cjs

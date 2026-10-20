@@ -139,7 +139,7 @@ class McpTasks {
       let timer;
       const deadline=Date.now()+seconds*1000;
       const arm=()=>{clearTimeout(timer);timer=setTimeout(()=>finish(true),this.checkpointDelay([task],deadline));};
-      const check=waiter.check;waiter.check=()=>{check();if(this.waiters.has(waiter))arm();};
+      const check=waiter.check;waiter.check=()=>{check();if(this.scope && this.waiters.has(waiter))arm();};
       this.waiters.add(waiter);arm();signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
     });
   }
@@ -165,7 +165,7 @@ class McpTasks {
       let timer;
       const deadline=Date.now()+seconds*1000;
       const arm=()=>{clearTimeout(timer);timer=setTimeout(()=>finish(true),this.checkpointDelay(tasks,deadline));};
-      const check=waiter.check;waiter.check=()=>{check();if(this.waiters.has(waiter))arm();};
+      const check=waiter.check;waiter.check=()=>{check();if(this.scope && this.waiters.has(waiter))arm();};
       this.waiters.add(waiter);arm();signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
     });
   }
@@ -213,7 +213,7 @@ class McpTasks {
       };
       return this.adapter.ensureConnection?available(this.adapter).then(persist):persist();
     });
-    if (['continue_task','cancel_task'].includes(name)) this.get(args.taskId);
+    if (this.scope && ['continue_task','cancel_task'].includes(name)) this.get(args.taskId);
     if (!['continue_task','cancel_task'].includes(name)) throw fail('invalid_argument', 'Unknown tool');
     return this.operation(args.requestId, name, args, op => {
       const task = this.get(args.taskId);

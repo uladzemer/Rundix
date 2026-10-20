@@ -4,7 +4,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {createHash} = require('node:crypto');
 const {TextDecoder} = require('node:util');
-const {canonical} = require('./task-directory.cjs');
+function canonical(directory) {
+  if (typeof directory !== 'string' || directory.includes('\0') || !path.isAbsolute(directory)) throw Error('projectDirectory must be absolute.');
+  if (process.platform === 'win32' && (/^\\\\\.\\/.test(directory) || /^\\\\\?\\globalroot(?:\\|$)/i.test(directory)))
+    throw Error('Device directories are unsupported.');
+  const real = fs.realpathSync.native(directory);
+  if (!fs.statSync(real).isDirectory()) throw Error('Project directory is unavailable.');
+  if (process.platform !== 'win32') return path.normalize(real);
+  // DOS/UNC extended prefixes name the same directory and must hash identically.
+  const plain = real.replace(/^\\\\\?\\UNC\\/i, '\\\\').replace(/^\\\\\?\\(?=[a-z]:\\)/i, '');
+  const normalized = path.win32.normalize(plain);
+  const root = path.win32.parse(normalized).root;
+  return (normalized.length > root.length ? normalized.replace(/\\+$/, '') : normalized).toLowerCase();
+}
 
 function failure(code) { return Object.assign(Error(code), {code}); }
 function directory(value) {
@@ -59,6 +71,18 @@ function gitRoot(worktree, gitMarker) {
       return directory(path.dirname(gitdir));
     }
     if (hop === 8 || !common.isFile()) throw failure('space_git_invalid');
+    if (!linked) {
+      // A gitdir pointer alone cannot confer another repository's task space.
+      const back = marker(path.join(gitdir, 'gitdir'));
+      if (!back?.isFile()) throw failure('space_git_invalid');
+      const pointed = path.resolve(gitdir, line(path.join(gitdir, 'gitdir')));
+      const actual = path.join(worktree, '.git');
+      let target;
+      try {target = fs.realpathSync.native(pointed);} catch {throw failure('space_git_invalid');}
+      const expected = fs.realpathSync.native(actual);
+      if ((process.platform === 'win32' ? target.toLowerCase() : target) !==
+          (process.platform === 'win32' ? expected.toLowerCase() : expected)) throw failure('space_git_invalid');
+    }
     gitdir = directory(path.resolve(gitdir, line(commonFile)));
     if (seen.has(gitdir)) throw failure('space_git_invalid');
     seen.add(gitdir); linked = true;
@@ -88,4 +112,4 @@ function launchBinding({env = process.env, cwd = process.cwd()} = {}) {
   const launchDirectory = directory(source === 'cwd' ? cwd : fromEnv);
   return {launchDirectory, source, ...resolveSpace(launchDirectory)};
 }
-module.exports = {resolveSpace, launchBinding};
+module.exports = {resolveSpace, launchBinding, canonical};

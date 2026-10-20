@@ -18,6 +18,8 @@ try {
   assert.notEqual(canonical(repo), canonical(child), 'Canonical cwd remains exact');
 
   reserve(store, repo, 'synthetic-parent');
+  const legacyReal=fs.realpathSync.native(repo), legacyReservationKey=createHash('sha256').update(process.platform==='win32'?legacyReal.toLowerCase():legacyReal).digest('hex');
+  assert.equal(store.read('task-directory',legacyReservationKey).taskId,'synthetic-parent','Reservation filename keeps the 0.3.1 key');
   assert.throws(() => reserve(store, child, 'synthetic-child'), /reserved/);
   assert.throws(() => acquire(store, child), /reserved/, 'Chat in subfolder conflicts with parent task');
   acquire(store, child, 'synthetic-parent')();

@@ -37,13 +37,15 @@ async function main(){
     migration=createMigration({root:serviceRoot});await migration.sync();
     const sa=resolveSpace(a).spaceId,sb=resolveSpace(b).spaceId;
     const visible=migration.visible(sa,[canonical(a)]);assert.equal(visible.length,1);assert.equal(migration.visible(sb,[canonical(a)]).length,0);
+    assert.equal(visible[0].session,undefined,'Imported sessions are not retained in the in-memory projection');
+    assert.equal(visible[0].task.unsentInputs,undefined);assert.equal(visible[0].task.unsentInputCount,1);
     const legacySpace=migration.spaces([canonical(a)])[0];assert(legacySpace?.spaceId.startsWith('legacy:'));
     assert.equal(migration.visible(legacySpace.spaceId,[canonical(a)]).length,1);
     assert.equal(migration.visible(legacySpace.spaceId,[canonical(b)]).length,0);
     assert.throws(()=>old.acquire('mcp-bridge'),'Service holds v1 lease while alive');
     assert(!fs.existsSync(sourceTasks));const backup=fs.readdirSync(path.join(source,'mcp')).find(name=>name.startsWith('backup-'));assert(backup);
     assert.equal(fs.readdirSync(path.join(source,'mcp',backup,'tasks')).length,3);assert(old.session('synthetic-manual'));
-    assert.equal(migration.chat(sa,visible[0].taskId,[canonical(a)],'synthetic-generation').readOnly,true);
+    assert.equal((await migration.chat(sa,visible[0].taskId,[canonical(a)],'synthetic-generation')).readOnly,true);
     await assert.rejects(require('../runtime/mcp-bridge.cjs').request(path.join(source,'mcp','bridge.json'),'list_tasks',{}),{code:'adapter_upgrade_required'});
     assert.equal(require('../runtime/service-migration.cjs').legacyBridgeRoot(serviceRoot,path.join(source,'mcp','bridge.json')),canonical(source));
     const registryStore=new SessionStore(serviceRoot),registryLease=registryStore.acquire('legacy-roots');
@@ -64,6 +66,12 @@ async function main(){
       service=await require('../runtime/service-main.cjs').runService({root:serviceRoot,hostOptions:data.hostOptions});
       for(const folder of [a,b]){const client=new ServiceWindowClient({root:serviceRoot,trusted:true,workspaceFolders:[pathToFileURL(folder).href]});clients.push(client);await client.start();}
       const [wa,wb]=clients;assert.equal(wa.snapshots.get(sa).tasks[0].readOnly,true);assert.equal(wb.snapshots.get(sb).tasks.length,1);
+      const open=fs.promises.open;let transcriptReads=0;
+      try{
+        fs.promises.open=async function(file,...args){if(String(file).includes(path.sep+'legacy'+path.sep))transcriptReads++;return open.call(this,file,...args);};
+        await wa.refresh(sa);await wb.refresh(sb);assert.equal(transcriptReads,0,'Panel snapshots use metadata without opening imported transcripts');
+        await wa.chat(sa,'chat.open',{taskId:wa.snapshots.get(sa).tasks[0].taskId});assert.equal(transcriptReads,1,'A chat reads only its own bounded stored record on demand');
+      }finally{fs.promises.open=open;}
       const id=wa.snapshots.get(sa).tasks[0].taskId;assert.equal((await wa.chat(sa,'chat.open',{taskId:id})).owner,'legacy');
       await assert.rejects(wb.chat(sb,'chat.open',{taskId:id}),{code:'unknown_task'});
       await assert.rejects(wa.call(sa,'continue_task',{taskId:id,requestId:'synthetic-forbidden',clarification:'Synthetic forbidden execution'}),{code:'unknown_task'});
@@ -149,13 +157,16 @@ async function main(){
     seed(additiveSource,'synthetic-repeat',a);fs.writeFileSync(repeatedFile,JSON.stringify(newer));
     const additiveSessions=new SessionStore(path.join(additiveSource,'sessions-v1')),transcript=additiveSessions.session('synthetic-session-synthetic-repeat');
     transcript.items.push({id:'synthetic-transcript-update',type:'agentMessage',text:'Synthetic transcript-only update'});additiveSessions.saveSession(transcript);
-    await additive.sync();assert(additive.chat(sa,additive.visible(sa,[canonical(a)]).find(row=>row.task.taskId==='synthetic-repeat').taskId,[canonical(a)],'synthetic-generation').items.some(item=>item.text==='Synthetic transcript-only update'));await additive.close();
+    await additive.sync();assert((await additive.chat(sa,additive.visible(sa,[canonical(a)]).find(row=>row.task.taskId==='synthetic-repeat').taskId,[canonical(a)],'synthetic-generation')).items.some(item=>item.text==='Synthetic transcript-only update'));await additive.close();
     const recopyRoot=make('service-recopy'),recopySource=make('legacy-recopy');seed(recopySource,'synthetic-changing',a);registerRoot(recopyRoot,recopySource);
+    const recopyFile=path.join(recopySource,'mcp','tasks','mcp-task-synthetic-changing.json'),unboundedMetadata=JSON.parse(fs.readFileSync(recopyFile,'utf8'));
+    unboundedMetadata.createdAt={synthetic:'x'.repeat(1024*1024)};unboundedMetadata.closedAt='x'.repeat(1024*1024);fs.writeFileSync(recopyFile,JSON.stringify(unboundedMetadata));
     let changedOnce=false;const recopy=createMigration({root:recopyRoot,hooks:{afterCopy(){if(changedOnce)return;changedOnce=true;
       const file=path.join(recopySource,'mcp','tasks','mcp-task-synthetic-changing.json'),row=JSON.parse(fs.readFileSync(file,'utf8'));row.progress='Synthetic changed during copy';fs.writeFileSync(file,JSON.stringify(row));
     }}});
     await recopy.sync();assert.equal(recopy.status(canonical(recopySource)).state,'retry_later');await recopy.sync({force:true});
-    assert.equal(recopy.visible(sa,[canonical(a)])[0].task.progress,'Synthetic changed during copy');await recopy.close();
+    assert.equal(recopy.visible(sa,[canonical(a)])[0].task.progress,'Synthetic changed during copy');
+    assert.equal(recopy.visible(sa,[canonical(a)])[0].task.createdAt,0);assert.equal(recopy.visible(sa,[canonical(a)])[0].task.closedAt,null);await recopy.close();
     console.log('PASS legacy migration: real mid-copy process crash, idempotent verify/marker/backup, live bridge/turn gates, lifetime lease, read-only inferred/unknown spaces, A/B isolation and no queued execution.');
   }finally{await migration?.close();clients.forEach(client=>client.close());await service?.shutdown();assert.equal(path.dirname(base),os.tmpdir());assert(path.basename(base).startsWith('rundix-migration-synthetic-'));fs.rmSync(base,{recursive:true,force:true});}
 }

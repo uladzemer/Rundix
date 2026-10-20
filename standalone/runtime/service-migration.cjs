@@ -94,7 +94,7 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
         if(!key(entry.taskId))throw failure('migration_conflict');
         const row=await read(targetFor(generation,entry.taskId));
         if(digest(row)!==entry.hash || row.sourceId!==sourceId || digest(await read(path.join(backup,'mcp-task-'+entry.taskId+'.json')))!==digest(row.task))throw failure('migration_conflict');
-        records.push(row);
+        records.push(describe(row,targetFor(generation,entry.taskId)));
       }
       return records;
     }
@@ -128,7 +128,7 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
     try{
       for(const name of names){
         const sourceFile=path.join(active,name),task=await read(sourceFile);
-        if(!key(task.taskId) || task.taskId!==name.slice(9,-5) || !key(task.sessionKey) || typeof task.projectDirectory!=='string' || !path.isAbsolute(task.projectDirectory) || task.projectDirectory.includes('\0'))throw failure('migration_conflict');
+        if(!key(task.taskId) || task.taskId!==name.slice(9,-5) || !key(task.sessionKey) || typeof task.projectDirectory!=='string' || task.projectDirectory.length>16384 || !path.isAbsolute(task.projectDirectory) || task.projectDirectory.includes('\0'))throw failure('migration_conflict');
         if(!['queued','running','waiting_approval','waiting_limit','completed','error','cancelled'].includes(task.state) || !Array.isArray(task.operations))throw failure('migration_conflict');
         let session=null;const sessionFile=sourceStore.file('session',task.sessionKey);
         if(await exists(sessionFile)){
@@ -143,7 +143,7 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
         // Only this pending generation may be re-copied. Committed targets stay
         // immutable, including when a taskId reappears with newer source data.
         await atomic(targetFor(generation,task.taskId),row);
-        records.push(row);checks.push({file:sourceFile,hash:digest(task)});if(session)checks.push({file:sessionFile,hash:digest(session)});
+        records.push(describe(row,targetFor(generation,task.taskId)));checks.push({file:sourceFile,hash:digest(task)});if(session)checks.push({file:sessionFile,hash:digest(session)});
         await hooks.afterCopy?.(records.length);
       }
       const verifySource=async()=>{
@@ -152,8 +152,8 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
         for(const check of checks)if(digest(await read(check.file))!==check.hash)throw changed();
       };
       await verifySource();
-      for(const row of records)if(digest(await read(targetFor(generation,row.task.taskId)))!==digest(row))throw failure('migration_conflict');
-      const manifest={schemaVersion:1,sourceId,source,records:records.map(row=>({taskId:row.task.taskId,hash:digest(row)}))};
+      for(const row of records)if(digest(await read(targetFor(generation,row.task.taskId)))!==row.recordHash)throw failure('migration_conflict');
+      const manifest={schemaVersion:1,sourceId,source,records:records.map(row=>({taskId:row.task.taskId,hash:row.recordHash}))};
       const receipt={schemaVersion:1,source,generation,manifest,phase:'verified'};
       await atomic(receiptFile,receipt);await hooks.afterVerify?.();await verifySource();
       await atomic(markerFile,{schemaVersion:1,sourceId,generation,manifestHash:digest(manifest)});await hooks.afterMarker?.();await verifySource();
@@ -162,9 +162,17 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
       await finish(source,sourceId,selected([...saved,...records]));
     }finally{for(const release of sessionLeases)release();}
   }
+  function describe(row,file){
+    const value=row.task,session=row.session?Object.fromEntries(Object.entries(row.session).filter(([name])=>!['updatedAt','revision'].includes(name))):null;
+    const task={taskId:value.taskId,description:typeof value.description==='string'?value.description.slice(0,160):'',state:value.state,progress:typeof value.progress==='string'?value.progress.slice(0,2000):'',
+      chatId:value.chatId || null,projectDirectory:row.projectDirectory,createdAt:Number.isFinite(value.createdAt)?value.createdAt:0,updatedAt:Number.isFinite(value.updatedAt)?value.updatedAt:0,closedAt:Number.isFinite(value.closedAt)?value.closedAt:null,
+      report:projection.report(value.report),unsentInputCount:value.unsentInputs?.length || 0};
+    return {sourceId:row.sourceId,taskId:row.taskId,projectDirectory:row.projectDirectory,inferredSpace:row.inferredSpace,interrupted:!!row.interrupted,task,file,
+      recordHash:digest(row),contentHash:digest({task:value,session})};
+  }
   function selected(records){
     const latest=new Map(),seen=new Set();
-    for(const row of records){const session=row.session?Object.fromEntries(Object.entries(row.session).filter(([name])=>!['updatedAt','revision'].includes(name))):null;const identity=row.taskId+'\0'+digest({task:row.task,session});if(seen.has(identity))continue;seen.add(identity);latest.set(row.taskId,row);}
+    for(const row of records){const identity=row.taskId+'\0'+row.contentHash;if(seen.has(identity))continue;seen.add(identity);latest.set(row.taskId,row);}
     return [...latest.values()];
   }
   async function sync({force=false}={}){
@@ -200,11 +208,12 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
   const all=()=>[...imports.values()].flat();
   function visible(spaceId,folders){return all().filter(row=>(row.inferredSpace || 'legacy:'+row.sourceId)===spaceId && contains(folders,row.projectDirectory));}
   function spaces(folders){return [...imports].filter(([,rows])=>rows.some(row=>!row.inferredSpace && contains(folders,row.projectDirectory))).map(([id])=>({spaceId:'legacy:'+id,kind:'legacy',root:'Legacy history'}));}
-  function chat(spaceId,id,folders,generation){
+  async function chat(spaceId,id,folders,generation){
     const row=visible(spaceId,folders).find(row=>row.taskId===id);if(!row)throw failure('unknown_task');
+    const saved=await read(row.file);if(digest(saved)!==row.recordHash)throw failure('migration_conflict');
     return {generation,schemaVersion:1,viewRevision:0,spaceId,taskId:id,owner:'legacy',readOnly:true,chatId:row.task.chatId || null,
       title:('MCP · '+row.task.description).slice(0,167),state:row.interrupted?'error':row.task.state,recoveryRequired:!!row.interrupted,progress:row.task.progress,closed:false,pendingRequests:[],
-      ...projection.transcript(row.session?.items || []),cursor:null};
+      ...projection.transcript(saved.session?.items || []),cursor:null};
   }
   return {sync,assertReady,spaces,visible,chat,status,onChanged(listener){listeners.add(listener);return ()=>listeners.delete(listener);},
     async register(source){

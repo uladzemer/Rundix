@@ -536,9 +536,12 @@ function activate(context) {
     connectionStarting = true;
     connecting = (async () => {
       activeConnection = await connections.resolve();
+      if (cwd()) fs.mkdirSync(context.globalStorageUri.fsPath, { recursive: true });
       server = new AppServer({
-        executable: await resolveCli(),
-        cwd: cwd(),
+        executable: path.resolve(await resolveCli()),
+        // The shared server outlives turns. Its Windows cwd must not pin a worktree.
+        // Chat/project directories are supplied by thread/start and turn/start.
+        cwd: cwd() ? context.globalStorageUri.fsPath : undefined,
         configArgs:['-c','features.default_mode_request_user_input=true'],
       });
       server.on("notification", (message) => {

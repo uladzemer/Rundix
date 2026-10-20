@@ -2,6 +2,7 @@ const readline=require('node:readline');const output=value=>process.stdout.write
 readline.createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line);if(m.id==='approval-1'&&!m.method){output({method:'item/agentMessage/delta',params:{threadId:'thread-a',itemId:'agent-1',delta:'Hello'}});output({method:'turn/completed',params:{threadId:'thread-a',turn:{id:'turn-1',status:'completed'}}});return;}
  if(m.id===undefined)return;
+ if(m.method==='test/cwd'){output({id:m.id,result:{cwd:process.cwd()}});return;}
  if(m.method==='test/exit'){process.exit(2);return;}
  if(m.method==='turn/start'){
   output({id:m.id,result:{turn:{id:'turn-1',status:'inProgress'}}});

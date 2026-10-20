@@ -14,7 +14,7 @@ async function main(){
 
     const full=task('Synthetic refactor of the greeting module\nSecond line is ignored');
     await adapter.status(full);
-    assert.deepEqual(created[0].prefs,{mode:'full',access:'full',ide:false,plan:false});
+    assert.deepEqual(created[0].prefs,{mode:'full',access:'full',ide:false,plan:false,focus:true},'MCP chats open in focus mode');
     assert.equal(full.accessMode,'full');
     assert.equal(created[0].name,'MCP · Synthetic refactor of the greeting module Second line is ignored');assert.equal(created[0].customName,true);
     assert.equal(created[0].mcpTask,true,'MCP chats are marked for per-thread config');

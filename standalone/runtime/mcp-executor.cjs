@@ -51,7 +51,7 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
     const mode=Object.hasOwn(taskModes,accessMode())?accessMode():'workspace';
     task.accessMode=mode;
     return create({key:task.sessionKey,cwd:task.projectDirectory,model:task.model,effort:task.effort,
-      prefs:{mode,access:taskModes[mode],ide:false,plan:false},name:taskTitle(task.description),customName:true,mcpTask:true});
+      prefs:{mode,access:taskModes[mode],ide:false,plan:false,focus:true},name:taskTitle(task.description),customName:true,mcpTask:true});
   }
   const adapter={
     connection:()=>{const c=connections.selection();return {id:c.id,owner:c.owner,revision:c.revision};},

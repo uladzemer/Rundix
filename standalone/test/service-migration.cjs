@@ -46,6 +46,13 @@ async function main(){
     assert.equal(migration.chat(sa,visible[0].taskId,[canonical(a)],'synthetic-generation').readOnly,true);
     await assert.rejects(require('../runtime/mcp-bridge.cjs').request(path.join(source,'mcp','bridge.json'),'list_tasks',{}),{code:'adapter_upgrade_required'});
     assert.equal(require('../runtime/service-migration.cjs').legacyBridgeRoot(serviceRoot,path.join(source,'mcp','bridge.json')),canonical(source));
+    const registryStore=new SessionStore(serviceRoot),registryLease=registryStore.acquire('legacy-roots');
+    const contentionAt=Date.now();assert.throws(()=>require('../runtime/service-migration.cjs').legacyBridgeRoot(serviceRoot,path.join(source,'mcp','bridge.json'),{timeoutMs:40}),{code:'legacy_registry_busy'});
+    assert(Date.now()-contentionAt<1000,'Lock contention has a bounded deadline');
+    setTimeout(registryLease,80);await require('../runtime/service-migration.cjs').registerRootAsync(serviceRoot,source);
+    const {Worker}=require('node:worker_threads'),{once}=require('node:events');
+    const holder=new Worker("const {parentPort,workerData}=require('node:worker_threads');const release=new(require(workerData.module).SessionStore)(workerData.root).acquire('legacy-roots');parentPort.postMessage('held');setTimeout(()=>{release();parentPort.postMessage('released');},150);",{eval:true,workerData:{module:require.resolve('../runtime/store.cjs'),root:serviceRoot}});
+    await once(holder,'message');registerRoot(serviceRoot,source);await once(holder,'exit');
     assert.throws(()=>require('../runtime/service-migration.cjs').legacyBridgeRoot(serviceRoot,path.join(a,'mcp','bridge.json')),{code:'service_upgrade_required'});
     const imported=path.join(serviceRoot,'legacy',visible[0].sourceId);assert(!fs.readdirSync(imported).some(name=>name.includes('manual')));
     await migration.sync();await migration.close();migration=createMigration({root:serviceRoot});await migration.sync();assert.equal(migration.visible(sa,[canonical(a)]).length,1);

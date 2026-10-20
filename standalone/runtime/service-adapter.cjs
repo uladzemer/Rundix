@@ -56,7 +56,7 @@ function main(options = {}) {
   if(process.argv.includes('--bridge')){
     options={...options,legacyBridge:arg('--bridge') || 'invalid'};
     try{require('./service-migration.cjs').legacyBridgeRoot(require('./service-endpoint.cjs').locations(options).directory,options.legacyBridge);}
-    catch{process.stderr.write('service_upgrade_required: Migrate legacy history from a trusted Rundix window and replace the Rundix MCP entry.\n');process.exitCode=1;return;}
+    catch(error){process.stderr.write(error.code==='legacy_registry_busy'?'legacy_registry_busy: Retry after the other Rundix window finishes registration.\n':'service_upgrade_required: Migrate legacy history from a trusted Rundix window and replace the Rundix MCP entry.\n');process.exitCode=1;return;}
   }
   if (process.argv.includes('--recover-hung')) { process.stderr.write('recovery_required: Stop the verified service owner before retrying.\n'); process.exitCode = 1; return; }
   const taskId = arg('--wait'), timeout = Number(arg('--timeout') ?? 3600);

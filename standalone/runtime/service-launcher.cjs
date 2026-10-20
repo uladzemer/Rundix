@@ -83,7 +83,7 @@ function installLauncherAsync(options={}) {
     // Let finally release the process-owned installation lease even if the UI
     // deadline expires. Terminating a worker would strand a live process lease.
     const timer=setTimeout(()=>{reject(Error('Service installation timed out.'));},30000);
-    worker.once('message',value=>{clearTimeout(timer);value.error?reject(Error('Service installation failed.')):resolve(value.result);});
+    worker.once('message',value=>{clearTimeout(timer);value.error?reject(Object.assign(Error(value.error),{code:value.error})):resolve(value.result);});
     worker.once('error',()=>{clearTimeout(timer);reject(Error('Service installation failed.'));});
     worker.once('exit',code=>{if(code){clearTimeout(timer);reject(Error('Service installation failed.'));}});
   });
@@ -92,5 +92,5 @@ module.exports = {installLauncher, installLauncherAsync, registration};
 const {isMainThread,workerData,parentPort}=require('node:worker_threads');
 if(!isMainThread && workerData?.install) {
   try {parentPort.postMessage({result:installLauncher(workerData.install)});}
-  catch {parentPort.postMessage({error:true});}
+  catch(error) {parentPort.postMessage({error:error.code==='legacy_registry_busy'?error.code:'service_install_required'});}
 }

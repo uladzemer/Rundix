@@ -18,13 +18,27 @@ function roots(store){
   if(value?.schemaVersion!==1 || !Array.isArray(value.roots) || value.roots.length>100 || value.roots.some(root=>typeof root!=='string' || !path.isAbsolute(root)))throw failure('migration_conflict');
   return value.roots;
 }
-function registerRoot(root,source){
+function registryBusy(){return Object.assign(Error('legacy_registry_busy'),{code:'legacy_registry_busy',retryable:true});}
+const jitter=attempt=>Math.min(150,20*2**Math.min(attempt,3))+Math.floor(Math.random()*30);
+function registerRoot(root,source,{timeoutMs=1500}={}){
   source=canonical(source);const target=canonical(root);
   if(contains([source],target) || contains([target],source))throw failure('migration_conflict');
-  const store=new SessionStore(root),release=store.acquire('legacy-roots');
+  const store=new SessionStore(root),deadline=Date.now()+timeoutMs;let release,attempt=0;
+  while(!release){try{release=store.acquire('legacy-roots');}catch(error){
+    if(error.code && !['EPERM','EACCES','EBUSY'].includes(error.code))throw error;
+    if(Date.now()>=deadline)throw registryBusy();
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Math.min(jitter(attempt++),deadline-Date.now()));
+  }}
   try{const list=roots(store);if(!list.includes(source)){if(list.length>=100)throw failure('migration_conflict');store.write('legacy','roots',{schemaVersion:1,roots:[...list,source]});}}
   finally{release();}
   return source;
+}
+async function registerRootAsync(root,source,{timeoutMs=1500}={}){
+  const deadline=Date.now()+timeoutMs;let attempt=0;
+  for(;;){try{return registerRoot(root,source,{timeoutMs:0});}catch(error){
+    if(error.code!=='legacy_registry_busy' || Date.now()>=deadline)throw error;
+    await new Promise(resolve=>setTimeout(resolve,Math.min(jitter(attempt++),deadline-Date.now())));
+  }}
 }
 async function read(file){
   const info=await fsp.lstat(file);if(!info.isFile() || info.isSymbolicLink() || info.size>16*1024*1024)throw failure('migration_conflict');
@@ -157,8 +171,8 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
     if(closed)throw failure('migration_conflict');if(syncing)return syncing;
     syncing=(async()=>{
       for(const [identity,source] of pendingRegistrations)if(force || !(status(identity).retryAt>clock())){
-        try{registerRoot(root,source);pendingRegistrations.delete(identity);statuses.delete(identity);}
-        catch(error){const attempt=(status(identity).attempt || 0)+1;publish(identity,{state:['EPERM','EACCES','EBUSY'].includes(error.code)?'retry_later':'needs_repair',code:'migration_conflict',attempt,retryAt:clock()+Math.min(60000,retryMs*2**Math.min(attempt-1,6))});}
+        try{await registerRootAsync(root,source);pendingRegistrations.delete(identity);statuses.delete(identity);}
+        catch(error){const attempt=(status(identity).attempt || 0)+1;publish(identity,{state:['EPERM','EACCES','EBUSY','legacy_registry_busy'].includes(error.code)?'retry_later':'needs_repair',code:error.code==='legacy_registry_busy'?error.code:'migration_conflict',attempt,retryAt:clock()+Math.min(60000,retryMs*2**Math.min(attempt-1,6))});}
       }
       for(const source of ready){try{if(await exists(path.join(source,'mcp','tasks')))ready.delete(source);}catch{ready.delete(source);}}
       const visited=new Set();
@@ -196,14 +210,14 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
     async register(source){
       if(typeof source!=='string' || !path.isAbsolute(source) || source.includes('\0'))throw failure('migration_conflict');
       let identity=path.normalize(source);if(process.platform==='win32')identity=identity.toLowerCase();
-      try{identity=canonical(source);registerRoot(root,identity);await sync();}
-      catch(error){if(error.code!=='ENOENT')pendingRegistrations.set(identity,source);publish(identity,{state:error.code==='ENOENT'?'vanished':['EPERM','EACCES','EBUSY'].includes(error.code)?'retry_later':'needs_repair',code:'migration_conflict',retryAt:clock()+retryMs});}
+      try{identity=canonical(source);await registerRootAsync(root,identity);await sync();}
+      catch(error){if(error.code!=='ENOENT')pendingRegistrations.set(identity,source);publish(identity,{state:error.code==='ENOENT'?'vanished':['EPERM','EACCES','EBUSY','legacy_registry_busy'].includes(error.code)?'retry_later':'needs_repair',code:error.code==='legacy_registry_busy'?error.code:'migration_conflict',retryAt:clock()+retryMs});}
       return identity;
     },
     async close(){closed=true;clearTimeout(timer);await syncing?.catch(()=>{});for(const bridge of bridges.values())bridge.dispose();bridges.clear();for(const release of leases.values())release();leases.clear();listeners.clear();},
   };
 }
-function legacyBridgeRoot(root,file){
+function legacyBridgeRoot(root,file,options){
   const unavailable=()=>Object.assign(Error('Migrate this legacy storage from a trusted Rundix window, then replace the Rundix MCP entry and restart Claude MCP.'),{code:'service_upgrade_required'});
   try{
     if(typeof file!=='string' || !path.isAbsolute(file) || path.basename(file)!=='bridge.json' || path.basename(path.dirname(file))!=='mcp')throw unavailable();
@@ -211,7 +225,7 @@ function legacyBridgeRoot(root,file){
     const load=file=>{const info=fs.lstatSync(file);if(!info.isFile() || info.isSymbolicLink() || info.size>1024*1024)throw unavailable();return parseStrict(fs.readFileSync(file),{maxDepth:16});};
     const marker=load(path.join(source,'mcp','service-migration.json')),receipt=load(path.join(root,'migrations',sourceId+'.json'));
     if(marker.schemaVersion!==1 || marker.sourceId!==sourceId || receipt.phase!=='cutover' || receipt.source!==source || marker.manifestHash!==digest(receipt.manifest))throw unavailable();
-    registerRoot(root,source);return source;
-  }catch{throw unavailable();}
+    registerRoot(root,source,options);return source;
+  }catch(error){if(error.code==='legacy_registry_busy')throw error;throw unavailable();}
 }
-module.exports={createMigration,registerRoot,contains,legacyBridgeRoot};
+module.exports={createMigration,registerRoot,registerRootAsync,contains,legacyBridgeRoot};

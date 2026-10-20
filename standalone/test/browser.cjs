@@ -536,6 +536,7 @@ if(!chromePath)throw Error('Set CHROME_PATH to an installed Chrome or Chromium e
  await require('./quota-summary-browser.cjs')({page:english,suffix:'-en-light'});
  await require('./review-dismiss-browser.cjs')({page:english,suffix:'-en-light'});
  await require('./queued-editor-browser.cjs')({page:english,suffix:'-en-light'});
+ await require('./mcp-composer-browser.cjs')({page:english,suffix:'-en-light'});
  await english.close();
  await require('./context-display-browser.cjs')({page});
  await require('./transcript-scroll-browser.cjs')({page});
@@ -544,6 +545,7 @@ if(!chromePath)throw Error('Set CHROME_PATH to an installed Chrome or Chromium e
  await require('./message-card-browser.cjs')({page});
  await require('./review-dismiss-browser.cjs')({page});
  await require('./queued-editor-browser.cjs')({page});
+ await require('./mcp-composer-browser.cjs')({page});
  await require('./activity-browser.cjs')({page});
  await require('./report-layout-browser.cjs')({page});
  assert.deepEqual(errors,[]);

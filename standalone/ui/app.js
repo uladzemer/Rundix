@@ -2237,10 +2237,13 @@ window.addEventListener("message", (event) => {
       transcriptScroll.restore(scrollPositions.get(state.key) ?? messages.scrollHeight);
   } else if (msg.type === "sent") {
     const key = msg.key || state.key,
-      submitted = pendingSends.get(key);
+      submitted = msg.text ?? pendingSends.get(key);
     pendingSends.delete(key);
     if (key !== state.key) {
-      if (localDrafts[key] === submitted) localDrafts[key] = "";
+      if (localDrafts[key] === submitted) {
+        localDrafts[key] = "";
+        persist();
+      }
       return;
     }
     sending = false;

@@ -259,6 +259,10 @@ function activate(context) {
         mcpBridgeTransport.privateDirectory(root);
         mcpTasks=new McpTasks({store:new SessionStore(path.join(root,'tasks')),directoryStore:store,
           adapter:mcpExecutor({connections,sessions,store,create,send,resume,handle,pending:pendingRequests,save,alive:()=>!disposed && !!mcpBridge,
+            async sent(s,text){
+              publish(s,true);
+              await s.panel?.webview.postMessage({type:'sent',key:s.key,text});
+            },
             retainTurn(s,task){
               if(turnLeases.has(s.id))return;
               const unlockDirectory=taskDirectory.acquire(store,s.cwd,task.taskId);

@@ -14,7 +14,7 @@ function report(session, task) {
     checks:items.filter(i=>i.type==='commandExecution').map(i=>({command:i.command,exitCode:i.exitCode??null,status:i.status})),
     remainingIssues:[...(session.error?[session.error]:[]),'Structured report unavailable; review the result and command evidence.'],source:'transcript_evidence'};
 }
-function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,retainTurn=()=>{}}) {
+function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,retainTurn=()=>{},sent=()=>{}}) {
   function session(task) {
     const existing=sessions.get(task.sessionKey);
     if(existing)return existing;
@@ -57,7 +57,9 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
         result=await send(s,input,[],options);
         if(task.cancelRequested && !result?.waitUntil)await handle(s,{action:'stop'});
       }
-      s.draft='';await save(s);
+      if(s.draft===input)s.draft='';
+      await save(s);
+      await sent(s,input);
     },
     async status(task) {
       adapter.assertConnection(task);

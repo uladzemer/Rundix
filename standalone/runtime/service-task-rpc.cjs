@@ -28,8 +28,8 @@ function createTaskRpc({providerOptions = {}} = {}) {
     const binding = isWindow ? {spaceId:params.spaceId} : peer.spaceBinding;
     if (isWindow ? !windows.bound(params, peer) : !binding || params.bindingId !== binding.bindingId || params.spaceId !== binding.spaceId)
       return {error:{code:'space_not_bound', message:'Space is not bound.'}};
-    if (isWindow && ['space.subscribe','space.unsubscribe'].includes(method)) {
-      try {return {result:windows.call(method, params, peer)};}
+    if (isWindow && ['space.subscribe','space.unsubscribe','chat.open','chat.subscribe','chat.unsubscribe','chat.history'].includes(method)) {
+      try {return {result:await scope.run({spaceId:binding.spaceId,signal:peer.signal},()=>windows.call(method, params, peer))};}
       catch (error) {return {error:{code:SAFE.has(error.code) ? error.code : 'rejected', message:'Request rejected.'}};}
     }
     if (method !== 'task.call' || !TOOLS.has(params.name)) return {error:{code:'invalid_argument', message:'Unknown tool.'}};
@@ -43,7 +43,7 @@ function createTaskRpc({providerOptions = {}} = {}) {
         if (params.name === 'reload_window') throw failure('unsupported');
         const value = await host.mcp.tasks.call(params.name, params.arguments);
         if (context.signal.aborted || peer.signal.aborted) return null;
-        return {result:value};
+        return {result:params.name==='close_task'?{...value,chatClosed:windows.chatWindows(params.arguments.taskId)>0,windowsNotified:windows.chatWindows(params.arguments.taskId)}:value};
       } catch (error) {
         const code = error?.reason === 'action_required' ? 'action_required' : SAFE.has(error?.code) ? error.code : 'rejected';
         return {error:{code, ...(code === 'action_required' ? {providerCode:error.code} : {}),
@@ -52,8 +52,8 @@ function createTaskRpc({providerOptions = {}} = {}) {
     });
   }
   return {scope:() => scope.getStore()?.spaceId, signal:() => scope.getStore()?.signal, hello, call,
-    changed:task => windows?.changed(task.space),
-    attach:(value, generation) => {host = value; windows = createWindowRpc({generation, tasks:() => host.mcp.tasks});},
+    changed:task => {windows?.changed(task.space);windows?.chatChanged(task);},sessionChanged:session=>windows?.sessionChanged(session),
+    attach:(value, generation) => {host = value; windows = createWindowRpc({generation, tasks:() => host.mcp.tasks,core:()=>host.core});},
     stop:() => {stopping = true;}, resume:()=>{stopping=false;},
     getHandlerTimeoutMs(method, params) {return method === 'task.call' ? budget(params?.name, params?.arguments) : 12000;}};
 }

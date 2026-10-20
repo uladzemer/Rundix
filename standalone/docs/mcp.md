@@ -129,8 +129,15 @@ Opening the MCP panel connects the trusted window to its local workspace spaces.
 The space selector isolates task lists; quota waits show their reset time, and
 connection action reasons, unsent counts and bounded final reports are visible.
 Continue, cancel and close go through the service. Failed continuations preserve
-the draft and requestId for an explicit retry. Service task chat tabs and legacy
-history migration are not implemented yet.
+the draft and requestId for an explicit retry. Open chat opens a Rundix service
+task tab: its transcript is read through the service, and continuations and
+question/approval answers return through the same service task. The window never
+resumes that thread locally. Composer and question drafts survive failed sends,
+tab recreation and window reload. Closing a finished task asks subscribed tabs
+to persist their drafts before closing; closing a tab alone does not cancel work.
+Large display items are shortened with an explicit notice; earlier messages are
+read through bounded CLI history pages owned by the service. Legacy history
+migration is not implemented yet.
 
 The adapter binds tasks to the Git root of `CLAUDE_PROJECT_DIR`, falling back to
 its cwd, including the main repository for `.claude/worktrees`. In a non-Git

@@ -36,7 +36,7 @@ function providerWait(outcome) {
 }
 
 async function createHeadlessHost({root, generation, providerOptions = {}, resolveCli, clock = {now:Date.now, setTimeout, clearTimeout},
-  taskOptions = {}, decorateAdapter} = {}) {
+  taskOptions = {}, decorateAdapter,onSessionChanged=()=>{}} = {}) {
   const settings = plainSettings(root), logger = boundedLogger(root);
   const kv = new SessionStore(path.join(root, 'state'));
   const workspaceState = {
@@ -125,7 +125,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     }
   }
   core = createSessionCore({paths:{storage:root}, workspaceState, settings, logger, clock,
-    trusted:() => true, events:{changed:noop, sessionChanged:noop, treeChanged:noop, notify:noop, completed:noop},
+    trusted:() => true, events:{changed:noop, sessionChanged:onSessionChanged, treeChanged:noop, notify:noop, completed:noop},
     hasChat:() => true, isActive:() => false, activeSession:() => null, openChat:noop, loadSelected:noop,
     defaultDirectory:() => root, editorSelection:() => null, activateConnectionOwner:noop,
     resolveCli:resolveCli || (async () => findCli(settings('cliPath', ''))),

@@ -27,8 +27,8 @@ function windowBinding(binding) {
   return {bindingId:randomUUID(), windowId:binding.windowId, folders, spaces};
 }
 
-function createWindowRpc({generation, tasks}) {
-  const peers = new Set(), revisions = new Map();
+function createWindowRpc({generation, tasks,core}) {
+  const peers = new Set(), revisions = new Map(), chatRevisions=new Map();
   const revision = spaceId => revisions.get(spaceId) || 0;
   function changed(spaceId) {
     revisions.set(spaceId, revision(spaceId) + 1);
@@ -39,14 +39,15 @@ function createWindowRpc({generation, tasks}) {
   }
   function hello(params, peer) {
     const binding = windowBinding(params.binding);
-    peer.windowBinding = binding; peer.subscriptions = new Map(); peers.add(peer);
+    peer.windowBinding = binding; peer.subscriptions = new Map();peer.chats=new Map(); peers.add(peer);
     peer.once('closed', () => {
       peers.delete(peer);
       for (const spaceId of peer.subscriptions.keys()) changed(spaceId);
       peer.subscriptions.clear();
+      peer.chats.clear();
     });
     return {bindingId:binding.bindingId, spaces:[...binding.spaces.values()], toolSchemaVersion:1,
-      capabilities:['tasks.v1', 'limitWait.v1', 'spaceSnapshot.v1']};
+      capabilities:['tasks.v1', 'limitWait.v1', 'spaceSnapshot.v1','taskChat.v1']};
   }
   function bound(params, peer) {
     return peer.windowBinding?.bindingId === params.bindingId && peer.windowBinding.spaces.has(params.spaceId);
@@ -74,8 +75,22 @@ function createWindowRpc({generation, tasks}) {
     if (Buffer.byteLength(JSON.stringify(result)) > 768 * 1024) throw failure('response_too_large');
     return result;
   }
-  function call(method, params, peer) {
+  function chatChanged(task) {
+    const viewRevision=(chatRevisions.get(task.taskId) || 0)+1;chatRevisions.set(task.taskId,viewRevision);
+    for(const peer of peers)if(peer.chats.get(task.taskId)===task.space){
+      try{peer.send({method:'chat.changed',params:{generation,schemaVersion:1,spaceId:task.space,taskId:task.taskId,viewRevision}});}catch{peer.close();}
+    }
+  }
+  async function call(method, params, peer) {
     if (!bound(params, peer)) throw failure('space_not_bound');
+    if(['chat.open','chat.subscribe','chat.unsubscribe','chat.history'].includes(method)){
+      const task=tasks().get(params.taskId);
+      if(method==='chat.unsubscribe'){peer.chats.delete(task.taskId);return {unsubscribed:true};}
+      if(method==='chat.history')return require('./service-task-chat.cjs').history({core:core(),tasks:tasks(),task,cursor:params.cursor});
+      if(method==='chat.open' && task.closedAt){delete task.closedAt;tasks().save(task);}
+      peer.chats.set(task.taskId,task.space);
+      return require('./service-task-chat.cjs').snapshot({core:core(),tasks:tasks(),task,generation,revision:chatRevisions.get(task.taskId) || 0});
+    }
     if (method === 'space.unsubscribe') {
       if (peer.subscriptions.delete(params.spaceId)) changed(params.spaceId);
       return {unsubscribed:true};
@@ -88,6 +103,9 @@ function createWindowRpc({generation, tasks}) {
     if (!subscribed) changed(params.spaceId);
     return snapshot(params.spaceId, limit);
   }
-  return {hello, bound, call, changed, stop() { for (const peer of [...peers]) peer.close(); }};
+  return {hello, bound, call, changed,chatChanged,
+    sessionChanged(session){const task=[...tasks().tasks.values()].find(task=>task.sessionKey===session.key);if(task)chatChanged(task);},
+    chatWindows:taskId=>[...peers].filter(peer=>peer.chats.has(taskId)).length,
+    stop() { for (const peer of [...peers]) peer.close(); }};
 }
 module.exports = {createWindowRpc, windowBinding};

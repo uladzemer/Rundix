@@ -37,6 +37,10 @@ class ServiceWindowClient extends EventEmitter {
         throw failure('protocol_incompatible');
       this.peer = peer;
       peer.on('event', (method, params) => {
+        if(this.peer===peer && method==='chat.changed'){
+          if(params?.schemaVersion!==1 || !this.spaces.some(space=>space.spaceId===params.spaceId))return peer.close();
+          this.emit('chatChanged',params);return;
+        }
         if (this.peer !== peer || method !== 'space.changed') return;
         if (params?.schemaVersion !== 1 || !this.spaces.some(space => space.spaceId === params.spaceId) ||
             !Number.isSafeInteger(params.viewRevision) || params.viewRevision < 0) {peer.close(); return;}
@@ -96,6 +100,12 @@ class ServiceWindowClient extends EventEmitter {
     if (!this.spaces.some(space => space.spaceId === spaceId)) throw failure('space_not_bound');
     // Exactly one dispatch. Failure leaves requestId/arguments with the caller.
     return unwrap(await peer.call('task.call', {bindingId:peer.binding.bindingId, spaceId, name, arguments:args}, 12000));
+  }
+  async chat(spaceId,method,args={}) {
+    const peer=this.peer;
+    if(!peer || peer.closed || this.closed)throw failure('service_unavailable');
+    if(!this.spaces.some(space=>space.spaceId===spaceId))throw failure('space_not_bound');
+    return unwrap(await peer.call(method,{...args,bindingId:peer.binding.bindingId,spaceId},12000));
   }
   close() {
     this.closed = true; clearTimeout(this.retry); clearInterval(this.heartbeat);

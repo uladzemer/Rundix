@@ -147,6 +147,86 @@ function activate(context) {
     }),
   );
   const mcpViews=new Map();
+  const serviceChats=new Map();
+  const serviceChatKey=(spaceId,taskId)=>JSON.stringify([spaceId,taskId]);
+  function postServiceChat(record,data) {
+    record.snapshot=data;
+    record.draftState=context.workspaceState.get('service-chat:'+serviceChatKey(record.spaceId,record.taskId),null);
+    return record.panel.webview.postMessage({type:'serviceChat',data:data?{...data,language:locale.language,
+      draftState:record.draftState}:null});
+  }
+  function refreshServiceChat(record,client=serviceClient) {
+    record.dirty=true;
+    if(record.read)return record.read;
+    const peer=client?.peer;
+    const current=()=>!record.disposed && client===serviceClient && vscode.workspace.isTrusted && peer && client.peer===peer;
+    record.read=(async()=>{
+      do {
+        record.dirty=false;
+        if(!current()){await postServiceChat(record,null);return;}
+        const snapshot=await client.chat(record.spaceId,'chat.subscribe',{taskId:record.taskId});
+        if(current())await postServiceChat(record,snapshot);
+      }while(record.dirty && current());
+    })().catch(()=>{if(!record.disposed && client===serviceClient)void postServiceChat(record,null);}).finally(()=>{
+      record.read=null;if(record.dirty && !record.disposed && serviceClient?.peer)void refreshServiceChat(record);
+    });
+    return record.read;
+  }
+  async function serviceChatAction(record,message) {
+    if(!message || record.disposed)throw Error('Task chat closed.');
+    const draftKey='service-chat:'+serviceChatKey(record.spaceId,record.taskId);
+    if(['draft','closeReady'].includes(message.action)){
+      if(!message.state || Buffer.byteLength(JSON.stringify(message.state))>2*1024*1024)throw Error('Draft is too large.');
+      record.draftWrite=(record.draftWrite || Promise.resolve()).catch(()=>{}).then(()=>context.workspaceState.update(draftKey,message.state));
+      await record.draftWrite;if(message.action==='closeReady')record.panel.dispose();return;
+    }
+    if(!vscode.workspace.isTrusted)throw Object.assign(Error('Workspace trust is required.'),{code:'workspace_untrusted'});
+    if(message.action==='ready' || message.action==='refresh'){await refreshServiceChat(record);return;}
+    const client=serviceClient;
+    if(!client?.spaces.some(space=>space.spaceId===record.spaceId))throw Object.assign(Error('Service is unavailable.'),{code:'service_unavailable'});
+    if(message.action==='copyText'){
+      if(typeof message.text!=='string' || Buffer.byteLength(message.text)>16384)throw Error('Invalid display text');
+      await vscode.env.clipboard.writeText(message.text);return;
+    }
+    if(message.action==='openReference'){
+      const url=new URL(message.href);if(!['https:','http:'].includes(url.protocol))throw Error('Unsupported link');
+      await vscode.env.openExternal(vscode.Uri.parse(url.href));return;
+    }
+    if(message.action==='older'){
+      const result=await client.chat(record.spaceId,'chat.history',{taskId:record.taskId,cursor:message.cursor});
+      if(client===serviceClient && !record.disposed)await record.panel.webview.postMessage({type:'chatHistory',data:result});return;
+    }
+    if(!['continue','answer','cancel'].includes(message.action) || typeof message.requestId!=='string' || !/^[\w-]{1,128}$/.test(message.requestId))throw Error('Invalid task chat action.');
+    await client.call(record.spaceId,message.action==='cancel'?'cancel_task':'continue_task',{taskId:record.taskId,requestId:message.requestId,
+      ...(message.action==='continue'?{clarification:message.text}:message.action==='answer'?{approval:message.approval}:{})});
+  }
+  function attachServiceChat(panel,spaceId,taskId) {
+    const key=serviceChatKey(spaceId,taskId),record={panel,spaceId,taskId};serviceChats.set(key,record);
+    panel.webview.options={enableScripts:true,localResourceRoots:[vscode.Uri.joinPath(context.extensionUri,'ui')]};
+    panel.iconPath=vscode.Uri.joinPath(context.extensionUri,'resources','extension-icon.png');
+    const nonce=randomBytes(18).toString('base64'),uri=file=>panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri,'ui',file));
+    const scripts=['translations.js','i18n.js','forms.js','questions.js','markdown.js','markdown-view.js','service-chat.js'];
+    panel.webview.html=`<!doctype html><html lang="${locale.language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${panel.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('mcp-panel.css')}"><link rel="stylesheet" href="${uri('service-chat.css')}"></head><body><main id="app"></main>${scripts.map(file=>`<script nonce="${nonce}" src="${uri(file)}"></script>`).join('')}</body></html>`;
+    panel.webview.onDidReceiveMessage(async message=>{
+      try{await serviceChatAction(record,message);await panel.webview.postMessage({type:'chatResult',ok:true,action:message.action,requestId:message.requestId});}
+      catch{await panel.webview.postMessage({type:'chatResult',ok:false,action:message?.action,requestId:message?.requestId});}
+    });
+    panel.onDidDispose(()=>{
+      record.disposed=true;serviceChats.delete(key);
+      if(serviceClient?.peer)void serviceClient.chat(spaceId,'chat.unsubscribe',{taskId}).catch(()=>{});
+    });
+    return record;
+  }
+  async function openServiceChat(spaceId,taskId) {
+    const client=serviceClient;
+    if(!client?.peer?.binding.capabilities.includes('taskChat.v1'))throw Object.assign(Error('Restart the idle service to enable task chats.'),{code:'service_upgrade_required'});
+    const snapshot=await client.chat(spaceId,'chat.open',{taskId});
+    if(client!==serviceClient || !vscode.workspace.isTrusted)throw Error('Window binding changed.');
+    const key=serviceChatKey(spaceId,taskId),existing=serviceChats.get(key);
+    if(existing){existing.panel.reveal();await postServiceChat(existing,snapshot);return;}
+    const panel=vscode.window.createWebviewPanel('rundix.serviceTask',tabTitle(snapshot.title),vscode.ViewColumn.Active,{enableScripts:true,retainContextWhenHidden:true});
+    const record=attachServiceChat(panel,spaceId,taskId);await postServiceChat(record,snapshot);
+  }
   // Global user setting only. An activation owns one mode; changes apply on reload.
   const serviceMode=vscode.workspace.getConfiguration('rundix').inspect('mcpService')?.globalValue==='service';
   let serviceInstallation=null;
@@ -155,6 +235,7 @@ function activate(context) {
   function closeServiceClient() {
     serviceEpoch++;
     const client=serviceClient;serviceClient=null;client?.close();serviceSpaceId=null;
+    for(const record of serviceChats.values())void postServiceChat(record,null);
     publishMcpPanel(true);
   }
   async function connectServiceWindow() {
@@ -167,6 +248,10 @@ function activate(context) {
       if(folder)try{serviceSpaceId=require('./runtime/service-space.cjs').resolveSpace(folder.uri.fsPath).spaceId;}catch{}
       client.on('changed',()=>{if(serviceClient===client)publishMcpPanel();});
       client.on('status',status=>{if(serviceClient===client){serviceError=status==='connected'?null:'service_unavailable';publishMcpPanel(true);}});
+      client.on('chatChanged',event=>{const record=serviceChats.get(serviceChatKey(event.spaceId,event.taskId));if(record)void refreshServiceChat(record,client);});
+      client.on('status',status=>{if(serviceClient===client)for(const record of serviceChats.values()){
+        if(status==='connected')void refreshServiceChat(record,client);else void postServiceChat(record,null);
+      }});
     }
     const client=serviceClient;await client.start();
     if(serviceDisposed || client!==serviceClient || !vscode.workspace.isTrusted)throw Object.assign(Error('Window binding changed.'),{code:'stale_instance'});
@@ -215,7 +300,7 @@ function activate(context) {
     if(serviceMode){
       if(!vscode.workspace.isTrusted && serviceClient)closeServiceClient();
       return mcpPanelState.serviceSnapshot({client:serviceClient,language:locale.language,installed:serviceInstallation,
-        selectedSpaceId:serviceSpaceId,error:serviceError});
+        selectedSpaceId:serviceSpaceId,error:serviceError,taskChatsAvailable:true});
     }
     let connected=false;
     try{if(core.state.activeConnection?.provider && core.state.account && !core.state.limits.error){connections.assertCurrent(core.state.activeConnection);connected=true;}}catch{}
@@ -252,7 +337,7 @@ function activate(context) {
       if(!vscode.workspace.isTrusted || !serviceClient)throw Object.assign(Error('Service connection is unavailable.'),{code:'service_unavailable'});
       const client=serviceClient,spaceId=message.spaceId;
       if(!client.spaces.some(space=>space.spaceId===spaceId))throw Object.assign(Error('Space is not bound.'),{code:'space_not_bound'});
-      if(message.action==='openChat')throw Object.assign(Error('Service task chats are not available yet.'),{code:'unsupported'});
+      if(message.action==='openChat'){await openServiceChat(spaceId,message.taskId);return;}
       if(typeof message.requestId!=='string' || !/^[\w-]{1,128}$/.test(message.requestId))throw Error('Invalid panel requestId.');
       await client.call(spaceId,({cancel:'cancel_task',continue:'continue_task',close:'close_task'})[message.action],{
         taskId:message.taskId,...(message.action==='close'?{}:{requestId:message.requestId}),
@@ -315,6 +400,15 @@ function activate(context) {
     async deserializeWebviewPanel(panel){
       if(mcpEditor && mcpEditor!==panel){panel.dispose();return;}
       mcpEditor=panel;attachMcpView(panel,listener=>panel.onDidChangeViewState(listener));
+    },
+  }));
+  context.subscriptions.push(vscode.window.registerWebviewPanelSerializer('rundix.serviceTask',{
+    async deserializeWebviewPanel(panel,state){
+      if(!serviceMode || !state || typeof state.spaceId!=='string' || typeof state.taskId!=='string'){panel.dispose();return;}
+      const key=serviceChatKey(state.spaceId,state.taskId);
+      if(serviceChats.has(key)){panel.dispose();return;}
+      const record=attachServiceChat(panel,state.spaceId,state.taskId);
+      try{await startMcp();await refreshServiceChat(record);}catch{await postServiceChat(record,null);}
     },
   }));
   const mcpPanelTimer=setInterval(()=>publishMcpPanel(),1000);
@@ -2122,7 +2216,8 @@ function activate(context) {
         });
       },
     },
-    mcp:{start:startMcp,stop:stopMcp,tasks:()=>mcpHost.tasks,connectPool:connectMcpPool,panelSnapshot:mcpPanelSnapshot,panelAction:handleMcpPanel,openPanel:openMcpEditor},
+    mcp:{start:startMcp,stop:stopMcp,tasks:()=>mcpHost.tasks,connectPool:connectMcpPool,panelSnapshot:mcpPanelSnapshot,panelAction:handleMcpPanel,openPanel:openMcpEditor,
+      serviceChats,chatAction:serviceChatAction},
     create,
     connect,
     sessions,

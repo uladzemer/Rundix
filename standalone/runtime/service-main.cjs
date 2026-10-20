@@ -12,7 +12,7 @@ async function runService(options = {}) {
   if (endpoint.status !== 'owner') return endpoint;
   let host, idle, poller;
   try {
-    host = await createHeadlessHost({...options.hostOptions, root:locations(options).directory, generation:endpoint.generation,
+    host = await createHeadlessHost({...options.hostOptions, root:locations(options).directory, generation:endpoint.generation,onSessionChanged:rpc.sessionChanged,
       taskOptions:{...options.hostOptions?.taskOptions, scope:rpc.scope, signal:rpc.signal, changed:rpc.changed}});
     rpc.attach(host, endpoint.generation); poller = createLimitPoller({host, ...options.pollerOptions});
     let disposal,hostStopped=false,retry;

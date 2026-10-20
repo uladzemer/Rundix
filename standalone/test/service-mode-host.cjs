@@ -32,6 +32,15 @@ exports.run = async () => {
     await assert.rejects(api.mcp.panelAction({action:'continue',spaceId:'synthetic-foreign',taskId:task.taskId,requestId:'synthetic-foreign',clarification:'Synthetic'}),{code:'space_not_bound'});
     await api.mcp.panelAction({action:'continue',spaceId,taskId:task.taskId,requestId:'synthetic-panel-continue',clarification:'Synthetic panel continuation'});
     const continued=await call('wait_task',{taskId:task.taskId,waitSeconds:5});assert.equal(continued.state,'completed');assert.equal(continued.chatId,finished.chatId);
+    await api.mcp.panelAction({action:'openChat',spaceId,taskId:task.taskId});
+    let chat=[...api.mcp.serviceChats.values()][0];assert(chat);assert.equal(chat.snapshot.chatId,finished.chatId);
+    assert(chat.snapshot.items.length>0);assert(![...api.sessions.values()].some(session=>session.id===finished.chatId),'Window never resumes service-owned thread');
+    await api.mcp.chatAction(chat,{action:'draft',state:{draft:'Synthetic durable tab draft',questionDrafts:{},attempts:{}}});
+    await api.mcp.chatAction(chat,{action:'continue',requestId:'synthetic-tab-continue',text:'Synthetic tab continuation'});
+    const tabContinued=await call('wait_task',{taskId:task.taskId,waitSeconds:5});assert.equal(tabContinued.chatId,finished.chatId);
+    await api.mcp.chatAction(chat,{action:'closeReady',state:{draft:'Synthetic durable tab draft',questionDrafts:{},attempts:{}}});
+    await api.mcp.panelAction({action:'openChat',spaceId,taskId:task.taskId});chat=[...api.mcp.serviceChats.values()][0];assert.equal(chat.draftState.draft,'Synthetic durable tab draft');
+    chat.panel.dispose();report.serviceTaskTab=true;report.windowDraftDurable=true;report.noSecondThreadOwner=true;
     await api.mcp.panelAction({action:'cancel',spaceId,taskId:task.taskId,requestId:'synthetic-panel-cancel'});
     await api.mcp.panelAction({action:'close',spaceId,taskId:task.taskId,requestId:'synthetic-panel-close'});
     assert.equal(api.mcp.panelSnapshot().tasks[0].closed,true);

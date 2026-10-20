@@ -51,7 +51,7 @@ function audit(file) {
   for (const module of ['service-endpoint','service-ipc','service-process','service-lifecycle','service-space','service-cli',
     'service-json','service-provider-config','service-provider-rpc','service-provider-contract','service-provider',
     'service-headless-host','service-main','service-task-rpc','service-limit-poller','service-adapter','service-launcher','service-environment','service-settings','service-task-archive','service-fatal',
-    'service-connection','service-window-rpc','service-window-client','service-projection']) {
+    'service-connection','service-window-rpc','service-window-client','service-projection','service-task-chat']) {
     assert(names.has(`extension/runtime/${module}.cjs`), 'Missing headless module');
   }
   for (const required of ['extension/extension.cjs', 'extension/package.json', 'extension/readme.md', 'extension/changelog.md',
@@ -69,6 +69,7 @@ function audit(file) {
     'extension/runtime/task-directory.cjs', 'extension/docs/mcp.md',
     'extension/runtime/connection-companions.cjs', 'extension/runtime/mcp-panel.cjs',
     'extension/ui/mcp-panel.js', 'extension/ui/mcp-panel.css', 'extension/ui/composer-drafts.js',
+    'extension/ui/service-chat.js', 'extension/ui/service-chat.css',
     'extension/runtime/new-session-settings.cjs',
     'extension/runtime/queued-edits.cjs', 'extension/ui/queued-editor.js',
     'extension/runtime/queued-attachments.cjs',

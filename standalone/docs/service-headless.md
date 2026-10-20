@@ -1,4 +1,4 @@
-# Headless service implementation status (step 3b, panel wired)
+# Headless service implementation status (step 3b, panel and task chats)
 
 Window-owned MCP remains the default. The experimental service switch installs
 the headless runtime and connects the MCP panel as a window client on demand.
@@ -581,9 +581,8 @@ empty windows, trust/URI rejection, full snapshots, dropped-event resync, reload
 backoff reconnect, same-thread continuation, synthetic answer routing/dedup and
 no automatic mutation replay. It does not exercise VS Code task tabs or migration.
 
-Remaining: service-owned task transcript tabs with draft-safe send/answer,
-legacy copy/verify/marker/backup import and lifetime legacy leases, and their
-isolated host/browser/migration acceptance tests. Legacy history must remain
+Remaining: legacy copy/verify/marker/backup import and lifetime legacy leases,
+and migration acceptance tests. Legacy history must remain
 read-only, even when projectDirectory can infer a display space.
 
 Validation of this runtime slice: npm test, npm run test:browser (existing panel
@@ -593,3 +592,34 @@ data. These are regression checks, not service task UI or migration acceptance.
 Independent read-only review found missing archived history in snapshot totals;
 the merge/count fix and archive regression passed a focused second round with
 zero outstanding confirmed findings.
+
+## Service-owned task tabs
+
+`service-task-chat.cjs` reads only the owning service's live/saved task session.
+Window RPC binds chat subscriptions to their task space; session changes and
+durable task changes invalidate subscribed chats. Snapshot display items are
+bounded to 16 KiB including JSON escaping, recent items to 384 KiB, and the
+complete snapshot to 768 KiB. Oversized requests are display-only, never truncated
+into a different approvable operation. Stored text is untouched.
+
+`rundix.serviceTask` tabs use `ui/service-chat.js` and the existing safe Markdown
+and question renderers. Send/answer/cancel use task RPC; manual chats keep their
+window-owned core. Drafts and explicit retry requestIds are saved in webview state
+and the owning window's workspaceState. Close-task notifications wait for a
+draft persistence acknowledgement before disposing the tab. A tab close merely
+unsubscribes. Reconnect fences results to the exact peer and clears old projection.
+
+Earlier history restarts ordinary CLI pagination when a cached session has no
+cursor. Overlapping item IDs are deduplicated; subsequent cursors survive live
+snapshots within that generation/chat. Twenty serialized 16-KiB rows fit each
+bounded history page. Copies use the already displayed bounded text, including
+items loaded from earlier pages.
+
+Synthetic tests cover two windows racing to answer a real fake-CLI question or
+approval (one reply), foreign space rejection, same-thread continuation, huge and
+JSON-escaped display items, history paging and close notifications. Isolated host
+tests verify tabs do not create a second thread owner and recover saved drafts.
+Browser tests cover RU/EN, both themes and widths, safe Markdown, composer/question
+drafts, explicit same-ID retry, historical code copy and stable history cursors.
+Independent read-only review ran three rounds; the final round reported zero
+confirmed remaining findings after history/copy/cursor fixes.

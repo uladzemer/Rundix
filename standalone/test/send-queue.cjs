@@ -73,7 +73,7 @@ function fixture() {
   server.on('notification', vm.runInContext('(message)=>{' + source.slice(notificationStart, notificationEnd) + '}', context));
   // Use the real host disconnect cleanup, before the per-send listener.
   const disconnected = extract('      server.on("disconnected", (message) => {', '      server.on("protocolError"');
-  Object.assign(context, { connecting: null, limitsEpoch: 0, pendingRequests: new Map(), output: {
+  Object.assign(context, { notificationServer: context.server, pendingLogin: { current: null, finish() {} }, connecting: null, limitsEpoch: 0, pendingRequests: new Map(), output: {
     appendLine: text => diagnostics.push(text),
   } });
   vm.runInContext(disconnected, context);

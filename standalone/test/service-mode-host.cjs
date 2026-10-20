@@ -1,3 +1,4 @@
+require('./test-isolation.cjs').isolate();
 const vscode = require('vscode'), assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
 const os=require('node:os');
 function hostError(error,paths){
@@ -11,6 +12,7 @@ exports.run = async () => {
   const report = {syntheticTransport:true, inferencePerformed:false}, launcher = require('../runtime/service-launcher.cjs');
   const original = launcher.installLauncherAsync; let installs = 0;
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-service-panel-synthetic-'));
+  process.env.RUNDIX_SERVICE_ROOT=root;
   const data=require('./service-fixture.cjs').fixture(root,{nodePath:'node'});let service,peer,api,activationContext;
   const entry=require('../extension.cjs'),activate=entry.activate;entry.activate=context=>{activationContext=context;return activate(context);};
   try {
@@ -78,6 +80,12 @@ exports.run = async () => {
       await api.mcp.panelAction({action:'ready'});await api.mcp.panelAction({action:'refresh'});
       assert.equal(installs,beforeReload,'Persisted Stop overrides stale enabled flag after interrupted writes');assert.equal(api.mcp.panelSnapshot().bridgeRunning,false);
     }
+    const beforeStoppedSettings=installs;
+    await vscode.workspace.getConfiguration('rundix').update('mcpMaxParallelTasks',3,vscode.ConfigurationTarget.Global);
+    const stoppedSettingsDeadline=Date.now()+5000;
+    while(Date.now()<stoppedSettingsDeadline && JSON.parse(fs.readFileSync(settingsFile,'utf8')).mcpMaxParallelTasks!==3)await new Promise(resolve=>setTimeout(resolve,20));
+    assert.equal(JSON.parse(fs.readFileSync(settingsFile,'utf8')).mcpMaxParallelTasks,3,'Stopped/reloaded host uses the isolated fallback root without an installation');
+    assert.equal(installs,beforeStoppedSettings);report.stoppedSettingsUseIsolatedRoot=true;
     await api.mcp.start();assert.equal(activationContext.globalState.get('mcpServiceStopped'),false);assert.equal(api.mcp.panelSnapshot().bridgeRunning,true);
     await api.mcp.stop();report.stopPersistsAcrossReload=true;
     report.globalOnly = true; report.noWindowExecutor = true; report.serviceConfiguration = true; report.passed = true;

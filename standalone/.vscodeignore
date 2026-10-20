@@ -97,3 +97,5 @@
 !runtime/service-projection.cjs
 !runtime/service-task-chat.cjs
 !runtime/service-migration.cjs
+
+!runtime/service-paths.cjs

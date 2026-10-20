@@ -1,3 +1,4 @@
+require('./test-isolation.cjs').isolate();
 // Synthetic service + two independent window clients. No VS Code or real account.
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');

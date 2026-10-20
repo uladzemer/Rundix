@@ -1,3 +1,4 @@
+require('./test-isolation.cjs').isolate();
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
 const {parseStrict} = require('../runtime/service-json.cjs');
@@ -39,9 +40,9 @@ try {
   fs.writeFileSync(entryPath, originalEntry, {mode:0o600});
   const alias = path.join(root, 'alias'); fs.symlinkSync(directory, alias, process.platform === 'win32' ? 'junction' : 'dir');
   invalidConfig({...config, manifestPath:path.join(alias, 'provider-manifest.json')});
-  const expected = configLocation({platform:'win32', appData:path.join(root, 'roaming'), home:root});
+  const expected = configLocation({pathEnv:{},platform:'win32', appData:path.join(root, 'roaming'), home:root});
   assert.equal(expected, path.join(root, 'roaming', 'Rundix', 'rundix-service', 'provider.json'));
-  assert.equal(configLocation({platform:'darwin', home:root}), path.join(root, 'Library', 'Application Support', 'Rundix', 'rundix-service', 'provider.json'));
+  assert.equal(configLocation({pathEnv:{},platform:'darwin', home:root}), path.join(root, 'Library', 'Application Support', 'Rundix', 'rundix-service', 'provider.json'));
   assert.throws(() => readProviderConfig({configPath:path.join(root, 'absent.json')}), {code:'PROVIDER_NOT_CONFIGURED', reason:'action_required'});
   for (const bad of ['{"a":1,"a":2}', '{"a":{"x":1,"x":2}}', '[1,]', '{"a":1,}', '1e999', '{"a":1}x', '"\\x"', Buffer.from([0xff])])
     assert.throws(() => parseStrict(Buffer.from(bad)));

@@ -1,6 +1,5 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
 const {createHash} = require('node:crypto');
 const {execFileSync} = require('node:child_process');
 const {parseStrict} = require('./service-json.cjs');
@@ -9,12 +8,7 @@ function actionRequired(code = 'PROVIDER_CONFIG_INVALID') {
   return Object.assign(Error('Open the installed companion connection settings to restore provider access.'),
     {code, reason:'action_required', recoveryRequired:false});
 }
-function configLocation({platform = process.platform, appData = process.env.APPDATA, home = os.homedir()} = {}) {
-  const userConfig = platform === 'win32' ? path.join(appData || path.join(home, 'AppData', 'Roaming'), 'Rundix')
-    : platform === 'darwin' ? path.join(home, 'Library', 'Application Support', 'Rundix')
-      : path.join(home, '.config', 'Rundix');
-  return path.join(userConfig, 'rundix-service', 'provider.json');
-}
+function configLocation(options = {}) { return require('./service-paths.cjs').servicePaths(options).providerConfig; }
 function exact(value, keys) {
   return value && typeof value === 'object' && !Array.isArray(value) &&
     Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));

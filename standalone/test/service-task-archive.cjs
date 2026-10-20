@@ -1,3 +1,4 @@
+require('./test-isolation.cjs').isolate();
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const {McpTasks}=require('../runtime/mcp-tasks.cjs');
 const {SessionStore}=require('../runtime/store.cjs');

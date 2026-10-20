@@ -1,3 +1,4 @@
+require('./test-isolation.cjs').isolate();
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -42,7 +43,7 @@ async function main() {
       assert.equal(win.address,endpoint.locations({platform:'win32',sid:'S-1-5-21-100-200-300-400',root:testRoot('names')}).address);
       assert.notEqual(win.address,endpoint.locations({platform:'win32',sid:'S-1-5-21-100-200-300-400',root:testRoot('other')}).address);
       for (const platform of ['darwin','linux']) {
-        const posix = endpoint.locations({platform,uid:42420,home:'/synthetic'});
+        const posix = endpoint.locations({pathEnv:{},platform,uid:42420,home:'/synthetic'});
         assert.equal(posix.address,'/tmp/rundix-42420/service-v1.sock');
       }
       assert.throws(() => endpoint.currentSid(() => 'invalid'),{code:'ipc_security_unavailable'});

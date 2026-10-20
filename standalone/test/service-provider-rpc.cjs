@@ -1,3 +1,4 @@
+require('./test-isolation.cjs').isolate();
 const assert = require('node:assert/strict');
 const {PassThrough, Writable} = require('node:stream');
 const {once} = require('node:events');

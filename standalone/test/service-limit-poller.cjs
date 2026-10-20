@@ -1,3 +1,4 @@
+require('./test-isolation.cjs').isolate();
 const assert = require('node:assert/strict');
 const {EventEmitter} = require('node:events');
 const {createLimitPoller} = require('../runtime/service-limit-poller.cjs');

@@ -1,3 +1,4 @@
+require('./test-isolation.cjs').isolate();
 // Whole public transport path. Only synthetic provider/app-server children run.
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');

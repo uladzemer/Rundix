@@ -1,3 +1,4 @@
+require('./test-isolation.cjs').isolate();
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
 const net = require('node:net');
@@ -16,7 +17,7 @@ async function main() {
     const clean=serviceEnvironment({PATH:'synthetic-path',CODEX_HOME:'synthetic-home',LC_ALL:'C',HTTPS_PROXY:'synthetic-proxy',GITHUB_TOKEN:'SYNTHETIC',AWS_PROFILE:'synthetic',DATABASE_URL:'synthetic',NODE_OPTIONS:'synthetic',CLAUDE_PROJECT_DIR:'synthetic'});
     assert.deepEqual(clean,{PATH:'synthetic-path',CODEX_HOME:'synthetic-home',LC_ALL:'C',HTTPS_PROXY:'synthetic-proxy',ELECTRON_RUN_AS_NODE:'1'});
     for (const platform of ['win32','darwin']) {
-      const opts = {platform, sid:'S-1-5-21-123456789', uid:12345, home:path.join(root,'synthetic-home'), localAppData:path.join(root,'synthetic-local')};
+      const opts = {pathEnv:{}, platform, sid:'S-1-5-21-123456789', uid:12345, home:path.join(root,'synthetic-home'), localAppData:path.join(root,'synthetic-local')};
       const normal = locations(opts), explicit = locations({...opts, root:normal.directory});
       assert.equal(explicit.address, normal.address); assert.equal(explicit.descriptor, normal.descriptor);
     }

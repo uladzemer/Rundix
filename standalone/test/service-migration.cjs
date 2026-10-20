@@ -1,3 +1,4 @@
+require('./test-isolation.cjs').isolate();
 // All roots, sessions and text below are explicitly synthetic.
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const {spawnSync}=require('node:child_process');

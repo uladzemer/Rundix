@@ -1,4 +1,14 @@
 param([ValidateSet('host.cjs','mcp-host.cjs','service-mode-host.cjs','new-session-host.cjs','titles-host.cjs','local-auth-host.cjs','reconnect-host.cjs','cli-install-host.cjs','cli-updates-host.cjs','pasted-image-host.cjs','mode-queue-host.cjs','follow-ups-host.cjs','fast-host.cjs','startup-host.cjs','control-motion-host.cjs','activity-host.cjs','context-display-host.cjs','notifications-host.cjs','toggle-response-host.cjs')][string]$TestFile='host.cjs',[switch]$ForceReducedMotion)
+# Snapshot real roots in the parent before Code can activate the extension.
+if($env:RUNDIX_TEST_ISOLATED -ne '1'){
+  $isolationArgs=@((Join-Path $PSScriptRoot 'run-isolated.cjs'),'--host',$TestFile)
+  if($ForceReducedMotion){$isolationArgs+='-ForceReducedMotion'}
+  & node @isolationArgs
+  exit $LASTEXITCODE
+}
+foreach($isolationKey in @('RUNDIX_SERVICE_ROOT','RUNDIX_PROVIDER_CONFIG_DIR','RUNDIX_SERVICE_ENDPOINT_NAMESPACE')){
+  if(-not [Environment]::GetEnvironmentVariable($isolationKey)){throw 'Missing test isolation override.'}
+}
 $ErrorActionPreference='Stop'
 $workbenchRoot=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $workbenchCode=Join-Path $env:LOCALAPPDATA 'Programs/Microsoft VS Code/Code.exe'
@@ -14,6 +24,8 @@ if($TestFile -eq 'service-mode-host.cjs'){
 }
 $workbenchArgs=@(('--user-data-dir="{0}"' -f $workbenchProfile),('--extensions-dir="{0}"' -f $workbenchExtensions),('--extensionDevelopmentPath="{0}"' -f $workbenchRoot),('--extensionTestsPath="{0}"' -f (Join-Path $PSScriptRoot $TestFile)),'--skip-welcome','--skip-release-notes','--disable-workspace-trust','--new-window',('"{0}"' -f $workbenchProject))
 if($ForceReducedMotion){$workbenchArgs+='--force-prefers-reduced-motion'}
+$workbenchReport=Join-Path $workbenchRoot ('.verification/' + [IO.Path]::GetFileNameWithoutExtension($TestFile) + '.json')
+Remove-Item -LiteralPath $workbenchReport -Force -ErrorAction SilentlyContinue
 $workbenchNodeMode=$env:ELECTRON_RUN_AS_NODE
 try{Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue;$workbenchProcess=Start-Process -FilePath $workbenchCode -ArgumentList $workbenchArgs -WindowStyle Hidden -PassThru -Wait}finally{$env:ELECTRON_RUN_AS_NODE=$workbenchNodeMode}
 $workbenchResult=Get-Content -LiteralPath (Join-Path $workbenchRoot ('.verification/' + [IO.Path]::GetFileNameWithoutExtension($TestFile) + '.json')) -Raw | ConvertFrom-Json

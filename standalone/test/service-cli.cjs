@@ -1,3 +1,4 @@
+require('./test-isolation.cjs').isolate();
 const assert = require('node:assert/strict');
 const {spawn} = require('node:child_process');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');

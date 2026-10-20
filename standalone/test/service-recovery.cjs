@@ -1,3 +1,4 @@
+require('./test-isolation.cjs').isolate();
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const {runService}=require('../runtime/service-main.cjs');
 const {connectService}=require('../runtime/service-endpoint.cjs');

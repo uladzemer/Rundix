@@ -471,3 +471,17 @@ and Start/Stop cycles. Installation is serialized; interrupted copies complete
 before registration. Idle pruning holds the startup guard and retains recent
 versions; published owners prevent pruning. Provider-config ACL/digest validation
 also runs in a worker so PowerShell cannot block service ping/task IPC.
+
+
+## Shared poller fairness and failures (C4/C8)
+
+Backoff magnitude is shared, but each wait has its own nextCheckAt; a new waiter
+cannot be blocked by an older cohort's global deadline. An idle turn completion
+wakes active_turns waits immediately except for an explicit retryAfterMs lower
+bound, stored separately from unknown-limit backoff. One probe remains in flight.
+
+Transport/restart exceptions retain waits and unsent input with bounded backoff,
+without waking clients into action_required. A typed permanent provider outcome
+settles the probed cohort; a thrown task-specific authorization error affects only
+the representative wait. Terminalized waits retire their provider waitId through
+cancelWait, including its service-side tombstone if the child is unavailable.

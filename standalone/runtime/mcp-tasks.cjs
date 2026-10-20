@@ -393,7 +393,7 @@ class McpTasks {
         task.waitId=error.providerWait.waitId || task.waitId || randomUUID();
         task.waitingLimit={resetAt:error.providerWait.resetAt,reason:error.providerWait.reason};
         task.chatId=this.adapter.chatId(task);
-        task.nextCheckAt=Date.now() + (error.providerWait.retryAfterMs || 0);
+        task.nextCheckAt=Date.now() + (error.providerWait.retryAfterMs || 0);task.retryNotBefore=task.nextCheckAt;
         task.progress='Waiting for provider availability';task.error=null;this.save(task);return;
       }
       if(error?.reason==='action_required' && error?.notSent && !task.cancelRequested){

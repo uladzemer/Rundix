@@ -1,8 +1,8 @@
-# Headless service implementation status (step 3b, runtime client slice)
+# Headless service implementation status (step 3b, panel wired)
 
 Window-owned MCP remains the default. The experimental service switch installs
-the headless runtime, but its new window client is not connected to the Extension
-Host UI yet. Do not advertise step 3b as complete. No real CLI account or sign-in
+the headless runtime and connects the MCP panel as a window client on demand.
+Do not advertise step 3b as complete. No real CLI account or sign-in
 files are used by its tests.
 
 ## Space identity
@@ -548,10 +548,14 @@ If CLI stop fails during idle disposal, provider disposal rolls back its closing
 state and recovers with a fresh generation before admitting new turns. The service
 may resume admissions; it never resumes against a permanently disposed provider.
 
-## Step 3b: window IPC runtime (partial, not wired to VS Code yet)
+## Step 3b: window IPC runtime and MCP panel (partial)
 
-This slice adds runtime support only. The service-mode extension still displays
-its existing setup panel without service tasks. Ordinary window-owned MCP and
+The service-mode extension connects on panel demand or Start MCP and when a
+previously enabled window reloads. Its panel shows selected-space tasks and
+bounded reports, quota waits/resetAt, action-required reasons and unsent counts.
+Continue/cancel/close use service RPC; close never interrupts execution. Space
+bindings refresh on workspace folder changes. Stop/disposal drops this client
+only; delayed work cannot restart a stopped client. Ordinary window-owned MCP and
 manual chats retain their existing behavior. Step 3b is not complete.
 
 - `service-window-rpc.cjs`: trusted window hello, server-recomputed local folder
@@ -577,8 +581,7 @@ empty windows, trust/URI rejection, full snapshots, dropped-event resync, reload
 backoff reconnect, same-thread continuation, synthetic answer routing/dedup and
 no automatic mutation replay. It does not exercise VS Code task tabs or migration.
 
-Remaining: Extension Host lifecycle/trust/workspace wiring, panel space selector
-and task actions, service-owned task transcript tabs with draft-safe send/answer,
+Remaining: service-owned task transcript tabs with draft-safe send/answer,
 legacy copy/verify/marker/backup import and lifetime legacy leases, and their
 isolated host/browser/migration acceptance tests. Legacy history must remain
 read-only, even when projectDirectory can infer a display space.

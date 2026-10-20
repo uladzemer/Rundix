@@ -1,12 +1,16 @@
 const vscode = require('vscode'), assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
+const os=require('node:os');
 exports.run = async () => {
   const report = {syntheticTransport:true, inferencePerformed:false}, launcher = require('../runtime/service-launcher.cjs');
   const original = launcher.installLauncherAsync; let installs = 0;
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-service-panel-synthetic-'));
+  const data=require('./service-fixture.cjs').fixture(root,{nodePath:'node'});let service,peer,api;
   try {
+    service=await require('../runtime/service-main.cjs').runService({root,hostOptions:data.hostOptions});
     await vscode.workspace.getConfiguration('rundix').update('mcpService', 'service', vscode.ConfigurationTarget.Global);
     await assert.rejects(vscode.workspace.getConfiguration('rundix').update('mcpService', 'window', vscode.ConfigurationTarget.Workspace));
-    launcher.installLauncherAsync = () => {installs++;return {root:path.join(__dirname,'../.verification/service-settings-synthetic'),launcher:'synthetic-launcher', configuration:{mcpServers:{rundix:{command:'node', args:['synthetic-launcher','--service']}}}};};
-    const api = await vscode.extensions.getExtension('local-rundix-tools.rundix').activate();
+    launcher.installLauncherAsync = () => {installs++;return {root,launcher:'synthetic-launcher', configuration:{mcpServers:{rundix:{command:'node', args:['synthetic-launcher','--service']}}}};};
+    api = await vscode.extensions.getExtension('local-rundix-tools.rundix').activate();
     assert.equal(api.mcp.panelSnapshot().serviceMode, true, 'Only globalValue chooses mode');
     await assert.rejects(api.mcp.connectPool(), {code:'unsupported'});
     assert.equal(await api.mcp.start(), 'synthetic-launcher');
@@ -14,16 +18,41 @@ exports.run = async () => {
     const result = await api.mcp.panelAction({action:'configuration'});
     assert.deepEqual(result.configuration.mcpServers.rundix.args, ['synthetic-launcher','--service']);
     assert.deepEqual(api.mcp.panelSnapshot().tasks, []);
+    const spaceId=api.mcp.panelSnapshot().spaceId;
+    assert(spaceId);assert.equal(api.mcp.panelSnapshot().bridgeRunning,true);
+    peer=await require('../runtime/service-endpoint.cjs').connectService({root,hello:{clientKind:'adapter',binding:{source:'cwd',launchDirectory:vscode.workspace.workspaceFolders[0].uri.fsPath}}});
+    const call=async(name,args)=>{
+      const result=await peer.call('task.call',{bindingId:peer.binding.bindingId,spaceId:peer.binding.spaceId,name,arguments:args});
+      if(result.error)throw Object.assign(Error(result.error.message),result.error);return result.result;
+    };
+    const task=await call('submit_task',{requestId:'synthetic-panel-submit',description:'Synthetic panel task',acceptanceCriteria:'Synthetic checks',projectDirectory:root});
+    const finished=await call('wait_task',{taskId:task.taskId,waitSeconds:5});assert.equal(finished.state,'completed');
+    await api.mcp.panelAction({action:'refresh'});
+    assert.equal(api.mcp.panelSnapshot().tasks[0].taskId,task.taskId);
+    await assert.rejects(api.mcp.panelAction({action:'continue',spaceId:'synthetic-foreign',taskId:task.taskId,requestId:'synthetic-foreign',clarification:'Synthetic'}),{code:'space_not_bound'});
+    await api.mcp.panelAction({action:'continue',spaceId,taskId:task.taskId,requestId:'synthetic-panel-continue',clarification:'Synthetic panel continuation'});
+    const continued=await call('wait_task',{taskId:task.taskId,waitSeconds:5});assert.equal(continued.state,'completed');assert.equal(continued.chatId,finished.chatId);
+    await api.mcp.panelAction({action:'cancel',spaceId,taskId:task.taskId,requestId:'synthetic-panel-cancel'});
+    await api.mcp.panelAction({action:'close',spaceId,taskId:task.taskId,requestId:'synthetic-panel-close'});
+    assert.equal(api.mcp.panelSnapshot().tasks[0].closed,true);
+    report.windowServicePanel=true;report.sameChatContinuation=true;report.cancelAndCloseRouted=true;
     await api.mcp.start(); assert.equal(installs, 1);
-    const settingsFile=path.join(__dirname,'../.verification/service-settings-synthetic/settings.json');
+    const settingsFile=path.join(root,'settings.json');
     await vscode.workspace.getConfiguration('rundix').update('mcpAccessMode','manual',vscode.ConfigurationTarget.Global);
     await vscode.workspace.getConfiguration('rundix').update('mcpThreadConfig',{model:'synthetic-model'},vscode.ConfigurationTarget.Global);
     await vscode.workspace.getConfiguration('rundix').update('cliPath',process.execPath,vscode.ConfigurationTarget.Global);
     await vscode.workspace.getConfiguration('rundix').update('mcpMaxParallelTasks',2,vscode.ConfigurationTarget.Global);
     const deadline=Date.now()+5000;while(Date.now()<deadline){if(JSON.parse(fs.readFileSync(settingsFile,'utf8')).mcpMaxParallelTasks===2)break;await new Promise(resolve=>setTimeout(resolve,20));}
     const settings=JSON.parse(fs.readFileSync(settingsFile,'utf8'));assert.equal(settings.mcpAccessMode,'manual');assert.equal(settings.mcpMaxParallelTasks,2);assert.deepEqual(settings.mcpThreadConfig,{model:'synthetic-model'});assert.equal(settings.cliPath,process.execPath);
+    const stale=api.mcp.start().catch(()=>{}),stop=api.mcp.stop(),restart=api.mcp.start();
+    await Promise.all([stale,stop,restart]);assert.equal(api.mcp.panelSnapshot().bridgeRunning,true,'Explicit restart outlives stale start');
+    report.startStopStart=true;
     await api.mcp.stop(); assert.equal(api.mcp.panelSnapshot().bridgeRunning, false);
     report.globalOnly = true; report.noWindowExecutor = true; report.serviceConfiguration = true; report.passed = true;
-  } catch (error) {report.error = error.message;report.passed = false;}
-  finally {launcher.installLauncherAsync = original;fs.writeFileSync(path.join(__dirname,'../.verification/service-mode-host.json'), JSON.stringify(report,null,2));}
+  } catch (error) {report.error = 'synthetic_service_panel_check_failed';report.passed = false;}
+  finally {
+    await api?.mcp.stop();peer?.close();await service?.shutdown();await data.close();
+    launcher.installLauncherAsync = original;fs.writeFileSync(path.join(__dirname,'../.verification/service-mode-host.json'), JSON.stringify(report,null,2));
+    assert.equal(path.dirname(root),os.tmpdir());assert(path.basename(root).startsWith('rundix-service-panel-synthetic-'));fs.rmSync(root,{recursive:true,force:true});
+  }
 };

@@ -150,6 +150,37 @@ function activate(context) {
   // Global user setting only. An activation owns one mode; changes apply on reload.
   const serviceMode=vscode.workspace.getConfiguration('rundix').inspect('mcpService')?.globalValue==='service';
   let serviceInstallation=null;
+  let serviceClient=null, serviceStarting=null, serviceStartingEpoch=null, serviceSpaceId=null, serviceError=null, serviceDisposed=false, serviceEpoch=0;
+  let serviceWanted=serviceMode && context.globalState.get('mcpEnabled',false), serviceStopped=false;
+  function closeServiceClient() {
+    serviceEpoch++;
+    const client=serviceClient;serviceClient=null;client?.close();serviceSpaceId=null;
+    publishMcpPanel(true);
+  }
+  async function connectServiceWindow() {
+    if(serviceDisposed || !vscode.workspace.isTrusted)throw Object.assign(Error('Workspace trust is required.'),{code:'workspace_untrusted'});
+    if(!serviceClient) {
+      const client=new (require('./runtime/service-window-client.cjs').ServiceWindowClient)({root:serviceInstallation.root,
+        trusted:true,workspaceFolders:(vscode.workspace.workspaceFolders || []).map(folder=>folder.uri.toString())});
+      serviceClient=client;
+      const folder=lastEditor && vscode.workspace.getWorkspaceFolder(lastEditor.document.uri);
+      if(folder)try{serviceSpaceId=require('./runtime/service-space.cjs').resolveSpace(folder.uri.fsPath).spaceId;}catch{}
+      client.on('changed',()=>{if(serviceClient===client)publishMcpPanel();});
+      client.on('status',status=>{if(serviceClient===client){serviceError=status==='connected'?null:'service_unavailable';publishMcpPanel(true);}});
+    }
+    const client=serviceClient;await client.start();
+    if(serviceDisposed || client!==serviceClient || !vscode.workspace.isTrusted)throw Object.assign(Error('Window binding changed.'),{code:'stale_instance'});
+    serviceError=null;
+  }
+  if(serviceMode)context.subscriptions.push({dispose(){serviceDisposed=true;serviceWanted=false;closeServiceClient();}},
+    vscode.workspace.onDidChangeWorkspaceFolders(()=>{
+      const pending=serviceStarting || Promise.resolve();
+      closeServiceClient();
+      const epoch=serviceEpoch;
+      if(serviceWanted)void pending.catch(()=>{}).then(()=>{
+        if(serviceWanted && !serviceDisposed && epoch===serviceEpoch)return startMcp();
+      }).catch(()=>{});
+    }),vscode.workspace.onDidGrantWorkspaceTrust(()=>{if(serviceWanted)void startMcp().catch(()=>{});}));
   let serviceSettingsWrite=Promise.resolve();
   function syncServiceSettings() {
     const settings=require('./runtime/service-settings.cjs');
@@ -181,7 +212,11 @@ function activate(context) {
     if(!core.state.account || core.state.limits.error)throw Error('The selected pool connection is unavailable.');
   }
   function mcpPanelSnapshot() {
-    if(serviceMode)return {language:locale.language,serviceMode:true,bridgeRunning:!!serviceInstallation,tasks:[]};
+    if(serviceMode){
+      if(!vscode.workspace.isTrusted && serviceClient)closeServiceClient();
+      return mcpPanelState.serviceSnapshot({client:serviceClient,language:locale.language,installed:serviceInstallation,
+        selectedSpaceId:serviceSpaceId,error:serviceError});
+    }
     let connected=false;
     try{if(core.state.activeConnection?.provider && core.state.account && !core.state.limits.error){connections.assertCurrent(core.state.activeConnection);connected=true;}}catch{}
     return mcpPanelState.snapshot({records:mcpRecords(),language:locale.language,connection:connections.display(),connected,bridgeRunning:!!mcpHost.bridge,
@@ -203,7 +238,28 @@ function activate(context) {
   }
   async function handleMcpPanel(message) {
     if(!message || typeof message.action!=='string')throw Error('Invalid MCP panel action.');
-    if(message.action==='ready' || message.action==='refresh'){publishMcpPanel(true);return;}
+    if(serviceMode && message.action==='selectSpace') {
+      if(!vscode.workspace.isTrusted || !serviceClient?.spaces.some(space=>space.spaceId===message.spaceId))throw Error('Unknown space');
+      serviceSpaceId=message.spaceId;publishMcpPanel(true);return;
+    }
+    if(message.action==='ready' || message.action==='refresh'){
+      if(serviceMode && !serviceStopped)serviceWanted=true;
+      if(serviceMode && serviceWanted && !serviceClient && vscode.workspace.isTrusted)await startMcp();
+      if(serviceMode && message.action==='refresh' && serviceClient)await Promise.all(serviceClient.spaces.map(space=>serviceClient.refresh(space.spaceId)));
+      publishMcpPanel(true);return;
+    }
+    if(serviceMode && ['openChat','cancel','continue','close'].includes(message.action)) {
+      if(!vscode.workspace.isTrusted || !serviceClient)throw Object.assign(Error('Service connection is unavailable.'),{code:'service_unavailable'});
+      const client=serviceClient,spaceId=message.spaceId;
+      if(!client.spaces.some(space=>space.spaceId===spaceId))throw Object.assign(Error('Space is not bound.'),{code:'space_not_bound'});
+      if(message.action==='openChat')throw Object.assign(Error('Service task chats are not available yet.'),{code:'unsupported'});
+      if(typeof message.requestId!=='string' || !/^[\w-]{1,128}$/.test(message.requestId))throw Error('Invalid panel requestId.');
+      await client.call(spaceId,({cancel:'cancel_task',continue:'continue_task',close:'close_task'})[message.action],{
+        taskId:message.taskId,...(message.action==='close'?{}:{requestId:message.requestId}),
+        ...(message.action==='continue'?{clarification:message.clarification}:{})});
+      if(client===serviceClient)await client.refresh(spaceId);
+      publishMcpPanel(true);return;
+    }
     if(message.action==='connectPool')await connectMcpPool();
     else if(message.action==='start'){if(!serviceMode)await connectMcpPool();await startMcp();}
     else if(message.action==='stop')await stopMcp();
@@ -288,15 +344,34 @@ function activate(context) {
     }});
   async function startMcp() {
     if(!serviceMode)return mcpHost.start();
-    if(!vscode.workspace.isTrusted)throw Error('Workspace trust is required.');
-    serviceInstallation ||= await require('./runtime/service-launcher.cjs').installLauncherAsync();
-    await syncServiceSettings();
-    await context.globalState.update('mcpEnabled',true);
-    return serviceInstallation.launcher;
+    serviceWanted=true;
+    serviceStopped=false;
+    if(serviceStarting){
+      if(serviceStartingEpoch===serviceEpoch)return serviceStarting;
+      const pending=serviceStarting,epoch=serviceEpoch;
+      await pending.catch(()=>{});
+      if(!serviceWanted || serviceDisposed || epoch!==serviceEpoch)throw Error('Window binding changed.');
+      return startMcp();
+    }
+    const epoch=serviceEpoch;
+    serviceStartingEpoch=epoch;
+    serviceStarting=(async()=>{
+      if(serviceDisposed || !vscode.workspace.isTrusted)throw Error('Workspace trust is required.');
+      serviceInstallation ||= await require('./runtime/service-launcher.cjs').installLauncherAsync();
+      if(serviceDisposed || serviceEpoch!==epoch)throw Error('Window binding changed.');
+      await syncServiceSettings();
+      if(serviceEpoch!==epoch)throw Error('Window binding changed.');
+      await connectServiceWindow();
+      await context.globalState.update('mcpEnabled',true);publishMcpPanel(true);
+      return serviceInstallation.launcher;
+    })().catch(error=>{serviceError='service_unavailable';publishMcpPanel(true);throw error;}).finally(()=>{serviceStarting=null;});
+    return serviceStarting;
   }
   async function stopMcp() {
     if(!serviceMode)return mcpHost.stop();
-    serviceInstallation=null;await context.globalState.update('mcpEnabled',false);
+    serviceWanted=false;
+    serviceStopped=true;
+    closeServiceClient();serviceInstallation=null;await context.globalState.update('mcpEnabled',false);
   }
   context.subscriptions.push(vscode.commands.registerCommand('rundix.mcpStart',async()=>{
     if(!serviceMode)await connectMcpPool();

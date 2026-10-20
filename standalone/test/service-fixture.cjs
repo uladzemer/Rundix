@@ -3,11 +3,11 @@ const {spawn} = require('node:child_process');
 const {once} = require('node:events');
 const {install} = require('./service-provider-fixture.cjs');
 const {ServiceAppServer} = require('../runtime/service-cli.cjs');
-function fixture(root, {installed = install(root), observeCli = () => {}, cliEnv = {}} = {}) {
+function fixture(root, {installed = install(root), observeCli = () => {}, cliEnv = {}, nodePath=process.execPath} = {}) {
   if(!fs.existsSync(path.join(root,'settings.json')))fs.writeFileSync(path.join(root,'settings.json'),'{}');
   const children = [];
   const launch = (exe, argv, options) => {
-    const child = spawn(exe, argv, options); children.push({child, closed:once(child, 'close')}); return child;
+    const child = spawn(exe===process.execPath?nodePath:exe, argv, options); children.push({child, closed:once(child, 'close')}); return child;
   };
   const hostOptions = {resolveCli:async () => process.execPath, providerOptions:{configPath:installed.configPath,
     verifyPrivate:() => {}, spawnProcess:launch, createCli:options => new ServiceAppServer({...options,

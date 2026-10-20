@@ -10,7 +10,7 @@ if(!chrome)throw Error('Set CHROME_PATH.');
    await page.setContent('<!doctype html><html><body><main id="app"></main></body></html>');
    await page.addStyleTag({content:fs.readFileSync(path.join(__dirname,'../ui/mcp-panel.css'),'utf8')});
    await page.evaluate(({language,theme})=>{
-    if(theme==='light')for(const [key,value]of Object.entries({'sideBar-background':'#f5f5f5',foreground:'#242424','descriptionForeground':'#616161','widget-border':'#ccc','list-inactiveSelectionBackground':'#e8e8e8','list-hoverBackground':'#ddd','input-background':'#fff','input-foreground':'#242424','input-border':'#bbb'}))document.documentElement.style.setProperty('--vscode-'+key,value);
+    if(theme==='light')for(const [key,value]of Object.entries({'sideBar-background':'#f5f5f5',foreground:'#242424','descriptionForeground':'#616161','editorWidget-background':'#fff','widget-border':'#ccc','list-inactiveSelectionBackground':'#e8e8e8','list-hoverBackground':'#ddd','input-background':'#fff','input-foreground':'#242424','input-border':'#bbb'}))document.documentElement.style.setProperty('--vscode-'+key,value);
     window.calls=[];window.acquireVsCodeApi=()=>({getState:()=>({}),setState:state=>window.saved=state,postMessage:message=>window.calls.push(message)});
     window.fixture={language,bridgeRunning:true,connection:{id:'synthetic-pool',label:'Synthetic working pool',external:true},connected:true,tasks:[
      {taskId:'synthetic-active',title:'Synthetic task <img src=x onerror="window.injected=true">',state:'waiting_approval',chatId:'synthetic-chat',projectDirectory:'D:/synthetic-project',progress:'Synthetic progress',pendingRequests:[{id:'synthetic-approval'}],report:{result:'Synthetic result',changedFiles:['synthetic.js'],checks:[{command:'synthetic-test',exitCode:0}],remainingIssues:[]}},
@@ -54,8 +54,26 @@ if(!chrome)throw Error('Set CHROME_PATH.');
    assert.equal(await page.$('.task-detail'),null);
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    await page.screenshot({path:path.join(__dirname,`../.verification/mcp-service-${language}-${theme}-${width}.png`),fullPage:true});
+   await page.evaluate(()=>{
+    window.fixture.configurationAvailable=true;window.fixture.spaceId='synthetic-space-a';window.fixture.spaces=[{spaceId:'synthetic-space-a',label:'Synthetic A'},{spaceId:'synthetic-space-b',label:'Synthetic B'}];
+    window.fixture.tasks=[{taskId:'synthetic-service-wait',title:'Synthetic service wait',state:'waiting_limit',chatId:'synthetic-service-thread',projectDirectory:'D:/synthetic-a',progress:'Synthetic quota wait',waitingLimit:{resetAt:1800000300000,reason:'exhausted'},unsentInputCount:3}];window.update();
+   });
+   assert.equal(await page.$$('#space option').then(rows=>rows.length),2);
+   assert.match(await page.$eval('.limit-reset',node=>node.textContent),language==='ru'?/Сброс лимитов/:/Reset at/);
+   assert.match(await page.$eval('.unsent-count',node=>node.textContent),/3/);
+   await page.screenshot({path:path.join(__dirname,`../.verification/mcp-service-wait-${language}-${theme}-${width}.png`),fullPage:true});
+   await page.type('#clarification','Synthetic service draft');await page.click('form button');
+   const serviceSend=await page.evaluate(()=>window.calls.at(-1));assert.equal(serviceSend.spaceId,'synthetic-space-a');
+   await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'mcpResult',ok:false,requestId:window.calls.at(-1).requestId}})));
+   assert.equal(await page.$eval('#clarification',node=>node.value),'Synthetic service draft');
+   await page.click('form button');assert.equal(await page.evaluate(()=>window.calls.at(-1).requestId),serviceSend.requestId,'Failed service mutation keeps its idempotency key');
+   await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'mcpResult',ok:true,action:'continue',taskId:'synthetic-service-wait',requestId:window.calls.at(-1).requestId}})));
+   await page.evaluate(()=>{window.fixture.tasks[0].state='error';window.fixture.tasks[0].waitingLimit=null;window.fixture.tasks[0].actionRequired='AUTH_REQUIRED';window.update();});
+   assert.match(await page.$eval('.notice',node=>node.textContent),/AUTH_REQUIRED/);
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+   await page.screenshot({path:path.join(__dirname,`../.verification/mcp-service-tasks-${language}-${theme}-${width}.png`),fullPage:true});
    assert.deepEqual(errors,[]);await page.close();
   }
   console.log('MCP panel browser: RU/EN, dark/light, narrow/wide, safe text, draft/focus retention and action results passed.');
  }finally{await browser.close();}
-})().catch(()=>{console.error('MCP panel browser checks failed.');process.exitCode=1;});
+})().catch(error=>{console.error('MCP panel browser checks failed:',error.message);process.exitCode=1;});

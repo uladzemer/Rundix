@@ -2,6 +2,7 @@
 const {randomUUID} = require('node:crypto');
 const {fileURLToPath} = require('node:url');
 const {resolveSpace, canonical} = require('./service-space.cjs');
+const projection=require('./service-projection.cjs');
 const failure = code => Object.assign(Error(code), {code});
 const active = new Set(['queued', 'running', 'waiting_limit', 'waiting_approval']);
 
@@ -63,7 +64,8 @@ function createWindowRpc({generation, tasks}) {
     // Restored/crash-duplicate active records take precedence over the archive.
     for (const task of serviceTasks.archive?.records() || []) if (!serviceTasks.tasks.has(task.taskId)) include(task);
     const result = {generation, schemaVersion:1, spaceId, viewRevision:revision(spaceId),
-      tasks:page.map(task => serviceTasks.summary(task)),
+      tasks:page.map(task => ({...serviceTasks.summary(task),report:projection.report(task.report),closed:!!task.closedAt,
+        actionRequired:task.providerFailureCode || (task.error?.startsWith('action_required') ? 'provider_unavailable' : null)})),
       chats:page.filter(task => task.chatId).map(task => ({taskId:task.taskId, chatId:task.chatId,
         owner:'service', title:('MCP · ' + task.description).slice(0,167), visibility:task.closedAt ? 'closed' : 'open'})),
       windows:[...new Set([...peers].filter(peer => peer.subscriptions.has(spaceId)).map(peer => peer.windowBinding.windowId))]

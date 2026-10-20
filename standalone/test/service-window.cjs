@@ -52,6 +52,11 @@ async function main() {
     await until(() => wa.snapshots.get(sa)?.tasks[0]?.state === 'completed' && wb.snapshots.get(sb)?.tasks[0]?.state === 'completed');
     assert.deepEqual(wa.snapshots.get(sa).tasks.map(task=>task.taskId),[ta.taskId]);
     assert.deepEqual(wb.snapshots.get(sb).tasks.map(task=>task.taskId),[tb.taskId]);
+    assert.equal(wa.snapshots.get(sa).tasks[0].report.result,'Synthetic success','Panel projection includes final report');
+    const huge={result:'😀'.repeat(10000),changedFiles:Array(20).fill('😀'.repeat(1000)),checks:['Synthetic check'],remainingIssues:[]};
+    const bounded=require('../runtime/service-projection.cjs').report(huge);
+    assert(bounded.truncated);assert(Buffer.byteLength(JSON.stringify(bounded))<4096);assert(!bounded.result.includes('\ufffd'));
+    assert.equal(huge.result.length,20000,'Display clipping does not change durable report');
     assert.deepEqual(wa.snapshots.get(sa).windows.map(row=>row.windowId),[wa.windowId]);
     // No foreign tasks, presence or spaces can be queried through a window binding.
     assert.equal(wa.snapshots.get(sa).windows.length,1);

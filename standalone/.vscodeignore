@@ -94,3 +94,4 @@
 !runtime/service-connection.cjs
 !runtime/service-window-rpc.cjs
 !runtime/service-window-client.cjs
+!runtime/service-projection.cjs

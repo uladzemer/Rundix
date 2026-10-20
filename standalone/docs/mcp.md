@@ -125,7 +125,12 @@ The default is `"window"`. Start MCP installs a stable launcher and displays the
 replacement Claude MCP entry; replace the Rundix entry and restart Claude MCP.
 No other Claude entries are modified. A separately installed provider v2 is
 required: missing/invalid configuration fails closed with `action_required`.
-The window does not show service tasks yet; use MCP to list/wait/continue them.
+Opening the MCP panel connects the trusted window to its local workspace spaces.
+The space selector isolates task lists; quota waits show their reset time, and
+connection action reasons, unsent counts and bounded final reports are visible.
+Continue, cancel and close go through the service. Failed continuations preserve
+the draft and requestId for an explicit retry. Service task chat tabs and legacy
+history migration are not implemented yet.
 
 The adapter binds tasks to the Git root of `CLAUDE_PROJECT_DIR`, falling back to
 its cwd, including the main repository for `.claude/worktrees`. In a non-Git

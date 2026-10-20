@@ -2,21 +2,27 @@
 (()=>{
   const api=acquireVsCodeApi(), root=document.getElementById('app');
   let saved=api.getState() || {}, drafts=saved.drafts || {}, selected=saved.selected || null, state=null, pending=false, error='', submission=null, requestId=null;
-  const versions={};
+  const versions={}, attempts=saved.attempts || {};
   let configuration=null,copied=false;
   const configurationText={ru:{title:'Подключение Claude Code',hint:'Эти настройки связывают Claude Code с Rundix. Если сервер rundix уже добавлен, перезапустите сессию Claude Code и проверьте /mcp. VS Code должен оставаться открытым.',copy:'Скопировать настройки',copied:'Настройки скопированы'},en:{title:'Connect Claude Code',hint:'These settings connect Claude Code to Rundix. If rundix is already registered, restart your Claude Code session and check /mcp. VS Code must remain open.',copy:'Copy configuration',copied:'Configuration copied'}};
   const words={
     en:{unsent:'Unsent inputs: recover full text with get_task',title:'MCP tasks',subtitle:'Claude Code → Codex',pool:'Connection',local:'Select a companion pool',ready:'Connected',unchecked:'Not checked',bridgeOn:'MCP bridge running',bridgeOff:'MCP bridge stopped',connect:'Connect pool',start:'Start MCP',stop:'Stop MCP',config:'Claude configuration',refresh:'Refresh',empty:'No MCP tasks yet. Start the bridge and submit a task from Claude Code.',open:'Open chat',cancel:'Cancel task',follow:'Continue in the same chat',placeholder:'Clarification or next step…',send:'Send continuation',report:'Final report',result:'Result',files:'Changed files',checks:'Checks performed',issues:'Remaining issues',none:'None reported',approval:'Approval required — open the chat to review the request, or answer in Claude Code.',recovery:'Execution requires verification. Inspect the chat before continuing.',offline:'Tasks are paused while the bridge is stopped.',failed:'Action failed. Check the selected connection, workspace trust and task state.',queued:'Queued',running:'Running',waiting_approval:'Waiting for approval',completed:'Completed',error:'Error',cancelled:'Cancelled',working:'Working…',copy:'Task ID',context:'VS Code must remain open. Tasks use the selected companion and its server limits.'},
     ru:{unsent:'\u041d\u0435\u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043d\u044b\u0435 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f: \u043f\u043e\u043b\u043d\u044b\u0439 \u0442\u0435\u043a\u0441\u0442 \u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d \u0447\u0435\u0440\u0435\u0437 get_task',title:'Задачи MCP',subtitle:'Claude Code → Codex',pool:'Подключение',local:'Выберите companion с рабочим пулом',ready:'Подключено',unchecked:'Не проверено',bridgeOn:'Мост MCP запущен',bridgeOff:'Мост MCP остановлен',connect:'Подключить пул',start:'Запустить MCP',stop:'Остановить MCP',config:'Конфигурация Claude',refresh:'Обновить',empty:'Задач MCP пока нет. Запустите мост и отправьте задачу из Claude Code.',open:'Открыть чат',cancel:'Отменить задачу',follow:'Продолжить в том же чате',placeholder:'Уточнение или следующий шаг…',send:'Отправить уточнение',report:'Итоговый отчёт',result:'Результат',files:'Изменённые файлы',checks:'Выполненные проверки',issues:'Оставшиеся проблемы',none:'Не указаны',approval:'Требуется подтверждение — откройте чат для проверки запроса или ответьте в Claude Code.',recovery:'Нужно проверить исполнение. Просмотрите чат перед продолжением.',offline:'Задачи приостановлены, пока мост остановлен.',failed:'Действие не выполнено. Проверьте подключение, доверие рабочей области и состояние задачи.',queued:'В очереди',running:'Выполняется',waiting_approval:'Ожидает подтверждения',completed:'Завершена',error:'Ошибка',cancelled:'Отменена',working:'Выполняется…',copy:'ID задачи',context:'VS Code должен оставаться открытым. Задачи используют выбранный companion и его серверные лимиты.'}
   };
+  Object.assign(words.en,{space:'Project space',waiting_limit:'Waiting for limits',reset:'Reset at',resetUnknown:'Reset time unknown',actionRequired:'Connection action required',close:'Close task',unsentCount:'Unsent inputs',low_remaining:'Low remaining quota',exhausted:'Quota exhausted',limits_unknown:'Limits unknown',reset_unknown:'Reset time unknown',active_turns:'Waiting for active turns',action_required:'Connection action required',connection_changed:'Connection changed'});
+  Object.assign(words.ru,{space:'Пространство проекта',waiting_limit:'Ожидает лимитов',reset:'Сброс лимитов',resetUnknown:'Время сброса неизвестно',actionRequired:'Требуется действие с подключением',close:'Закрыть задачу',unsentCount:'Неотправленные сообщения',low_remaining:'Осталось мало лимитов',exhausted:'Лимиты исчерпаны',limits_unknown:'Лимиты неизвестны',reset_unknown:'Время сброса неизвестно',active_turns:'Ожидает завершения активных задач',action_required:'Требуется действие с подключением',connection_changed:'Подключение изменилось'});
   const t=key=>(words[state?.language==='ru'?'ru':'en'][key] || key);
   function element(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;}
-  function persist(){api.setState({selected,drafts});}
+  function persist(){api.setState({selected,drafts,attempts});}
   function action(name,extra={}){
     if(pending)return;
     pending=true;error='';submission=name==='continue'?{taskId:extra.taskId,version:versions[extra.taskId] || 0}:null;
     const bytes=crypto.getRandomValues(new Uint8Array(16));requestId=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
-    render();api.postMessage({action:name,requestId,...extra});
+    const payload={action:name,...(state.serviceMode?{spaceId:state.spaceId}:{}),...extra};
+    if(state.serviceMode && ['continue','cancel'].includes(name)){
+      const key=JSON.stringify(payload);requestId=attempts[key] || requestId;attempts[key]=requestId;
+    }
+    persist();render();api.postMessage({...payload,requestId});
   }
   function button(text,name,extra,disabled=false){const b=element('button',text);b.type='button';b.disabled=pending || disabled;b.addEventListener('click',()=>action(name,extra));return b;}
   function render(){
@@ -25,21 +31,27 @@
     root.replaceChildren();document.documentElement.lang=state.language;
     const header=element('header');header.append(element('h1',t('title')),element('p',t('subtitle'),'eyebrow'));root.append(header);
     if(state.serviceMode){
-      root.append(element('p',state.language==='ru'?'Задачи выполняются в фоновом сервисе. Просмотр и управление доступны через Claude MCP.':'Tasks run in the background service. View and manage them through Claude MCP.','service-note'));
+      root.append(element('p',state.language==='ru'?'Задачи выполняются в фоновом сервисе. Закрытие окна не останавливает их.':'Tasks run in the background service. Closing this window leaves them running.','service-note'));
       const controls=element('section',undefined,'connection');
-      controls.append(button(t('start'),'start',{},state.bridgeRunning),button(t('config'),'configuration',{},!state.bridgeRunning));root.append(controls);
-      if(configuration)root.append(element('pre',JSON.stringify(configuration,null,2),'configuration-json'),button(configurationText[state.language==='ru'?'ru':'en'].copy,'copyConfiguration'));
-      if(error)root.append(element('p',t('failed'),'alert'));
-      return;
-    }
+      const actions=element('div',undefined,'actions');
+      actions.append(button(t('start'),'start',{},state.bridgeRunning),button(t('stop'),'stop',{},!state.bridgeRunning),button(t('config'),'configuration',{},!state.configurationAvailable),button(t('refresh'),'refresh',{},!state.bridgeRunning));
+      controls.append(element('p',state.bridgeRunning?t('ready'):t('unchecked'),'bridge-status'),actions);root.append(controls);
+      if(state.spaces?.length){
+        const label=element('label',t('space')),select=element('select');select.id='space';label.htmlFor='space';select.disabled=pending;
+        for(const space of state.spaces){const option=element('option',space.label);option.value=space.spaceId;option.selected=space.spaceId===state.spaceId;select.append(option);}
+        select.addEventListener('change',()=>action('selectSpace',{spaceId:select.value}));root.append(label,select);
+      }
+      if(state.error)root.append(element('p',t('failed')+' '+state.error,'alert'));
+    }else{
     const connection=element('section',undefined,'connection');
     connection.append(element('strong',t('pool')),element('p',state.connection?.external?state.connection.label:t('local')),
       element('p',state.connected?t('ready'):t('unchecked'),'muted'),element('p',state.bridgeRunning?t('bridgeOn'):t('bridgeOff'),'bridge-status'));
     const controls=element('div',undefined,'actions');controls.append(button(t('connect'),'connectPool'),button(t('start'),'start',{},state.bridgeRunning),button(t('stop'),'stop',{},!state.bridgeRunning),button(t('config'),'configuration',{},!state.bridgeRunning),button(t('refresh'),'refresh'));
     connection.append(controls,element('p',t('context'),'muted'));root.append(connection);
+    }
     if(configuration){
       const labels=configurationText[state.language==='ru'?'ru':'en'],section=element('section',undefined,'claude-configuration');
-      section.append(element('h2',labels.title),element('p',labels.hint,'muted'),element('pre',JSON.stringify(configuration,null,2),'configuration-json'),button(copied?labels.copied:labels.copy,'copyConfiguration',{},!state.bridgeRunning));root.append(section);
+      section.append(element('h2',labels.title),element('p',state.serviceMode?(state.language==='ru'?'Замените запись Rundix MCP и перезапустите Claude MCP.':'Replace the Rundix MCP entry and restart Claude MCP.'):labels.hint,'muted'),element('pre',JSON.stringify(configuration,null,2),'configuration-json'),button(copied?labels.copied:labels.copy,'copyConfiguration',{},!(state.serviceMode?state.configurationAvailable:state.bridgeRunning)));root.append(section);
     }
     if(error || pending){const alert=element('p',pending?t('working'):error==='failed'?t('failed'):t('failed')+' '+error,'alert');alert.setAttribute('role','status');root.append(alert);}
     const tasks=state.tasks || [];
@@ -54,9 +66,15 @@
     root.append(list);
     const task=tasks.find(task=>task.taskId===selected), detail=element('section',undefined,'task-detail');
     detail.append(element('h2',task.title || task.taskId),element('p',t(task.state),'state state-'+task.state),element('code',task.taskId),element('p',task.projectDirectory,'directory'));
+    if(task.waitingLimit){
+      detail.append(element('p',t(task.waitingLimit.reason),'notice'));
+      detail.append(element('p',task.waitingLimit.resetAt?t('reset')+': '+new Date(task.waitingLimit.resetAt).toLocaleString(state.language==='ru'?'ru-RU':'en-US'):t('resetUnknown'),'limit-reset'));
+    }
+    if(task.actionRequired)detail.append(element('p',t('actionRequired')+': '+task.actionRequired,'notice'));
+    if(state.serviceMode && task.unsentInputCount)detail.append(element('p',t('unsentCount')+': '+task.unsentInputCount,'unsent-count'));
     if(task.progress)detail.append(element('p',task.progress,'progress'));
     if(!state.bridgeRunning)detail.append(element('p',t('offline'),'notice'));
-    if(task.pendingRequests?.length)detail.append(element('p',t('approval'),'notice'));
+    if(task.pendingRequests?.length || typeof task.pendingRequests==='number' && task.pendingRequests>0)detail.append(element('p',t('approval'),'notice'));
     if(task.recoveryRequired && task.state==='error')detail.append(element('p',t('recovery'),'notice'));
     if(task.error)detail.append(element('p',task.error,'task-error'));
     if(task.unsentInputs?.length){
@@ -65,9 +83,10 @@
       for(const row of task.unsentInputs)recovery.append(element('pre',row.text+(row.truncated?'…':''),'configuration-json'));
       detail.append(recovery);
     }
-    const taskActions=element('div',undefined,'actions');taskActions.append(button(t('open'),'openChat',{taskId:task.taskId},!task.chatId),button(t('cancel'),'cancel',{taskId:task.taskId},!state.bridgeRunning || (!['queued','running','waiting_approval'].includes(task.state) && !task.recoveryRequired)));detail.append(taskActions);
+    const taskActions=element('div',undefined,'actions');taskActions.append(button(t('open'),'openChat',{taskId:task.taskId},!task.chatId || state.serviceMode && !state.taskChatsAvailable),button(t('cancel'),'cancel',{taskId:task.taskId},!state.bridgeRunning || (!['queued','running','waiting_approval','waiting_limit'].includes(task.state) && !task.recoveryRequired)));if(state.serviceMode)taskActions.append(button(t('close'),'close',{taskId:task.taskId},!state.bridgeRunning || !['completed','error','cancelled'].includes(task.state) || task.recoveryRequired || task.closed));detail.append(taskActions);
     if(task.report){
       const report=element('section',undefined,'report');report.append(element('h3',t('report')));
+      if(task.report.truncated)report.append(element('p',state.language==='ru'?'Показана сокращённая версия. Полный отчёт доступен через get_task.':'Showing a shortened report. Full report is available through get_task.','notice'));
       for(const key of ['result','changedFiles','checks','remainingIssues']){
         report.append(element('h4',t(({changedFiles:'files',remainingIssues:'issues'})[key] || key)));
         const value=task.report[key];
@@ -93,6 +112,7 @@
       pending=false;error=message.ok?'':typeof message.error==='string' && message.error?message.error.slice(0,300):'failed';
       if(message.ok && message.configuration){configuration=message.configuration;copied=message.action==='copyConfiguration';}
       if(message.ok && message.action==='continue' && submission?.taskId===message.taskId && submission.version===(versions[message.taskId] || 0)){delete drafts[message.taskId];persist();}
+      if(message.ok){for(const [key,id]of Object.entries(attempts))if(id===message.requestId)delete attempts[key];persist();}
       submission=null;requestId=null;
       render();
     }

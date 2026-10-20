@@ -20,4 +20,13 @@ function snapshot({records,language,connection,connected,bridgeRunning,pending})
   }));
   return {language,connection,connected,bridgeRunning,tasks};
 }
-module.exports={readRecords,snapshot};
+function serviceSnapshot({client,language,installed,selectedSpaceId,error}) {
+  const spaces=(client?.spaces || []).map(space=>({spaceId:space.spaceId,label:space.root}));
+  const spaceId=spaces.some(space=>space.spaceId===selectedSpaceId)?selectedSpaceId:spaces[0]?.spaceId || null;
+  const projection=client?.snapshots.get(spaceId);
+  return {language,serviceMode:true,bridgeRunning:!!client?.peer && !client.peer.closed,
+    configurationAvailable:!!installed,spaces,spaceId,error:error || null,
+    tasks:projection?.tasks || [],totalTasks:projection?.totalTasks || 0,hasMoreHistory:!!projection?.hasMoreHistory,
+    taskChatsAvailable:false};
+}
+module.exports={readRecords,snapshot,serviceSnapshot};

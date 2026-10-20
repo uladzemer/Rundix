@@ -49,8 +49,9 @@ const { readCatalog } = require("../runtime/model-catalog.cjs");
     /pagination/,
   );
   let pages = 0;
+  // Empty pages that keep a cursor are tolerated (a server may filter hidden models) but stay bounded.
   await assert.rejects(readCatalog({request: async () => ({data: [], nextCursor: 'empty-' + ++pages})}), /pagination/);
-  assert.equal(pages, 1);
+  assert.equal(pages, 50);
   pages = 0;
   await assert.rejects(readCatalog({request: async () => ({data: [{model: 'fixture'}], nextCursor: 'page-' + ++pages})}), /pagination/);
   assert.equal(pages, 50);

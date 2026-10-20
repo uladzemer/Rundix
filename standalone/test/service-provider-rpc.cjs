@@ -10,6 +10,22 @@ function pair(call, options = {}) {
 }
 function frame(text) { const body = Buffer.from(text), buffer = Buffer.alloc(4 + body.length); buffer.writeUInt32BE(body.length); body.copy(buffer, 4); return buffer; }
 async function main() {
+  // Raw peer assertions do not reuse ProviderPeer to construct expected wire
+  // replies: mirrored fixtures otherwise conceal envelope incompatibilities.
+  {
+    const input = new PassThrough(), output = new PassThrough(), writes = [];
+    output.on('data', chunk => writes.push(chunk));
+    const peer = new ProviderPeer({readable:input, writable:output});
+    const pending = peer.request('hello', {}, fence, 1000);
+    const request = JSON.parse(Buffer.concat(writes).subarray(4).toString());
+    input.write(frame(JSON.stringify({jsonrpc:'2.0', id:request.id, result:{version:{major:2, minor:0}, fence}})));
+    assert.deepEqual(await pending, {result:{version:{major:2, minor:0}}, fence});
+    writes.length = 0;
+    const rejected = peer.request('unknown', {}, fence, 1000);
+    const next = JSON.parse(Buffer.concat(writes).subarray(4).toString());
+    input.write(frame(JSON.stringify({jsonrpc:'2.0', id:next.id, error:{code:-32601, message:'METHOD_NOT_SUPPORTED', data:{code:'METHOD_NOT_SUPPORTED'}}, fence})));
+    await assert.rejects(rejected, {code:'METHOD_NOT_SUPPORTED'}); peer.close();
+  }
   {
     const [a, b] = pair(async (method, params, context) => {
       if (method === 'unknown') throw rpcError('METHOD_NOT_SUPPORTED');
@@ -25,6 +41,9 @@ async function main() {
   for (const invalid of [
     '[{}]', '{"jsonrpc":"2.0","jsonrpc":"2.0"}', '{"fence":{"x":1,"x":2}}', '\u00ff',
     JSON.stringify({jsonrpc:'2.0', method:'event', params:{}}),
+    JSON.stringify({jsonrpc:'2.0', method:'request', id:7, params:{}, fence, timeoutMs:100}),
+    JSON.stringify({jsonrpc:'2.0', method:'request', id:'x'.repeat(129), params:{}, fence, timeoutMs:100}),
+    JSON.stringify({jsonrpc:'2.0', method:'event', params:{nested:Array.from({length:18}).reduce(value => ({nested:value}), {})}, fence}),
   ]) {
     const input = new PassThrough(), output = new PassThrough();
     const peer = new ProviderPeer({readable:input, writable:output});
@@ -34,9 +53,11 @@ async function main() {
     const input = new PassThrough(), output = new PassThrough(), chunks = [];
     output.on('data', chunk => chunks.push(chunk));
     const peer = new ProviderPeer({readable:input, writable:output, call:async () => ({ok:true})});
-    input.write(frame(JSON.stringify({jsonrpc:'2.0', id:7, method:'synthetic', params:{}, fence, timeoutMs:100})));
+    input.write(frame(JSON.stringify({jsonrpc:'2.0', id:'synthetic-id', method:'synthetic', params:{}, fence, timeoutMs:100})));
     await pause(5);
-    const response = Buffer.concat(chunks); assert.equal(JSON.parse(response.subarray(4).toString()).id, 7);
+    const response = Buffer.concat(chunks), message = JSON.parse(response.subarray(4).toString());
+    assert.equal(message.id, 'synthetic-id'); assert.deepEqual(message.result.fence, fence);
+    assert(!Object.hasOwn(message, 'fence'), 'Successful wire result carries its fence inside result');
     peer.close();
   }
   {

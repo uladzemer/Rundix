@@ -1,7 +1,7 @@
 // Bounded callers use this for config and provider frames. JSON.parse alone
 // silently accepts duplicate keys (including escaped spellings of the same key).
 const {TextDecoder} = require('node:util');
-function parseStrict(bytes) {
+function parseStrict(bytes, {maxDepth = 64} = {}) {
   const text = new TextDecoder('utf-8', {fatal:true}).decode(bytes);
   let at = 0;
   const invalid = () => { throw Error('Invalid JSON.'); };
@@ -17,7 +17,7 @@ function parseStrict(bytes) {
     invalid();
   }
   function value(depth = 0) {
-    if (depth > 64) invalid();
+    if (depth > maxDepth) invalid();
     whitespace();
     const char = text[at];
     if (char === '"') return string();

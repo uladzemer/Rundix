@@ -3,6 +3,11 @@ const DEADLINES = Object.freeze({hello:5000, authenticate:70000, prepareTurn:900
   'cli/request':70000, 'cli/reconnect':90000});
 const CAPABILITIES = Object.freeze([...Object.keys(DEADLINES), 'lease/grant', 'lease/revoke',
   'turnStarted', 'turnTerminal', 'connectionChanged']);
+// Concrete generic wire shapes. Result fence lives INSIDE result; request,
+// notification and error fences live at the JSON-RPC envelope level.
+const WIRE_VERSION = Object.freeze({major:2, minor:0});
+function helloParams(provider) { return {versions:[{...WIRE_VERSION}], providerId:provider.id, version:provider.version}; }
+function callbackOwner(binding) { return {leaseId:binding.leaseId}; }
 const REASONS = Object.freeze(['low_remaining', 'exhausted', 'limits_unknown', 'reset_unknown',
   'active_turns', 'action_required', 'connection_changed']);
 const UNAVAILABLE_CODES = Object.freeze(['LIMITS_UNKNOWN', 'RESET_UNKNOWN', 'BUSY_ACTIVE', 'AUTH_REQUIRED',
@@ -22,4 +27,4 @@ const FIELDS = Object.freeze({authenticated:['accountRevision', 'effectiveBindin
 function knownOutcome(result) {
   return !!FIELDS[result?.kind] && Object.keys(result).every(key => key === 'kind' || FIELDS[result.kind].includes(key));
 }
-module.exports = {DEADLINES, CAPABILITIES, REASONS, UNAVAILABLE_CODES, equal, knownOutcome};
+module.exports = {DEADLINES, CAPABILITIES, WIRE_VERSION, helloParams, callbackOwner, REASONS, UNAVAILABLE_CODES, equal, knownOutcome};

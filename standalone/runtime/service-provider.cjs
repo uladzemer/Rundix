@@ -4,7 +4,7 @@ const path = require('node:path');
 const {randomUUID} = require('node:crypto');
 const {ProviderPeer, rpcError} = require('./service-provider-rpc.cjs');
 const {readProviderConfig, configLocation, boundedRead, digest, actionRequired} = require('./service-provider-config.cjs');
-const {DEADLINES, CAPABILITIES, UNAVAILABLE_CODES, equal, knownOutcome} = require('./service-provider-contract.cjs');
+const {DEADLINES, CAPABILITIES, helloParams, callbackOwner, UNAVAILABLE_CODES, equal, knownOutcome} = require('./service-provider-contract.cjs');
 const {ServiceAppServer} = require('./service-cli.cjs');
 
 const isObject = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -60,8 +60,7 @@ class ServiceProvider extends EventEmitter {
         if (method !== 'connectionChanged' || !this.#globalCurrent(fence)) { this.#lose(); return; }
         this.#lose('connection_changed');
       });
-      const result = await this.#call('hello', {versions:[{major:2, minor:0}],
-        providerId:this.#config.provider.id, providerVersion:this.#config.provider.version}, {fence:authority});
+      const result = await this.#call('hello', helloParams(this.#config.provider), {fence:authority});
       if (!isObject(result) || result.version?.major !== 2 || result.version?.minor !== 0 ||
           result.providerId !== this.#config.provider.id || result.providerVersion !== this.#config.provider.version ||
           !Array.isArray(result.capabilities) || !CAPABILITIES.every(name => result.capabilities.includes(name))) throw actionRequired('PROVIDER_INCOMPATIBLE');
@@ -191,19 +190,19 @@ class ServiceProvider extends EventEmitter {
     const current = () => parent?.active && !context.signal.aborted && Date.now() < parent.deadline && !this.#lost &&
       this.#parents.get(params.parentRequestId) === parent && this.#globalCurrent(context.fence);
     if (!current() || !equal(context.fence, currentFence) || !equal(params.binding, currentFence.binding) ||
-        params.owner !== currentFence.binding?.leaseId || context.deadline > parent.deadline + 25) throw rpcError('STALE_FENCE');
+        !equal(params.owner, callbackOwner(currentFence.binding)) || context.deadline > parent.deadline + 25) throw rpcError('STALE_FENCE');
     if (!['cli/request', 'cli/reconnect'].includes(method)) throw rpcError('METHOD_NOT_SUPPORTED');
     if (parent.callbackBusy) throw rpcError('METHOD_NOT_SUPPORTED');
     parent.callbackBusy = true;
     try {
       if (method === 'cli/reconnect') {
-        if (!parent.idle || this.#idle !== parent.idle || this.#turns.size || !parent.transaction) throw rpcError('METHOD_NOT_SUPPORTED');
+        if (!parent.idle || params.idleGrantId !== parent.idle.leaseId || this.#idle !== parent.idle || this.#turns.size || !parent.transaction) throw rpcError('METHOD_NOT_SUPPORTED');
         parent.transaction.close(); this.#cli.dispose(); await this.#cli.start();
         if (!current()) throw rpcError('STALE_FENCE');
         this.#revoke(this.#account); this.#account = null;
         this.#revoke(parent.idle); parent.idle = this.#grant('idle', this.#cli.binding); this.#idle = parent.idle;
         parent.transaction = this.#cli.beginProviderTransaction({...parent.idle, timeoutMs:Math.max(1, parent.deadline - Date.now())});
-        return {binding:parent.transaction.fence.binding};
+        return {confirmedExit:true, effectiveBinding:parent.transaction.fence.binding};
       }
       if (!['account/login/start', 'account/read', 'account/rateLimits/read'].includes(params.method) || !isObject(params.params)) throw rpcError('METHOD_NOT_SUPPORTED');
       const allowed = params.method === 'account/login/start' ? ['type', 'accessToken', 'chatgptAccountId', 'chatgptPlanType']
@@ -211,16 +210,16 @@ class ServiceProvider extends EventEmitter {
       if (Object.keys(params.params).some(key => !allowed.includes(key))) throw rpcError('METHOD_NOT_SUPPORTED');
       const budget = Math.min(70000, context.deadline - Date.now(), parent.deadline - Date.now());
       if (budget < 1) throw rpcError('STALE_FENCE');
-      if (params.method === 'account/login/start' && (!parent.idle || this.#idle !== parent.idle || this.#turns.size || !parent.transaction || params.params.type !== 'chatgptAuthTokens')) throw rpcError('METHOD_NOT_SUPPORTED');
+      if (params.method === 'account/login/start' && (!parent.idle || params.idleGrantId !== parent.idle.leaseId || this.#idle !== parent.idle || this.#turns.size || !parent.transaction || params.params.type !== 'chatgptAuthTokens')) throw rpcError('METHOD_NOT_SUPPORTED');
       const result = parent.transaction ? await parent.transaction.request(params.method, params.params, budget)
         : await this.#cli.request(params.method, params.params, budget);
       if (!current()) throw rpcError('STALE_FENCE');
       if (params.method === 'account/login/start') {
         this.#revoke(parent.proposed);
         parent.proposed = this.#grant('account', {...this.#cli.binding, accountRevision:this.#cli.binding.accountRevision + 1}, {provisional:true});
-        return {...result, authGrantId:parent.proposed.leaseId, nextAccountRevision:parent.proposed.binding.accountRevision};
+        return {response:result, authGrantId:parent.proposed.leaseId, nextAccountRevision:parent.proposed.binding.accountRevision};
       }
-      return result;
+      return {response:result};
     } finally { parent.callbackBusy = false; }
   }
   async authenticate(trigger = 'initial') {
@@ -377,10 +376,12 @@ class ServiceProvider extends EventEmitter {
       }
       return {kind:result.kind, operationId:result.operationId, ...(result.code ? {code:result.code} : {})};
     }
-    if (!['ready', 'busy', 'unavailable'].includes(result.status) || Object.keys(result).some(key => !['status', 'counts'].includes(key)) ||
+    if (typeof result.authenticated !== 'boolean' || !revision(result.activeTurns) || typeof result.preparing !== 'boolean' ||
+        Object.keys(result).some(key => !['authenticated', 'activeTurns', 'preparing', 'counts'].includes(key)) ||
         (result.counts !== undefined && (!isObject(result.counts) || Object.entries(result.counts).some(([key, count]) =>
           ![...Object.keys(DEADLINES), 'turnStarted', 'turnTerminal'].includes(key) || !revision(count))))) throw actionRequired('PROVIDER_PROTOCOL_INVALID');
-    return {status:result.status, ...(result.counts ? {counts:{...result.counts}} : {})};
+    return {authenticated:result.authenticated, activeTurns:result.activeTurns, preparing:result.preparing,
+      ...(result.counts ? {counts:{...result.counts}} : {})};
   }
   async dispose(trigger = 'serviceShutdown') {
     if (this.#disposed) return;

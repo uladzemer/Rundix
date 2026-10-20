@@ -2,7 +2,7 @@
 // tests, alongside the shared framed transport. No pool, broker or auth files.
 const {ProviderPeer, rpcError} = require('./service-provider-rpc.cjs');
 const {CAPABILITIES} = require('./service-provider-contract.cjs');
-let scenario = 'ready', accountGrant = null;
+let scenario = 'ready', accountGrant = null, idleGrant = null;
 let releasePrepare;
 let statusChecks = 0;
 const counts = {authenticate:0, prepareTurn:0, handleRequest:0, turnStarted:0, turnTerminal:0};
@@ -18,12 +18,12 @@ const peer = new ProviderPeer({readable:process.stdin, writable:process.stdout, 
     if (scenario === 'auth-required') return {kind:'unavailable', code:'AUTH_REQUIRED', retryable:false, retryAfterMs:0, messageKey:'synthetic.auth'};
     let fence = context.fence, effectiveBinding;
     if (scenario === 'reconnect') {
-      const {result} = await peer.request('cli/reconnect', {parentRequestId:context.id, owner:fence.binding.leaseId, binding:fence.binding}, fence, 5000);
-      effectiveBinding = result.binding; fence = {...fence, binding:effectiveBinding};
+      const {result} = await peer.request('cli/reconnect', {parentRequestId:context.id, owner:{leaseId:fence.binding.leaseId}, binding:fence.binding, idleGrantId:idleGrant?.leaseId}, fence, 5000);
+      effectiveBinding = result.effectiveBinding; fence = {...fence, binding:effectiveBinding};
     }
     if (scenario !== 'no-login') {
       await peer.request('cli/request', {parentRequestId:scenario === 'stale-parent' ? 'retired-parent' : context.id,
-        owner:scenario === 'stale-owner' ? 'foreign-owner' : fence.binding.leaseId, binding:fence.binding,
+        owner:{leaseId:scenario === 'stale-owner' ? 'foreign-owner' : fence.binding.leaseId}, binding:fence.binding, idleGrantId:idleGrant?.leaseId,
         method:scenario === 'logout' ? 'account/logout' : 'account/login/start',
         params:{type:'chatgptAuthTokens', accessToken:'SYNTHETIC_NOT_A_CREDENTIAL', chatgptAccountId:'synthetic-account', chatgptPlanType:'plus'}}, fence, 5000);
     }
@@ -39,7 +39,7 @@ const peer = new ProviderPeer({readable:process.stdin, writable:process.stdout, 
     if (scenario === 'auth-required') return {kind:'unavailable', code:'AUTH_REQUIRED', retryable:false, retryAfterMs:0, messageKey:'synthetic.auth'};
     if (scenario === 'change-account-old-revision' || scenario === 'change-account-new-revision') {
       const oldGrant = accountGrant.leaseId;
-      const {result} = await peer.request('cli/request', {parentRequestId:context.id, owner:context.fence.binding.leaseId, binding:context.fence.binding,
+      const {result} = await peer.request('cli/request', {parentRequestId:context.id, owner:{leaseId:context.fence.binding.leaseId}, binding:context.fence.binding, idleGrantId:idleGrant?.leaseId,
         method:'account/login/start', params:{type:'chatgptAuthTokens', accessToken:'SYNTHETIC_NOT_A_CREDENTIAL', chatgptAccountId:'synthetic-other-account'}}, context.fence, 5000);
       return {kind:'ready', accountRevision:scenario === 'change-account-old-revision' ? context.fence.binding.accountRevision : result.nextAccountRevision,
         authGrantId:scenario === 'change-account-old-revision' ? oldGrant : result.authGrantId,
@@ -59,12 +59,13 @@ const peer = new ProviderPeer({readable:process.stdin, writable:process.stdout, 
   if (method === 'status') {
     if (scenario === 'pending-config') return {kind:++statusChecks < 2 ? 'pending' : 'succeeded', operationId:params.operationId};
     if (scenario === 'bad-status') return {status:'ready', accessToken:'SYNTHETIC_NOT_A_CREDENTIAL'};
-    return {status:'ready', counts};
+    return {authenticated:!!accountGrant, activeTurns:0, preparing:false, counts};
   }
   if (method === 'dispose') return {kind:'disposed'};
   throw rpcError('METHOD_NOT_SUPPORTED');
 }});
 peer.on('event', (method, params) => {
+  if (method === 'lease/grant' && params.grant.kind === 'idle') idleGrant = params.grant;
   if (method === 'lease/grant' && params.grant.kind === 'account') accountGrant = params.grant;
   if (method === 'turnStarted') counts.turnStarted++;
   if (method === 'turnTerminal') counts.turnTerminal++;

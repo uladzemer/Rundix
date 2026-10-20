@@ -41,7 +41,7 @@ class ProviderPeer extends EventEmitter {
         if (count) this.parts.push(Buffer.from(chunk.subarray(at, at + count)));
         this.size += count; at += count;
         if (this.size !== this.expected) continue;
-        const message = parseStrict(Buffer.concat(this.parts, this.size));
+        const message = parseStrict(Buffer.concat(this.parts, this.size), {maxDepth:16});
         clearTimeout(this.frameTimer); this.frameTimer = null;
         this.headerSize = 0; this.parts = []; this.size = 0; this.expected = null;
         this.receive(message);
@@ -65,7 +65,7 @@ class ProviderPeer extends EventEmitter {
   }
   request(method, params, fence, timeoutMs, {onRequest} = {}) {
     if (!globalFence(fence) || typeof method !== 'string' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 90000 ||
-        this.pending.size >= MAX_CALLS || this.closed) return Promise.reject(rpcError());
+        this.pending.size + this.incoming.size >= MAX_CALLS || this.closed) return Promise.reject(rpcError());
     const id = 'r' + (++this.sequence);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => this.close(), timeoutMs);
@@ -79,15 +79,16 @@ class ProviderPeer extends EventEmitter {
     this.send({method, params, fence});
   }
   receive(message) {
-    if (!object(message) || message.jsonrpc !== '2.0' || !globalFence(message.fence)) throw rpcError();
+    if (!object(message) || message.jsonrpc !== '2.0') throw rpcError();
     if (typeof message.method === 'string') {
+      if (!globalFence(message.fence)) throw rpcError();
       if (!object(message.params)) throw rpcError();
       if (message.id === undefined) {
         if (message.timeoutMs !== undefined) throw rpcError();
         this.emit('event', message.method, message.params, message.fence); return;
       }
-      if (!((typeof message.id === 'string' && !!message.id) || Number.isSafeInteger(message.id)) || this.incoming.has(message.id) ||
-          this.incoming.size >= MAX_CALLS || !Number.isInteger(message.timeoutMs) || message.timeoutMs < 1 || message.timeoutMs > 90000) throw rpcError();
+      if (typeof message.id !== 'string' || !message.id || message.id.length > 128 || this.incoming.has(message.id) ||
+          this.incoming.size + this.pending.size >= MAX_CALLS || !Number.isInteger(message.timeoutMs) || message.timeoutMs < 1 || message.timeoutMs > 90000) throw rpcError();
       const controller = new AbortController();
       const context = {id:message.id, fence:message.fence, signal:controller.signal, deadline:Date.now() + message.timeoutMs};
       const entry = {controller, timer:null}; this.incoming.set(message.id, entry);
@@ -99,11 +100,11 @@ class ProviderPeer extends EventEmitter {
         if (!this.handler) throw rpcError('METHOD_NOT_SUPPORTED');
         return this.handler(message.method, message.params, context);
       }).then(result => {
-        if (!this.closed && !controller.signal.aborted) this.send({id:message.id, result, fence:message.fence});
+        if (!this.closed && !controller.signal.aborted) this.send({id:message.id, result:{...result, fence:message.fence}});
       }, error => {
         if (!this.closed && !controller.signal.aborted) {
           const code = ERROR_CODES.has(error?.code) ? error.code : 'METHOD_NOT_SUPPORTED';
-          this.send({id:message.id, error:{code, message:code}, fence:message.fence});
+          this.send({id:message.id, error:{code:code === 'METHOD_NOT_SUPPORTED' ? -32601 : -32000, message:code, data:{code}}, fence:message.fence});
         }
       }).catch(() => this.close()).finally(() => {
         clearTimeout(entry.timer); this.incoming.delete(message.id);
@@ -115,11 +116,17 @@ class ProviderPeer extends EventEmitter {
     // Full canonical fence equality is checked by the owning provider driver;
     // the peer only delivers the envelope, never drops the returned fence.
     if (Object.hasOwn(message, 'result') === Object.hasOwn(message, 'error')) throw rpcError();
+    const responseFence = message.error ? message.fence : message.result?.fence;
+    if (!globalFence(responseFence)) throw rpcError();
     this.pending.delete(message.id); clearTimeout(pending.timer);
     if (message.error) {
-      const error = rpcError(ERROR_CODES.has(message.error.code) ? message.error.code : 'PROVIDER_UNAVAILABLE');
-      error.fence = message.fence; pending.reject(error);
-    } else pending.resolve({result:message.result, fence:message.fence});
+      const code = message.error.data?.code;
+      const error = rpcError(typeof message.error.code === 'number' && message.error.message === code && ERROR_CODES.has(code) ? code : 'PROVIDER_UNAVAILABLE');
+      error.fence = responseFence; pending.reject(error);
+    } else {
+      const {fence, ...result} = message.result;
+      pending.resolve({result, fence});
+    }
   }
   close() {
     if (this.closed) return;

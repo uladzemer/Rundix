@@ -129,10 +129,14 @@ SYSTEM and do not change permissions. **Digests detect inconsistency/corruption;
 they do not protect against same-user tampering or authenticate dependencies.**
 
 `service-provider-rpc.cjs` / `service-json.cjs` implement uint32-BE-length-prefixed
-UTF-8 JSON-RPC (256 KiB/frame, 32 unsettled calls each direction, 1 MiB output
-queue, 5 s partial-frame/write timeout). Batch, duplicate keys, non-UTF-8 and
+UTF-8 JSON-RPC (256 KiB/frame, 32 total unsettled calls, 1 MiB output
+queue, 5 s partial-frame/write timeout, nesting depth 16). Batch, duplicate keys, non-UTF-8 and
 invalid envelopes close the connection. Requests use top-level `fence` and
-`timeoutMs`, events/results/errors echo their fence; method payload is `params`.
+`timeoutMs`; request/event/error fences are top-level. Successful results contain
+their fence inside `result`. Method payload is `params`; callback `owner` is
+`{leaseId}`. Errors use numeric JSON-RPC codes and fixed public names in both
+`error.message` and `error.data.code`. IDs are nonempty strings up to 128 chars;
+the cap of 32 counts outgoing and incoming work together.
 Errors contain only fixed codes. RPC deadline closes the peer and aborts callback
 delivery; timed-out application work is not treated as completed. No stderr,
 credential record, chat input or personal path is sent to diagnostics.
@@ -146,7 +150,7 @@ credential record, chat input or personal path is sent to diagnostics.
   steer or compaction cannot bypass admission.
 - `authenticate(trigger)` holds a service-issued idle grant for the entire
   login transaction. CLI callbacks must reference the live parent's RPC ID;
-  `owner` equals its binding leaseId, and `binding` and wire fence must match.
+  `owner.leaseId` equals its binding leaseId, and `binding` and wire fence must match.
   Only external login/read/limits are allowed. An idle `cli/reconnect` waits for
   confirmed old CLI exit, issues a new idle grant/generation and returns its
   binding. `effectiveBinding` is accepted only from that recorded transaction.
@@ -195,10 +199,43 @@ the synthetic `mcp-host`, `startup-host`, `local-auth-host` Extension Host suite
 and packaging/actual-ZIP audit passed on Windows. Separate read-only review used
 three rounds: retired waitIds, changed-account revisions and foreign-account
 refresh were fixed with synthetic regressions; the final focused round reported
-zero remaining confirmed findings. A subsequent narrow JSON-RPC numeric-ID
-compatibility adjustment was author-checked with its own transport regression.
+zero remaining confirmed findings. Numeric-ID compatibility was subsequently
+replaced by the tighter string-ID contract in the wire cross-check below.
 No real account, sign-in file, CLI or inference was used. Native macOS remains
 unverified. Final validation after the local commit is recorded in the task report.
+
+## Generic wire cross-check (2026-10-20)
+
+Only the companion's integration protocol notes were read. No private code,
+identifiers, account selection, storage, broker or rotation policy is incorporated
+here. These findings compare documented shapes, **not** a live interop run.
+The original normative prose does not settle every concrete payload choice.
+
+| Mismatch found | Resolution / side that should change |
+| --- | --- |
+| Public success `fence` top-level vs companion `result.fence` | Public transport changed to `result.fence`; raw-wire tests added. Requests/events/errors retain top-level fence. |
+| Public string `error.code` vs numeric error + `message`/`data.code` | Public transport changed to numeric JSON-RPC error with fixed public name in both fields. |
+| Public hello `providerVersion` vs companion `version` | Public hello now sends `version`; result still uses `providerVersion`. |
+| Public depth 64, numeric IDs, unbounded string IDs, 32 per direction vs companion depth 16/string 1–128/32 total | Public provider framing now uses the companion's tighter bounds. Config parsing retains its separate bound. |
+| Public callback string `owner` vs `{leaseId}` | Public callbacks now require `{leaseId}`; synthetic fixture updated. |
+| Public login/reconnect callback missing `idleGrantId` | Public now requires the exact live idleGrantId for both mutations. |
+| Public raw CLI callback result vs `{response,fence}` | Public now returns nested `response`, with callback fence inside result. The existing public `authGrantId`/`nextAccountRevision` login result extensions remain; companion must tolerate/use them until grant-order alignment below. |
+| Public reconnect `{binding}` vs `{confirmedExit,effectiveBinding,fence}` | Public result now uses `confirmedExit:true`/`effectiveBinding`; original callback fence is inside result. Binding-transition ordering remains different (below). |
+| Public status `{status,counts?}` vs `{authenticated,activeTurns,preparing}` | Public status validates/projects the three companion fields; optional numeric method `counts` remain a synthetic diagnostics extension. |
+| Public account/idle/turn event `{grant:{...}}` vs flat `params.kind` and kind-specific IDs with binding in fence | **Still incompatible.** Recommend changing public event serialization to the companion's flat generic shapes, with independent raw-wire fixtures, as part of the next lifecycle alignment. Internal grant records should stay service-owned. Do not merely change field names without the ordering checks below. |
+| Public revoke `{leaseId,leaseRevision}` for every kind vs kind-specific account/idle/turn payloads | **Still incompatible.** Public serialization should change together with grant events. A turn revoke must remain uncertainty, never proof of terminal. |
+| Public idle binding replaces account leaseId, events precede parent ID allocation vs companion separate idleGrantId, account binding retained and parentRequestId supplied before parent RPC | **Still incompatible.** Public lifecycle should change transaction setup to reserve the parent ID before grant publication, retaining a separate idle grant. |
+| Public account grant after login callback with proposed revision vs companion account grant before login, initial revision 1, later transitions tied to parent | **Still incompatible.** Public needs explicit provisional/account proof separation before changing ordering. Both sides must preserve the hard gate: issuing a grant is not confirmed login. This affects CLI transaction revision validation. |
+| Public reconnect creates revision-0 CLI binding and returns it before login vs companion new-generation account revision current+1 grant before reconnect reply | **Still incompatible.** Public should preserve account lineage across CLI restart and publish the recorded transition before callback reply; gate stays closed until confirmed login. |
+| Public terminal `{trigger,spaceId,...}` vs companion `{confirmed:true,...}` and `confirmedExit:true`/null turnId when start unobserved | **Still incompatible.** Public wire serializer should change while keeping exact internal task/run/turn/lease verification. Space routing stays internal. |
+| Public top-level `manifestPath` vs companion notes `provider.manifestPath` | Companion installer documentation/implementation should change to top-level `manifestPath`, as explicitly accepted in the prior owner decision. No public schema change here. |
+| Public live selectionRevision CAS vs companion establishes once per process and rejects later revisions | Companion should implement the same explicit CAS transition or public service must replace the provider instance after configuration. Pending configuration UI remains out of scope; do not silently continue with a new revision. |
+| Public refresh expects `cliResponse.response` or `unavailable`; companion also describes a fixed failure code/messageKey without an explicit outcome shape | Companion notes should specify a closed `unavailable` outcome using the existing public enum, or the service must add an agreed typed failure envelope. No arbitrary failure payload is forwarded. |
+| Public deadline rejects/closes as `PROVIDER_UNAVAILABLE`; companion uses unavailable `PROVIDER_PROCESS_UNCERTAIN` after lost mutation ACK | Public should distinguish mutation uncertainty at the owner boundary. Existing CLI quarantine and retained turn grants remain mandatory; do not make timeout safe-to-replay. |
+
+The shapes marked **still incompatible** are integration blockers for the real
+companion; the synthetic service/provider tests do not prove cross-repository
+interoperability. This checkpoint does not modify the companion repository.
 
 ## Remaining work for 3a
 

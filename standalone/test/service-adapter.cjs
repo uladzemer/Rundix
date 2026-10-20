@@ -3,7 +3,7 @@ const fs = require('node:fs'), path = require('node:path'), os = require('node:o
 const net = require('node:net');
 const {createServiceClient} = require('../runtime/service-adapter.cjs');
 const {installLauncher, registration} = require('../runtime/service-launcher.cjs');
-const {startService, locations, readDiscovery, publish} = require('../runtime/service-endpoint.cjs');
+const {startService, connectService, locations, readDiscovery, publish} = require('../runtime/service-endpoint.cjs');
 const {createTaskRpc} = require('../runtime/service-task-rpc.cjs');
 const {serviceEnvironment} = require('../runtime/service-environment.cjs');
 async function main() {
@@ -45,9 +45,17 @@ async function main() {
     assert.equal((await a.call(null,'list_tasks',{})).space,ar.space,'Malformed waits retain the shared connection');
     assert.equal(ar.space, a.space); assert.equal(br.space, b.space); assert.notEqual(ar.space, br.space);
     assert.throws(() => createServiceClient({root, cwd, env:{CLAUDE_PROJECT_DIR:path.join(root, 'absent')}}));
+    let firstUnavailable=0;const immediate=await connectService({root,onUnavailable:()=>{firstUnavailable++;},hello:{clientKind:'adapter',binding:{source:'cwd',launchDirectory:cwd}}});immediate.close();assert.equal(firstUnavailable,0,'First dial does not demand-start again');
     const discovery = readDiscovery(locations({root}));
     clients.forEach(c => c.close());
     assert.equal((await endpoint.dispose()), undefined); endpoint = null;
+    let spawns=0;
+    publish(locations({root}),discovery);
+    const cold=createServiceClient({root,cwd,env:{},inspectProcess:async()=>({state:'dead'}),spawnProcess(){
+      spawns++;fs.unlinkSync(locations({root}).descriptor);const child=new (require('node:events').EventEmitter)();child.unref=()=>{};
+      setTimeout(()=>{void (async()=>{endpoint=await startService({root,ipc:{hello:rpc.hello},call:rpc.call});await endpoint.ready();})();},400);
+      return child;
+    }});clients.push(cold);await cold.getTools();assert.equal(spawns,1,'Slow discovery publication spawns once per absent generation');cold.close();await endpoint.dispose();endpoint=null;
     // A listener that accepts but never answers must share the complete startup
     // deadline with process-identity probing; no second 20-second budget.
     const where = locations({root}), sockets = new Set(), silent = net.createServer(socket => {sockets.add(socket);socket.on('close', () => sockets.delete(socket));});

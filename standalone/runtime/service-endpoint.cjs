@@ -184,11 +184,12 @@ async function startService(options = {}) {
 }
 async function connectService(options = {}) {
   const where = locations(options), deadline = Date.now() + (options.startupTimeoutMs || 20000);
-  let delay = 100;
+  let delay = 100, firstAttempt=true;
   do {
     let peer;
     try {
-      await options.onUnavailable?.();
+      if(!firstAttempt)await options.onUnavailable?.();
+      firstAttempt=false;
       const descriptor = await readDiscoveryWithRetry(where,options,deadline);
       if (descriptor) {
         peer = await ipc.dial(where.address,{...options.ipc, connectTimeoutMs:Math.max(1,Math.min(2000,deadline-Date.now()))});

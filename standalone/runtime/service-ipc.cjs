@@ -104,7 +104,8 @@ class Peer extends EventEmitter {
         .then(result => { if (!this.closed) this.send({id:message.id, result:result ?? null}); })
         .catch(error => {
           // No exception messages or caller-supplied error codes cross the boundary.
-          const code = ['auth_failed','protocol_incompatible','stale_instance','service_initializing','method_not_supported','rpc_timeout'].includes(error?.code) ? error.code : 'rejected';
+          const code = ['auth_failed','protocol_incompatible','stale_instance','service_initializing','method_not_supported','rpc_timeout',
+            'workspace_untrusted','space_unsupported_uri','space_invalid_directory','space_git_invalid','space_git_layout_unsupported'].includes(error?.code) ? error.code : 'rejected';
           if (!this.closed) { try { this.send({id:message.id, error:{code, message:code}}); } catch { this.close('service_unavailable'); } }
         }).finally(() => { clearTimeout(timer); this.handlerTimers.delete(timer); this.calls.delete(controller); });
       return;
@@ -112,7 +113,8 @@ class Peer extends EventEmitter {
     const pending = this.pending.get(message.id);
     if (!pending) return;
     this.pending.delete(message.id); clearTimeout(pending.timer);
-    if (message.error) pending.reject(failure(['auth_failed','protocol_incompatible','stale_instance','service_initializing','method_not_supported','rpc_timeout','rejected'].includes(message.error.code) ? message.error.code : 'rejected'));
+    if (message.error) pending.reject(failure(['auth_failed','protocol_incompatible','stale_instance','service_initializing','method_not_supported','rpc_timeout','rejected',
+      'workspace_untrusted','space_unsupported_uri','space_invalid_directory','space_git_invalid','space_git_layout_unsupported'].includes(message.error.code) ? message.error.code : 'rejected'));
     else if (Object.hasOwn(message, 'result')) pending.resolve(message.result);
     else pending.reject(failure('invalid_frame'));
   }

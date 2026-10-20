@@ -1,8 +1,9 @@
-# Headless service implementation status (step 3a, partial)
+# Headless service implementation status (step 3b, runtime client slice)
 
-The public service is not wired or installed yet. Window-owned MCP remains the
-default and only selectable mode. Do not advertise this slice as a working
-headless service. No real CLI account or sign-in files are used by its tests.
+Window-owned MCP remains the default. The experimental service switch installs
+the headless runtime, but its new window client is not connected to the Extension
+Host UI yet. Do not advertise step 3b as complete. No real CLI account or sign-in
+files are used by its tests.
 
 ## Space identity
 
@@ -546,3 +547,46 @@ wait once, while explicit recovery bypasses backoff and waits at most seven seco
 If CLI stop fails during idle disposal, provider disposal rolls back its closing
 state and recovers with a fresh generation before admitting new turns. The service
 may resume admissions; it never resumes against a permanently disposed provider.
+
+## Step 3b: window IPC runtime (partial, not wired to VS Code yet)
+
+This slice adds runtime support only. The service-mode extension still displays
+its existing setup panel without service tasks. Ordinary window-owned MCP and
+manual chats retain their existing behavior. Step 3b is not complete.
+
+- `service-window-rpc.cjs`: trusted window hello, server-recomputed local folder
+  spaces, deduplicated multi-root bindings, connection-owned subscriptions,
+  schemaVersion 1 snapshots and per-space viewRevision invalidations. Snapshots
+  contain at most 100 task/chat summaries, active tasks first, and only presence
+  of windows subscribed to that space. Foreign spaces fail before task lookup.
+- `service-window-client.cjs`: computes the same spaces locally, validates the
+  hello result, subscribes with a full replacement projection, and resyncs for
+  every newer event (including gaps). Reconnect uses 250 ms to 5 s backoff, fresh
+  discovery/hello and snapshots; heartbeat is 15 s with a 5 s deadline. Close
+  drops only the client connection/projection. Mutations are dispatched once;
+  requestId, arguments and drafts remain the host caller's responsibility.
+- `service-connection.cjs`: shared bounded demand-start connection, extracted
+  from the adapter; the adapter retains its existing binding and capabilities.
+- `service-task-rpc.cjs` / `service-main.cjs`: route window subscriptions and task
+  calls under their selected bound space. The service-only McpTasks changed hook
+  invalidates projections after durable task saves; it never controls execution.
+
+`test/service-window.cjs` uses real IPC with a synthetic provider/CLI and two
+independent runtime window clients. It covers A/B isolation, multi-root collapse,
+empty windows, trust/URI rejection, full snapshots, dropped-event resync, reload,
+backoff reconnect, same-thread continuation, synthetic answer routing/dedup and
+no automatic mutation replay. It does not exercise VS Code task tabs or migration.
+
+Remaining: Extension Host lifecycle/trust/workspace wiring, panel space selector
+and task actions, service-owned task transcript tabs with draft-safe send/answer,
+legacy copy/verify/marker/backup import and lifetime legacy leases, and their
+isolated host/browser/migration acceptance tests. Legacy history must remain
+read-only, even when projectDirectory can infer a display space.
+
+Validation of this runtime slice: npm test, npm run test:browser (existing panel
+RU/EN, both themes, narrow/wide), isolated mcp-host/startup-host/local-auth-host/
+service-mode-host suites, and package ZIP audit passed on Windows with synthetic
+data. These are regression checks, not service task UI or migration acceptance.
+Independent read-only review found missing archived history in snapshot totals;
+the merge/count fix and archive regression passed a focused second round with
+zero outstanding confirmed findings.

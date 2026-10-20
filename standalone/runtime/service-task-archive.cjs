@@ -13,6 +13,14 @@ class TaskArchive {
     return record;
   }
   get(id){return this.read('mcp-task',id);}
+  *records(){
+    for(const name of fs.readdirSync(this.store.directory)) {
+      if(!/^mcp-task-[\w-]+\.json$/.test(name))continue;
+      const task=this.get(name.slice(9,-5));
+      if(!task || task.taskId!==name.slice(9,-5) || typeof task.space!=='string' || !Array.isArray(task.operations))throw failure();
+      yield task;
+    }
+  }
   request(space,id){
     const key=createHash('sha256').update(space+'\0'+id).digest('hex');
     const row=this.read('request',key);if(!row)return null;

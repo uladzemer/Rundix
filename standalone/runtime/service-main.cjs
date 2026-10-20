@@ -13,8 +13,8 @@ async function runService(options = {}) {
   let host, idle, poller;
   try {
     host = await createHeadlessHost({...options.hostOptions, root:locations(options).directory, generation:endpoint.generation,
-      taskOptions:{...options.hostOptions?.taskOptions, scope:rpc.scope, signal:rpc.signal}});
-    rpc.attach(host); poller = createLimitPoller({host, ...options.pollerOptions});
+      taskOptions:{...options.hostOptions?.taskOptions, scope:rpc.scope, signal:rpc.signal, changed:rpc.changed}});
+    rpc.attach(host, endpoint.generation); poller = createLimitPoller({host, ...options.pollerOptions});
     let disposal,hostStopped=false,retry;
     const dispose = async () => {
       if(disposal)return disposal;

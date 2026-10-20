@@ -60,9 +60,8 @@ function gitRoot(worktree, gitMarker) {
   let gitdir = directory(path.resolve(worktree, match[1]));
   const seen = new Set([gitdir]);
   let linked = false;
-  // A bounded chain also rejects malformed common-directory cycles. Normal git
-  // layouts take one transition, including .claude and external worktrees.
-  for (let hop = 0; hop <= 8; hop++) {
+  // Linked worktrees permit exactly one transition into the common directory.
+  for (let hop = 0; hop <= 1; hop++) {
     const commonFile = path.join(gitdir, 'commondir');
     const common = marker(commonFile);
     if (!common) {
@@ -70,7 +69,7 @@ function gitRoot(worktree, gitMarker) {
       if (path.basename(gitdir) !== '.git') throw failure('space_git_layout_unsupported');
       return directory(path.dirname(gitdir));
     }
-    if (hop === 8 || !common.isFile()) throw failure('space_git_invalid');
+    if (hop === 1 || !common.isFile()) throw failure('space_git_invalid');
     if (!linked) {
       // A gitdir pointer alone cannot confer another repository's task space.
       const back = marker(path.join(gitdir, 'gitdir'));

@@ -34,6 +34,10 @@ try {
   assert.throws(() => resolveSpace(spoof), {code:'space_git_invalid'});
   const forged=linked('forged',mkdir('forged/fake'),common);
   assert.throws(()=>resolveSpace(forged),{code:'space_git_invalid'},'A valid back-pointer in attacker metadata cannot join another space');
+  const intermediate=mkdir('twohop-owner/.git');
+  const twohop=linked('twohop-worktree',mkdir('twohop-owner/.git/worktrees/x'),intermediate);
+  fs.writeFileSync(path.join(intermediate,'commondir'),common);
+  assert.throws(()=>resolveSpace(twohop),{code:'space_git_invalid'},'A valid first hop cannot delegate space through another commondir');
   const back = path.join(common, 'worktrees/external/gitdir');fs.unlinkSync(back);
   assert.throws(() => resolveSpace(external), {code:'space_git_invalid'});
   fs.writeFileSync(back, path.join(external,'.git'));

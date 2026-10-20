@@ -444,7 +444,7 @@ repository credentials or project variables cross into the service children.
 Adapter space selection still uses its original cwd/CLAUDE_PROJECT_DIR.
 
 Linked worktrees must have a gitdir/gitdir back-pointer resolving to their own
-.git marker and a first-hop gitdir directly under the real common directory?s
+.git marker and a first-hop gitdir directly under the real common directory's
 worktrees directory before sharing a main repository space. Missing/foreign pointers fail
 closed. Submodules/separate git directories without commondir remain independent.
 Task-directory reservation canonicalization retains the exact 0.3.1 algorithm;

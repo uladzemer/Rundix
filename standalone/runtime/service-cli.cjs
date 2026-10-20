@@ -51,7 +51,8 @@ class ServiceAppServer extends EventEmitter {
       configRevision:authority.configRevision, providerGeneration:authority.providerGeneration};
     this.#options = {executable, cwd, env:environment(env), spawnProcess:(...args) => {
       const child = (spawnProcess || spawn)(...args);
-      this.#exit = new Promise(resolve => child.once('close', resolve));
+      const binding=this.binding;
+      this.#exit = new Promise(resolve => child.once('close', () => {resolve();this.emit('exited',{binding});}));
       return child;
     },
       configArgs:[...configArgs, '-c', 'cli_auth_credentials_store="ephemeral"']};
@@ -276,6 +277,14 @@ class ServiceAppServer extends EventEmitter {
     this.invalidateProvider(); this.#requests.clear(); this.#claimedRequests.clear(); this.#confirmedAccountId = null; this.#ready = false; this.#epoch++;
     const cli = this.#cli; this.#cli = null; this.#starting = null;
     cli?.dispose();
+  }
+  async stop() {
+    const exit=this.#exit,connected=!!this.#cli;this.dispose();
+    if(connected)this.emit('disconnected','CLI stopped. Reconnect the provider.');
+    if(!exit)return;
+    let timer;
+    try {await Promise.race([exit,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('CLI exit is unconfirmed.'),{code:'recovery_required'})),5000);})]);}
+    finally {clearTimeout(timer);}
   }
 }
 module.exports = {ServiceAppServer};

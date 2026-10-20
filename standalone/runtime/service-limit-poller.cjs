@@ -2,10 +2,10 @@
 const {randomUUID} = require('node:crypto');
 const {providerWait} = require('./service-headless-host.cjs');
 function createLimitPoller({host, pollMs = 15000, now = Date.now}) {
-  let inFlight = false, closed = false, backoff = 60000;
+  let inFlight = false, closed = false, paused = false, backoff = 60000;
   const waiting = () => [...host.mcp.tasks.tasks.values()].filter(task => task.state === 'waiting_limit' && !task.cancelRequested);
   async function tick() {
-    if (closed) return;
+    if (closed || paused) return;
     const tasks = waiting();
     if (closed || inFlight || !tasks.length) return;
     const due = tasks.find(task => now() >= Math.max(task.nextCheckAt || 0, task.waitingLimit?.resetAt || 0));
@@ -59,12 +59,13 @@ function createLimitPoller({host, pollMs = 15000, now = Date.now}) {
   }
   const timer = setInterval(() => {void tick();}, pollMs); timer.unref?.();
   const wake = () => {
+    if(closed || paused)return;
     // An idle wake is useful for BUSY_ACTIVE; retryAfterMs remains a lower bound.
     const waits = waiting();
     for(const task of waits.filter(task=>task.waitingLimit?.reason==='active_turns'))task.nextCheckAt=Math.max(now(),task.retryNotBefore || 0);
     void tick();
   };
   host.provider.on('idle', wake);
-  return {tick, get busy() {return inFlight;}, dispose() {closed = true; clearInterval(timer); host.provider.removeListener('idle', wake);}};
+  return {tick, pause:()=>{paused=true;}, resume:()=>{paused=false;}, get busy() {return inFlight;}, dispose() {closed = true; clearInterval(timer); host.provider.removeListener('idle', wake);}};
 }
 module.exports = {createLimitPoller};

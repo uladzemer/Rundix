@@ -1,6 +1,7 @@
 // Explicitly synthetic app-server for headless-host/IPC tests. No network/auth
 // files; input is ignored and every report is a fixed synthetic record.
 const readline = require('node:readline');
+const instance=require('node:crypto').randomUUID();
 const threads = new Map(); let sequence = 0, turnSequence = 0;
 const output = message => process.stdout.write(JSON.stringify(message) + '\n');
 readline.createInterface({input:process.stdin}).on('line', line => {
@@ -17,7 +18,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
   if (message.method === 'model/list') result = {data:[{model:'synthetic-model', isDefault:true, defaultReasoningEffort:'medium', supportedReasoningEfforts:[{reasoningEffort:'medium'}]}]};
   if (message.method === 'config/read') result = {config:{model:'synthetic-model', model_reasoning_effort:'medium'}};
   if (message.method === 'thread/start') {
-    const thread = {id:'synthetic-thread-' + ++sequence, cwd:params.cwd, turns:[], items:[]}; threads.set(thread.id, thread);
+    const thread = {id:'synthetic-thread-' + instance + '-' + ++sequence, cwd:params.cwd, turns:[], items:[]}; threads.set(thread.id, thread);
     result = {thread:{id:thread.id, cwd:thread.cwd}, model:'synthetic-model', reasoningEffort:'medium'};
   }
   const thread = threads.get(params.threadId);
@@ -28,6 +29,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
     const turn = {id:'synthetic-turn-' + ++turnSequence, status:'inProgress'}; thread.turns.push(turn);
     output({id:message.id, result:{turn}});
     output({method:'turn/started', params:{threadId:thread.id, turn:{...turn}}});
+    if(process.env.RUNDIX_SYNTHETIC_HOLD==='1')return;
     if (process.env.RUNDIX_SYNTHETIC_REFRESH === '1') {
       output({id:'synthetic-refresh-request', method:'account/chatgptAuthTokens/refresh', params:{reason:'synthetic-refresh'}});
       setTimeout(() => {turn.status = 'failed';output({method:'turn/completed', params:{threadId:thread.id, turn:{...turn}}});}, 250);

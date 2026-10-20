@@ -15,9 +15,22 @@ async function runService(options = {}) {
     host = await createHeadlessHost({...options.hostOptions, root:locations(options).directory, generation:endpoint.generation,
       taskOptions:{...options.hostOptions?.taskOptions, scope:rpc.scope, signal:rpc.signal}});
     rpc.attach(host); poller = createLimitPoller({host, ...options.pollerOptions});
+    let disposal,hostStopped=false,retry;
     const dispose = async () => {
-      if (host.busy() || poller.busy || endpoint.busy() || endpoint.clients()) return {exiting:false};
-      rpc.stop(); poller.dispose(); await host.dispose(); await endpoint.dispose(); idle?.dispose(); return {exiting:true};
+      if(disposal)return disposal;
+      if (!hostStopped && (host.busy() || poller.busy || endpoint.busy() || endpoint.clients())) return {exiting:false};
+      endpoint.pause();rpc.stop();poller.pause();
+      disposal=(async()=>{
+        try {
+          await host.dispose();hostStopped=true;
+          await endpoint.dispose();poller.dispose();idle?.dispose();clearTimeout(retry);return {exiting:true};
+        } catch(error) {
+          if(!hostStopped){endpoint.resume();rpc.resume();poller.resume();}
+          else {endpoint.pause();clearTimeout(retry);retry=setTimeout(()=>{void dispose().catch(()=>{});},1000);retry.unref?.();}
+          throw error;
+        }
+      })().finally(()=>{disposal=null;});
+      return disposal;
     };
     idle = idleExit({clients:() => endpoint.clients(), busy:() => endpoint.busy() || host.busy(), onIdle:dispose,
       idleMs:options.idleMs, pollMs:options.pollMs, log:host.logger});

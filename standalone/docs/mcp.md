@@ -140,5 +140,15 @@ after transient service loss; mutations are never automatically replayed. Reuse
 the same requestId explicitly after an uncertain response. Connected adapters
 keep the service alive; otherwise it exits after five idle minutes with no
 nonterminal tasks or uncertain turns. Hung-owner recovery and old-window history
-migration are not implemented by this experimental switch. Stop in the window
+migration are not implemented by this experimental switch. The Stop MCP command in the window
 only disables its configuration controls; it does not kill background tasks.
+
+
+In service mode Start MCP and subsequent setting changes atomically copy only
+user/global values of mcpAccessMode, mcpThreadConfig, mcpMaxParallelTasks and
+cliPath to the service settings file. The service rereads it for later task
+preparations; cliPath changes apply at the next CLI connection. Workspace values
+are ignored. Task chat access mode is initialized from this snapshot and existing
+chats keep their mode. Identical launcher runtimes are reused across activations.
+A confirmed CLI exit stops its tasks; they require an explicit continuation.
+Provider recovery uses a new generation and never replays an ambiguous send.

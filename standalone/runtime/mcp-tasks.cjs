@@ -323,9 +323,11 @@ class McpTasks {
         // A task still being started is owned by its start() call until that returns.
         if ((['running','waiting_approval'].includes(task.state) || task.state==='error' && task.recoveryRequired) && !this.starting.has(task.taskId)) {
           let status;
+          const observedRevision=task.revision;
           try { status = await this.adapter.status(task); }
-          catch { if (this.closed) return; task.state='error';task.recoveryRequired=true;task.needsReconcile=true;task.error='Chat status unavailable. Restore the connection and explicitly continue after inspecting the chat.';this.save(task);continue; }
+          catch { if (this.closed) return; if(this.scope && task.revision!==observedRevision)continue;task.state='error';task.recoveryRequired=true;task.needsReconcile=true;task.error='Chat status unavailable. Restore the connection and explicitly continue after inspecting the chat.';this.save(task);continue; }
           if (this.closed) return;
+          if(this.scope && task.revision!==observedRevision)continue;
           this.update(task, ()=>{
             if(task.state==='error' && task.recoveryRequired && !status.answerUnknown)task.error=status.error || null;
             task.pendingIds=this.adapter.pending(task).map(r=>String(r.id));
@@ -387,6 +389,11 @@ class McpTasks {
       delete task.nextInput;
       task.chatId=this.adapter.chatId(task); this.save(task);
     } catch (error) {
+      if(this.scope && error?.confirmedCliExit) {
+        task.state='error';task.recoveryRequired=false;task.needsReconcile=false;
+        task.error='Execution stopped after confirmed CLI exit. Continue explicitly after checking the chat.';
+        this.release(task);this.save(task);return;
+      }
       if(error?.providerWait && !task.cancelRequested){
         inputRecovery.remember(task,input); task.nextInput=input;
         task.state='waiting_limit';task.recoveryRequired=false;task.needsReconcile=false;

@@ -153,6 +153,8 @@ async function startService(options = {}) {
   if (!owner) return {status:'already_running', connect:extra => connectService({...options, ...extra})};
   server.on('error', () => { for (const peer of peers) peer.close(); });
   return {status:'owner', generation:descriptor.generation,
+    pause() {stopping=true;},
+    resume() {if(!closed && !disposal)stopping=false;},
     ready:() => guarded(store, async () => {
       if (stopping) throw ipc.failure('service_unavailable');
       descriptor.status = 'ready'; await retryFs(() => publish(where,descriptor));
@@ -186,6 +188,7 @@ async function connectService(options = {}) {
   do {
     let peer;
     try {
+      await options.onUnavailable?.();
       const descriptor = await readDiscoveryWithRetry(where,options,deadline);
       if (descriptor) {
         peer = await ipc.dial(where.address,{...options.ipc, connectTimeoutMs:Math.max(1,Math.min(2000,deadline-Date.now()))});

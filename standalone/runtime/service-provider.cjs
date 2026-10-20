@@ -36,6 +36,7 @@ class ServiceProvider extends EventEmitter {
   #providerGeneration = randomUUID(); #cli = null;
   #dispatchAuthorization = null;
   #launching = false;
+  #recovery=null; #retryTimer=null; #attempts=0; #childExit=null; #exited=new Set(); #cliRestarting=null;
   constructor({serviceGeneration, ...options} = {}) {
     super();
     if (typeof serviceGeneration !== 'string' || !serviceGeneration) throw actionRequired();
@@ -47,12 +48,12 @@ class ServiceProvider extends EventEmitter {
   }
   get cli() { return this.#cli; }
   get activeTurns() { return this.#turns.size; }
-  get busy() { return this.#parents.size > 0 || this.#turns.size > 0 || !!this.#idle || !!this.#configurationPending; }
+  get busy() { return !!this.#recovery || this.#launching || this.#parents.size > 0 || this.#turns.size > 0 || !!this.#idle || !!this.#configurationPending; }
   get accountGrant() { return this.#account ? structuredClone(this.#account) : null; }
   async start() {
     if (this.#disposed) throw actionRequired('PROVIDER_PROCESS_UNCERTAIN');
     if (this.#start) {
-      if(this.#lost && !this.#launching)throw actionRequired('PROVIDER_PROCESS_UNCERTAIN');
+      if(this.#lost && !this.#launching)return this.#recover();
       return this.#start;
     }
     this.#launching = true;
@@ -64,11 +65,12 @@ class ServiceProvider extends EventEmitter {
         {cwd:path.dirname(this.#config.entryPath), env:providerEnvironment(this.#options.env || process.env),
           shell:false, windowsHide:true, stdio:['pipe', 'pipe', 'pipe']});
       this.#child = child; this.#lost = false;
+      this.#childExit=new Promise(resolve=>child.once('close',resolve));
       // Provider stderr is never a diagnostics channel for the public service.
-      child.stderr.resume(); child.on('error', () => this.#lose()); child.on('close', () => this.#lose());
+      child.stderr.resume(); child.on('error', () => {if(this.#child===child)this.#lose();}); child.on('close', () => {if(this.#child===child)this.#lose();});
       const peer = new ProviderPeer({readable:child.stdout, writable:child.stdin,
         call:(method, params, context) => this.#callback(peer, method, params, context)});
-      this.#peer = peer; peer.on('closed', () => this.#lose());
+      this.#peer = peer; peer.on('closed', () => {if(this.#peer===peer)this.#lose();});
       peer.on('event', (method, params, fence) => {
         if (method !== 'connectionChanged' || !this.#globalCurrent(fence)) { this.#lose(); return; }
         this.#lose('connection_changed');
@@ -112,6 +114,21 @@ class ServiceProvider extends EventEmitter {
       // CLI exit is not inferred from a disconnect. Active/uncertain grants stay
       // reserved until terminal() or the verified restart barrier completes.
       this.#account = null; this.emit('connectionChanged', {reason:'connection_changed'});
+      void cli.stop().catch(()=>{});
+    });
+    cli.on('exited', ({binding}) => {
+      if(!binding)return;
+      this.#exited.add(binding.appServerGeneration);if(this.#exited.size>32)this.#exited.delete(this.#exited.values().next().value);
+      for(const grant of [...this.#turns.values()].filter(grant=>grant.binding.appServerGeneration===binding.appServerGeneration)) {
+        const turnId=grant.turnId || grant.observedTurnId || null;
+        this.terminal({turnLeaseId:grant.leaseId,taskId:grant.taskId,runId:grant.runId,turnId,trigger:'confirmedCliExit'});
+        this.emit('turnExited',{taskId:grant.taskId,turnLeaseId:grant.leaseId});
+      }
+      for(const grant of [...this.#grants.values()].filter(grant=>grant.binding.appServerGeneration===binding.appServerGeneration))this.#revoke(grant);
+      queueMicrotask(()=>{
+        if(this.#disposed || this.#lost || this.#cli!==cli || this.#idle || this.#cliRestarting)return;
+        this.#cliRestarting=cli.start().then(()=>this.authenticate('reconnect')).catch(()=>{}).finally(()=>{this.#cliRestarting=null;});
+      });
     });
     return cli;
   }
@@ -130,10 +147,41 @@ class ServiceProvider extends EventEmitter {
     this.#peer?.close(); this.#child?.kill();
     // Do not release turns on provider timeout/disconnect. CLI may still work.
     this.emit('connectionChanged', {reason});
+    void this.#cli?.stop().catch(()=>{});
+    if(!this.#disposed && this.#attempts<5) {
+      clearTimeout(this.#retryTimer);
+      this.#retryTimer=setTimeout(()=>{void this.start().catch(()=>{});},Math.min(10000,(this.#options.recoveryBackoffMs ?? 500)*2**this.#attempts));
+      this.#retryTimer.unref?.();
+    }
+  }
+  #recover() {
+    if(this.#recovery)return this.#recovery;
+    const oldStart=this.#start;
+    this.#recovery=(async()=>{
+      clearTimeout(this.#retryTimer);this.#attempts++;
+      await oldStart?.catch(()=>{});
+      await new Promise(resolve=>setTimeout(resolve,Math.min(10000,(this.#options.recoveryBackoffMs ?? 500)*2**Math.min(this.#attempts-1,5))));
+      if(this.#disposed)throw actionRequired('PROVIDER_UNAVAILABLE');
+      await this.#cli?.stop();
+      this.#child?.kill();
+      if(this.#childExit) {
+        let timer;try {await Promise.race([this.#childExit,new Promise((_,reject)=>{timer=setTimeout(()=>reject(actionRequired('PROVIDER_PROCESS_UNCERTAIN')),5000);})]);}finally{clearTimeout(timer);}
+      }
+      if(this.#turns.size)throw actionRequired('PROVIDER_PROCESS_UNCERTAIN');
+      this.#cli=null;this.#account=null;this.#idle=null;this.#grants.clear();this.#configurationPending=null;
+      this.#providerGeneration=randomUUID();this.#selectionRevision=1;this.#start=null;
+      return this.start();
+    })().catch(error=>{
+      if(!this.#disposed && this.#attempts<5) {
+        clearTimeout(this.#retryTimer);this.#retryTimer=setTimeout(()=>{void this.start().catch(()=>{});},Math.min(10000,(this.#options.recoveryBackoffMs ?? 500)*2**this.#attempts));this.#retryTimer.unref?.();
+      }
+      throw error;
+    }).finally(()=>{this.#recovery=null;});
+    return this.#recovery;
   }
   #event(method, params, fence = this.#cli?.fence || this.authority) {
     if (this.#lost) return;
-    this.#peer.event(method, params, fence);
+    try {this.#peer.event(method, params, fence);} catch {this.#lose();}
   }
   #grant(kind, binding, extra = {}) {
     const leaseId = randomUUID();
@@ -156,6 +204,7 @@ class ServiceProvider extends EventEmitter {
     if (this.#lost || !DEADLINES[method]) throw actionRequired('PROVIDER_UNAVAILABLE');
     this.#checkConfig();
     const budget = Math.min(timeoutMs ?? DEADLINES[method], DEADLINES[method]);
+    const callCli=this.#cli,callPeer=this.#peer;
     const parent = {active:true, deadline:Date.now() + budget, method, fence:structuredClone(fence), idle, transaction,
       selectionRevision:this.#selectionRevision, proposed:null, callbackBusy:false};
     try {
@@ -203,7 +252,7 @@ class ServiceProvider extends EventEmitter {
       } else if (method === 'authenticate') throw actionRequired('PROVIDER_PROTOCOL_INVALID');
       return result;
     } catch (error) {
-      this.#cli?.invalidateProvider();
+      if(this.#cli===callCli && this.#peer===callPeer)this.#cli?.invalidateProvider();
       if (method === 'handleRequest' && UNAVAILABLE_CODES.includes(error?.code)) throw actionRequired(error.code);
       if (['STALE_FENCE', 'INVALID_REVISION_STEP', 'METHOD_NOT_SUPPORTED'].includes(error?.code)) throw error;
       throw error?.reason === 'action_required' ? error : actionRequired('PROVIDER_UNAVAILABLE');
@@ -270,7 +319,8 @@ class ServiceProvider extends EventEmitter {
   async prepareTurn(task, {mode = 'admit'} = {}) {
     if (!['admit', 'probe'].includes(mode) || !task || !['taskId', 'spaceId', 'attemptId'].every(key => typeof task[key] === 'string' && task[key])) throw actionRequired('PROVIDER_PROTOCOL_INVALID');
     if (this.#preparing || this.#idle || this.#configurationPending) return unavailable('BUSY_ACTIVE', true);
-    if (this.#lost || !this.#account || !this.#cli?.authenticated) throw actionRequired('AUTH_REQUIRED');
+    if(this.#lost || this.#recovery || this.#cliRestarting)throw Object.assign(actionRequired('PROVIDER_UNAVAILABLE'),{retryable:true});
+    if (!this.#account || !this.#cli?.authenticated) throw actionRequired('AUTH_REQUIRED');
     this.#preparing = true;
     let idle, transaction;
     const waitId = task.waitId || randomUUID();
@@ -317,10 +367,15 @@ class ServiceProvider extends EventEmitter {
     }
   }
   async dispatchTurn(grant, params) {
-    this.#checkConfig();
     const owned = this.#turns.get(grant?.leaseId);
+    try {
+    this.#checkConfig();
     if (!owned || !equal(owned, grant) || owned.state !== 'reserved' || owned.validUntil <= Date.now() ||
         !equal(identity(owned.binding), identity(this.#cli?.binding)) || !this.#cli.authenticated || this.#lost) throw rpcError('STALE_FENCE');
+    } catch(error) {
+      if(owned && owned.state==='reserved' && equal(owned,grant)){this.#turns.delete(owned.leaseId);this.#revoke(owned);}
+      throw Object.assign(error,{notSent:true,deliveryUncertain:false});
+    }
     owned.state = 'dispatching'; owned.threadId = params.threadId;
     try {
       let pending;
@@ -344,7 +399,7 @@ class ServiceProvider extends EventEmitter {
   }
   terminal({turnLeaseId, taskId, runId, turnId, trigger = 'terminal'}) {
     const grant = this.#turns.get(turnLeaseId);
-    const matchesTurn = grant && (grant.turnId === turnId || !grant.turnId && grant.observedTurnId === turnId && grant.observedCompleted === turnId);
+    const matchesTurn = grant && (trigger==='confirmedCliExit' ? this.#exited.has(grant.binding.appServerGeneration) && turnId===(grant.turnId || grant.observedTurnId || null) : grant.turnId === turnId || !grant.turnId && grant.observedTurnId === turnId && grant.observedCompleted === turnId);
     if (!grant || grant.taskId !== taskId || grant.runId !== runId || !matchesTurn || !['terminal', 'confirmedCliExit'].includes(trigger)) throw rpcError('STALE_FENCE');
     this.#event('turnTerminal', {taskId, spaceId:grant.spaceId, runId, turnId, turnLeaseId, trigger});
     this.#turns.delete(turnLeaseId); this.#revoke(grant); this.emit('idle');
@@ -438,8 +493,8 @@ class ServiceProvider extends EventEmitter {
   async dispose(trigger = 'serviceShutdown') {
     if (this.#disposed) return;
     if (this.#turns.size || this.#preparing || this.#idle) throw actionRequired('BUSY_ACTIVE');
-    this.#disposed = true;
-    try { if (!this.#lost) await this.#call('dispose', {trigger, mode:'drain'}); }
+    this.#disposed = true;clearTimeout(this.#retryTimer);
+    try { if (!this.#lost) await this.#call('dispose', {trigger, mode:'drain'}); } catch {}
     finally { this.#cli?.dispose(); this.#peer?.close(); this.#child?.kill(); }
   }
 }

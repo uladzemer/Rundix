@@ -40,7 +40,7 @@ function createTaskRpc({providerOptions = {}} = {}) {
       }
     });
   }
-  return {scope:() => scope.getStore()?.spaceId, signal:() => scope.getStore()?.signal, hello, call, attach:value => {host = value;}, stop:() => {stopping = true;},
+  return {scope:() => scope.getStore()?.spaceId, signal:() => scope.getStore()?.signal, hello, call, attach:value => {host = value;}, stop:() => {stopping = true;}, resume:()=>{stopping=false;},
     getHandlerTimeoutMs(method, params) {return method === 'task.call' ? budget(params?.name, params?.arguments) : 12000;}};
 }
 module.exports = {createTaskRpc};

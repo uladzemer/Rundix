@@ -91,8 +91,10 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       if (method !== 'turn/start') return this.cli.request(method, params, timeoutMs);
       const task = taskForThread(params.threadId);
       if (!task || runs.has(params.threadId)) throw Object.assign(actionRequired('BUSY_ACTIVE'), {notSent:true, deliveryUncertain:false});
-      const outcome = await provider.prepareTurn({taskId:task.taskId, spaceId:task.space || 'unbound',
-        attemptId:randomUUID(), runId:randomUUID(), ...(task.waitId ? {waitId:task.waitId} : {})});
+      let outcome;
+      try {outcome = await provider.prepareTurn({taskId:task.taskId, spaceId:task.space || 'unbound',
+        attemptId:randomUUID(), runId:randomUUID(), ...(task.waitId ? {waitId:task.waitId} : {})});}
+      catch(error) {throw Object.assign(error,{notSent:true,deliveryUncertain:false});}
       if (outcome.kind !== 'ready') {
         const wait = providerWait(outcome);
         throw Object.assign(actionRequired(outcome.code || 'PROVIDER_UNAVAILABLE'),
@@ -107,6 +109,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
         if (row.completed.has(row.turnId)) finishRun(row, row.turnId);
         return result;
       } catch (error) {
+        if(row.exited)throw Object.assign(error,{confirmedCliExit:true,deliveryUncertain:false});
         if (error.deliveryUncertain === false) runs.delete(params.threadId);
         else {
           row.uncertain = true;
@@ -157,6 +160,14 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       task.error = 'action_required: Open companion connection settings and reconnect.';
       task.progress = 'Provider action required'; mcp.tasks.save(task);
     }
+  });
+  provider.on('turnExited', ({taskId,turnLeaseId}) => {
+    const row=[...runs.values()].find(value=>value.taskId===taskId && value.grant.leaseId===turnLeaseId);
+    if(!row)return;
+    row.exited=true;runs.delete(row.threadId);
+    const task=mcp.tasks?.tasks.get(taskId);if(!task)return;
+    task.state='error';task.error='Execution stopped after confirmed CLI exit. Continue explicitly after checking the chat.';
+    task.recoveryRequired=false;task.needsReconcile=false;mcp.tasks.release(task);try{mcp.tasks.save(task);}catch{logger({code:'host_error'});}
   });
   try { await mcp.start(); } catch (error) { core.state.disposed = true; throw error; }
   logger({code:'service_started'});

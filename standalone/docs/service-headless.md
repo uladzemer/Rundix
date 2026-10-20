@@ -485,3 +485,27 @@ without waking clients into action_required. A typed permanent provider outcome
 settles the probed cohort; a thrown task-specific authorization error affects only
 the representative wait. Terminalized waits retire their provider waitId through
 cancelWait, including its service-side tombstone if the child is unavailable.
+
+
+## Process recovery and idle shutdown (C2/C5/C7)
+
+The service CLI wrapper distinguishes a transport disconnect from the child close
+event. Only confirmed child close terminalizes that generation's exact turn grants
+with the existing confirmedCliExit trigger; unobserved turn IDs remain null.
+The host clears matching run rows, surfaces a stopped task, and releases its slot.
+Restart requires a fresh provider login; no input from an ambiguous send is replayed.
+A failed prepare or reserved dispatch preflight is explicitly notSent with
+ deliveryUncertain:false, preserving its recoverable input and releasing reservations.
+
+Provider loss stops the old CLI and waits for confirmed provider/CLI exit before
+starting a new providerGeneration. Automatic recovery uses exponential backoff
+capped at ten seconds and five background attempts; explicit later requests may
+retry recovery. Old peer/CLI callbacks cannot invalidate the replacement. There
+is no local-auth fallback. Account changes and active turns still require admission.
+
+Idle shutdown first quiesces new sockets, RPC and the poller. A host-disposal
+failure resumes them; irreversible endpoint cleanup is retried without reopening
+a disposed host. Connecting adapters re-probe absent/dead owners inside the same
+startup deadline, so an owner that exits during hello can demand-start its successor.
+No hung owner is killed by this path. Synthetic real-IPC tests cover CLI crash,
+provider loss/new generation, no replay, pre-send recovery and shutdown rollback.

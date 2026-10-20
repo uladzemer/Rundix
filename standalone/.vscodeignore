@@ -88,3 +88,4 @@
 !runtime/service-launcher.cjs
 !runtime/service-environment.cjs
 !runtime/service-settings.cjs
+!runtime/service-task-archive.cjs

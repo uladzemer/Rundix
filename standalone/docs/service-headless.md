@@ -509,3 +509,22 @@ a disposed host. Connecting adapters re-probe absent/dead owners inside the same
 startup deadline, so an owner that exits during hello can demand-start its successor.
 No hung owner is killed by this path. Synthetic real-IPC tests cover CLI crash,
 provider loss/new generation, no replay, pre-send recovery and shutdown rollback.
+
+
+## Per-space task capacity and closed history
+
+Service capacity is 1000 active/history records per submitting space, not a global
+budget that another repository can exhaust. The window-mode 0.3.1 cap is unchanged.
+Closing a finished headless task records a durable closed timestamp even though
+there is no UI tab. The service automatically archives the oldest closed tasks,
+retaining at most 100 recent closed records, and can archive more to admit a new
+task at that space's capacity. Live/uncertain tasks and unclosed records are never
+archived. No chat, draft or recovery input is deleted.
+
+Archive records live under the task store's archive directory with persistent,
+space-bound requestId indexes. Archived tasks remain readable by get_task and
+idempotent retries; they are omitted from list_tasks. Foreign IDs remain not-found.
+An explicit new continue_task restores the task to active storage subject to its
+space's cap. RequestId dedup survives archival and process restart; damaged indexes
+fail closed. Source removal happens only after the archival record and indexes
+are durable, and active records take precedence after an interrupted move.

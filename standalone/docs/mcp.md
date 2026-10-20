@@ -152,3 +152,9 @@ are ignored. Task chat access mode is initialized from this snapshot and existin
 chats keep their mode. Identical launcher runtimes are reused across activations.
 A confirmed CLI exit stops its tasks; they require an explicit continuation.
 Provider recovery uses a new generation and never replays an ambiguous send.
+
+
+Service task storage is capped per launch space. Closing finished tasks permits
+automatic archival of older closed records; archived IDs remain readable and
+requestId retries stay idempotent. Archived records leave list_tasks and an
+explicit continuation restores them subject to the same per-space capacity.

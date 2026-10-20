@@ -534,7 +534,9 @@ are durable, and active records take precedence after an interrupted move.
 
 Settings snapshots normalize invalid global values to the window-mode defaults
 and clamp parallelism to the supported range. Atomic-replacement read races retry;
-a failed read retains the last valid snapshot (defaults before the first success).
+a failed read retains the last valid snapshot. Before the first success, task
+admission fails closed with action_required SETTINGS_INVALID. Thread overrides
+exceeding the same JSON depth/size limits are dropped without dropping safety settings.
 
 Confirmed CLI exit cleanup isolates listener/storage failures with fixed diagnostic
 codes. Fatal process errors trigger bounded shutdown without logging exception

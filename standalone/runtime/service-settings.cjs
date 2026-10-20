@@ -1,7 +1,7 @@
 const fs=require('node:fs'),path=require('node:path');
 const {randomUUID}=require('node:crypto');
 const {parseStrict}=require('./service-json.cjs');
-const {boundedRead}=require('./service-provider-config.cjs');
+const {boundedRead,actionRequired}=require('./service-provider-config.cjs');
 function readSettings(root) {
   let value;
   try {
@@ -21,9 +21,12 @@ function readSettings(root) {
   return value;
 }
 function plainSettings(root) {
-  let last={};
+  let last=null;
   const refresh=()=>{try{last=readSettings(root);}catch{};return last;};
-  refresh();return (key,fallback)=>refresh()[key] ?? fallback;
+  const assertValid=()=>{if(!refresh())throw actionRequired('SETTINGS_INVALID');};
+  refresh();
+  const settings=(key,fallback)=>{const value=refresh();if(!value && KEYS.includes(key))throw actionRequired('SETTINGS_INVALID');return value?.[key] ?? fallback;};
+  settings.assertValid=assertValid;return settings;
 }
 function normalizeSettings(inspect) {
   const value={};
@@ -35,7 +38,7 @@ function normalizeSettings(inspect) {
     if(key==='mcpMaxParallelTasks'){const number=Number(raw);value[key]=Number.isInteger(number) && number>=1?Math.min(number,5):1;}
   }
   // An oversized user override must not prevent the remaining safety settings.
-  if(Buffer.byteLength(JSON.stringify(value))>65536)delete value.mcpThreadConfig;
+  try{const bytes=Buffer.from(JSON.stringify(value));if(bytes.length>65536)throw Error();parseStrict(bytes);}catch{delete value.mcpThreadConfig;}
   return value;
 }
 

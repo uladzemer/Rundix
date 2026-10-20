@@ -4,6 +4,7 @@ const {once} = require('node:events');
 const {install} = require('./service-provider-fixture.cjs');
 const {ServiceAppServer} = require('../runtime/service-cli.cjs');
 function fixture(root, {installed = install(root), observeCli = () => {}, cliEnv = {}} = {}) {
+  if(!fs.existsSync(path.join(root,'settings.json')))fs.writeFileSync(path.join(root,'settings.json'),'{}');
   const children = [];
   const launch = (exe, argv, options) => {
     const child = spawn(exe, argv, options); children.push({child, closed:once(child, 'close')}); return child;

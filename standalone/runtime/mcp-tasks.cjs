@@ -19,10 +19,10 @@ function recoveryRequired(task) { return !!task.recoveryRequired && !['running',
 // Queued and running tasks need no client action; every other state is worth waking a waiting client for.
 function settled(task) { return !['queued','running','waiting_limit'].includes(task.state); }
 function connected(adapter, task) {
-  try { adapter.assertConnection(task); } catch (error) { throw fail('connection_unavailable', String(error?.message || 'The selected companion connection is unavailable.').slice(0,300)); }
+  try { adapter.assertConnection(task); } catch (error) { if(error?.code==='SETTINGS_INVALID')throw error;throw fail('connection_unavailable', String(error?.message || 'The selected companion connection is unavailable.').slice(0,300)); }
 }
 async function available(adapter, task) {
-  try {return await adapter.ensureConnection(task);}catch{throw fail('connection_unavailable','The selected companion is unavailable. Enable it and restore the selected connection before submitting.');}
+  try {return await adapter.ensureConnection(task);}catch(error){if(error?.code==='SETTINGS_INVALID')throw error;throw fail('connection_unavailable','The selected companion is unavailable. Enable it and restore the selected connection before submitting.');}
 }
 function directoryFilter(value) {
   try { return directories.canonical(value); } catch { return process.platform==='win32' ? value.toLowerCase() : value; }

@@ -34,6 +34,10 @@ async function main() {
     try{fs.fstatSync=function(fd){const stat=originalFstat(fd);if(!raced){raced=true;return {...stat,ino:stat.ino+1};}return stat;};assert.equal(liveSettings('mcpAccessMode'),'auto','Atomic replacement race retries instead of using stale snapshot');assert(raced);}
     finally{fs.fstatSync=originalFstat;}
     fs.writeFileSync(path.join(root,'settings.json'),JSON.stringify({mcpMaxParallelTasks:1,mcpAccessMode:'manual'}));
+    let deep={};for(let level=0;level<70;level++)deep={nested:deep};
+    await settingsModule.writeServiceSettings(invalidSettingsRoot,key=>({globalValue:{mcpAccessMode:'manual',mcpThreadConfig:deep}[key]}));
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(invalidSettingsRoot,'settings.json'))),{mcpAccessMode:'manual'});
+    assert.equal(plainSettings(invalidSettingsRoot)('mcpAccessMode'),'manual');
     const installed = install(root);
     host = await createHeadlessHost({root, generation:'synthetic-service', resolveCli:async () => process.execPath,
       providerOptions:{configPath:installed.configPath, verifyPrivate:() => {}, spawnProcess:launch,
@@ -87,7 +91,7 @@ async function main() {
     }
     assert.equal(fs.readdirSync(path.join(root, 'diagnostics')).length, 3);
     await host.dispose(); host = null;
-    const absentRoot = path.join(root, 'no-provider'); fs.mkdirSync(absentRoot);
+    const absentRoot = path.join(root, 'no-provider'); fs.mkdirSync(absentRoot);fs.writeFileSync(path.join(absentRoot,'settings.json'),'{}');
     const absent = await createHeadlessHost({root:absentRoot, generation:'synthetic-absent-provider',
       resolveCli:async () => process.execPath, providerOptions:{configPath:path.join(absentRoot, 'absent-provider.json')}});
     await assert.rejects(absent.core.connect(), {code:'PROVIDER_NOT_CONFIGURED', reason:'action_required'});
@@ -102,7 +106,10 @@ async function main() {
     for (let attempt = 0; attempt < 100 && fs.existsSync(path.join(serviceRoot, 'bridge.json')); attempt++) await pause(20);
     assert(!fs.existsSync(path.join(serviceRoot, 'bridge.json')), 'Idle empty service exits after disconnect'); service = null;
     const broken = path.join(root, 'invalid'); fs.mkdirSync(broken); fs.writeFileSync(path.join(broken, 'settings.json'), '{');
-    assert.equal(plainSettings(broken)('mcpAccessMode','workspace'),'workspace');
+    assert.throws(()=>plainSettings(broken)('mcpAccessMode','workspace'),{code:'SETTINGS_INVALID',reason:'action_required'});
+    const blocked=await createHeadlessHost({root:broken,generation:'synthetic-invalid-settings'});
+    assert.throws(()=>blocked.mcp.tasks.call('submit_task',{requestId:'synthetic-blocked',description:'Synthetic',acceptanceCriteria:'Synthetic',projectDirectory:project}),{code:'SETTINGS_INVALID',reason:'action_required'});
+    await blocked.dispose();
     assert(fs.readdirSync(path.join(root, 'sessions-v1')).some(file => file.startsWith('session-')));
     console.log('PASS headless host: real core/executor, lazy framed provider + ephemeral CLI, report/continue/close, unsupported UI, file KV/settings and bounded safe diagnostics.');
   } finally {

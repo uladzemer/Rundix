@@ -60,7 +60,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
   class HeadlessTransport extends EventEmitter {
     constructor(options) { super(); this.options = options; this.executable = options.executable; this.listeners = []; }
     async start() {
-      await provider.start();
+      settings.assertValid();await provider.start();
       const cli = provider.cli || provider.createCli(this.options); this.cli = cli;
       const on = (event, handler) => { cli.on(event, handler); this.listeners.push([event, handler]); };
       on('notification', message => {
@@ -139,8 +139,14 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     installLauncher:() => null, // Installed launcher is owned by the service installer, never the host.
     serve:async () => ({descriptor:null, dispose:noop}),
   };
-  mcp = createMcpHost({core, storageRoot:root, trusted:() => true, settings, clock, transport,
+  mcp = createMcpHost({core, storageRoot:root, trusted:() => true, settings:(key,fallback)=>{
+      // The scheduler may idle without a snapshot; every task admission stays gated.
+      if(key==='mcpMaxParallelTasks'){try{return settings(key,fallback);}catch{return 1;}}
+      return settings(key,fallback);
+    }, clock, transport,
     ui:{hasChat:() => false}, taskOptions, decorateAdapter:adapter => {
+      const assertConnection=adapter.assertConnection;
+      adapter.assertConnection=(...args)=>{settings.assertValid();return assertConnection(...args);};
       adapter.cancelWait = task => provider.cancelWait({taskId:task.taskId, spaceId:task.space, waitId:task.waitId});
       const status = adapter.status;
       adapter.status = async task => {

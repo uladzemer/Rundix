@@ -38,7 +38,7 @@ states, revisions and report hashes. There were exactly four completed tasks
 across A/B after the new submission and its retry: no duplicate task or observed
 re-execution. All four were closed through the service API.
 
-## Safety and limits
+## N3–N6 safety and limits
 
 - Personal Codex `auth.json` existed; only stat metadata was obtained. Its size
   and mtime were identical before installation and after all live task runs.
@@ -53,11 +53,10 @@ re-execution. All four were closed through the service API.
   repository data was used for task requests and report verification.
 - The production root `%LOCALAPPDATA%/Rundix/service` is retained. Provider
   configuration/payload and the owner's installed editions remain unchanged.
-- No product defect was confirmed, so no runtime fix or new regression test
-  was required. This is live model-request evidence on one Windows machine;
-  it does not cover crash recovery during an active/ambiguous turn, quota
-  exhaustion/rotation, or macOS. N5 checked the installed client's task
-  projection, not visual layout or task-chat continuation.
+- N3–N6 required no runtime fix or new regression test. This is live
+  model-request evidence on one Windows machine. At that stage active-turn
+  crashes and task-chat continuation were untested; N7 below extends coverage.
+  Quota exhaustion/rotation and macOS remain outside this run.
 
 ## Local validation and shutdown
 
@@ -87,3 +86,51 @@ because no product UI or runtime source changed; N5 used the installed VSIX
 in a real isolated Extension Host. The acceptance record was checked against
 the filtered evidence and relevant source using `REVIEW.md`; this is author
 verification, not an independent review. No push or publication was performed.
+
+## N7 follow-up
+
+Owner also reported an independent successful `claude -p` verification. N7
+used a newly allocated temporary directory and fresh synthetic Git repo A.
+A pre-existing service instance was allowed to exit normally before installing
+and starting the N7 runtime. Fix commit: `d70b13d`.
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Expected shutdown diagnostics | PASS (synthetic and live) | Only the exact fixed CLI stop message while provider disposal is active maps to `cli_stopped`. The same message outside disposal and an actual protocol error during disposal still produce `host_error`. The lifecycle flag resets in `finally`; no message payload is logged. Live idle exit recorded `cli_stopped` then `service_stopped`, with no `host_error`. |
+| Crash during active turn | PASS | A real Codex turn began a synthetic 60-second progress loop and wrote its start marker. While task state was `running`, only the verified service-main PID was force-stopped. The next space-bound `get_task` demand-started the service and returned `running` (revision 6); `wait_task` then reconciled to `cancelled` (revision 7), `recoveryRequired:false`, no report, progress `Turn finished`. Total crash scenario: 14 s. No submit/continue replay was performed for that task; its command-start count was one. |
+| Service task chat in isolated VS Code | PASS | Fresh VSIX in temporary profile/extensions, service mode, folder A. The installed extension opened the service-owned transcript. `api.mcp.chatAction(...continue...)` completed in the same chat and appeared in the rendered transcript; no local window session owned that chat. A second continuation used a programmatic form submit without keystrokes, exercising the webview-to-window API and its reply handling. Its rendered response appeared and the actual composer textarea was empty. Host assertions: 12 s; renderer checks/capture: 14 s. |
+
+The window screenshot was captured from the isolated instance's renderer through
+its temporary localhost debugger, never from the desktop or another Code window.
+It was visually inspected: only synthetic repository/task text is visible.
+
+![Isolated N7 service task chat and empty composer](assets/live-acceptance-n7-window.png)
+
+Harness corrections: an initial call omitted required `projectDirectory` and
+was rejected before creating a task. The first valid submission then failed
+closed with the fixed `action_required` reconnect message before model dispatch,
+preserving one unsent input. Public API probes confirmed installation validation,
+authentication and probe/admit readiness; an explicit fresh submission completed
+the intended crash scenario. The refused task never wrote a command-start marker.
+No cause in the public runtime was established for that transient refusal, and
+the private provider/configuration was not changed.
+
+Validation: focused shutdown regression passed; `npm.cmd test` passed all 54
+suites in 112 s with 62 real-root guard PASS messages. Package build and actual
+137-entry ZIP audit passed; identity, README, branding and key service source
+bytes were checked. A separate read-only reviewer reported zero confirmed
+findings in the two-file fix (static review; no owner access or live execution).
+
+All three N7 tasks (refused, crash-cancelled and chat-completed) were closed.
+The isolated host exited normally. The product installer restored PATH Node
+registration; settings remain `full`, parallelism 3, managed Codex 0.163.0.
+Process ancestry confirmed one service-owned CLI with the ephemeral flag.
+Personal auth size/mtime matched after all live requests and again after the
+unchanged idle policy stopped the service. The N7 diagnostic sequence was
+`service_started`, `service_started`, `cli_stopped`, `service_stopped`: two
+instances including crash recovery, no generic shutdown error. Discovery was
+removed, the production root retained, and no service-main or isolated-profile
+Code processes remained. The command-start marker still counted exactly one
+after shutdown, several minutes after the crash; no silent re-execution was
+observed. `git diff --check` passed. Fix, acceptance log and screenshot were
+committed locally with the requested co-author trailer; no push/publication.

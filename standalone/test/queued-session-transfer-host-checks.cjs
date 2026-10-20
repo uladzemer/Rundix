@@ -1,6 +1,13 @@
 const assert = require("node:assert/strict");
 
 module.exports = async ({ api, starts, turns }) => {
+  const complete = (session, turnId = session.turnId) => {
+    api.server().emit('notification', { method: 'turn/completed', params: {
+      threadId: session.id, turn: { id: turnId, status: 'completed' },
+    } });
+    assert.equal(session.busy, false);
+    assert.equal(session.turnId, null);
+  };
   const source = api.create();
   source.model = "fixture";
   source.effort = "high";
@@ -56,6 +63,9 @@ module.exports = async ({ api, starts, turns }) => {
   await assert.rejects(api.handle(source, message));
   assert.equal(starts.length, before + 1);
 
+  // Each scenario uses the same project: finish its real synthetic turn before
+  // starting another destination. Merely clearing busy leaves the directory lease.
+  complete(destination);
   await api.handle(source, {
     action: "send",
     text: "Synthetic failed destination request",
@@ -87,6 +97,9 @@ module.exports = async ({ api, starts, turns }) => {
   assert.equal(failed.draft, pending.text);
   assert.equal(failed.error, "Synthetic lost turn response");
   assert.equal(api.store.session(failed.key).draft, pending.text);
+  // The lost response is intentionally ambiguous. A later terminal notification
+  // confirms that turn has ended and frees its directory for the next scenario.
+  complete(failed, 'synthetic-lost-turn');
 
   await api.handle(source, {
     action: "send",
@@ -141,8 +154,9 @@ module.exports = async ({ api, starts, turns }) => {
     assert.equal(turns.length, requests);
     api.library.storage.update = update;
     release();
-    await moving;
+    const moved = await moving;
     assert.equal(turns.length, requests + 1);
+    complete(moved);
   } finally {
     clearTimeout(timer);
     api.library.storage.update = update;

@@ -25,7 +25,7 @@ exports.run = async () => {
         starts.push(params);
         return { thread: { id: 'synthetic-new-thread-'+starts.length, cwd: params.cwd }, model: 'fixture', reasoningEffort: 'high' };
       }
-      if (method === 'turn/start') { turns.push(params);return { turn: { id: 'synthetic-turn' } }; }
+      if (method === 'turn/start') { turns.push(params);return { turn: { id: 'synthetic-turn-'+turns.length } }; }
       return {};
     };
     api = await vscode.extensions.getExtension('local-rundix-tools.rundix').activate();
@@ -41,7 +41,12 @@ exports.run = async () => {
     next.prefs.fast = false; assert.equal(first.prefs.fast, true);
     await api.handle(next, { action: 'send', text: 'Synthetic request' });
     assert.equal(starts[0].sandbox, 'danger-full-access'); assert.equal(starts[0].approvalPolicy, 'never');
-    next.busy = false;
+    // A completed RPC is still an active turn until the server reports completion.
+    api.server().emit('notification', { method: 'turn/completed', params: {
+      threadId: next.id, turn: { id: next.turnId, status: 'completed' },
+    } });
+    assert.equal(next.busy, false);
+    assert.equal(next.turnId, null);
     await api.handle(next, { action: 'mode', mode: 'manual' });
     const beside = await vscode.commands.executeCommand('rundix.beside');
     assert.equal(beside.prefs.mode, 'manual');

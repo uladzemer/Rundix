@@ -542,3 +542,7 @@ Confirmed CLI exit cleanup isolates listener/storage failures with fixed diagnos
 codes. Fatal process errors trigger bounded shutdown without logging exception
 text. A provider must remain healthy for at least 60 seconds to replenish the recovery budget; scheduled retries
 wait once, while explicit recovery bypasses backoff and waits at most seven seconds.
+
+If CLI stop fails during idle disposal, provider disposal rolls back its closing
+state and recovers with a fresh generation before admitting new turns. The service
+may resume admissions; it never resumes against a permanently disposed provider.

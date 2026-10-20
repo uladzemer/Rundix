@@ -31,7 +31,7 @@ class ServiceProvider extends EventEmitter {
   #options; #config = null; #peer = null; #child = null; #start = null; #lost = true;
   #parents = new Map(); #idle = null; #account = null; #grants = new Map(); #turns = new Map(); #waits = new Map();
   #retiredWaits = new Map();
-  #preparing = false; #authenticating = null; #selectionRevision = 1; #disposed = false;
+  #preparing = false; #authenticating = null; #selectionRevision = 1; #disposed = false; #disposing=false;
   #configurationPending = null;
   #providerGeneration = randomUUID(); #cli = null;
   #dispatchAuthorization = null;
@@ -51,7 +51,7 @@ class ServiceProvider extends EventEmitter {
   get busy() { return !!this.#recovery || this.#launching || this.#parents.size > 0 || this.#turns.size > 0 || !!this.#idle || !!this.#configurationPending; }
   get accountGrant() { return this.#account ? structuredClone(this.#account) : null; }
   async start() {
-    if (this.#disposed) throw actionRequired('PROVIDER_PROCESS_UNCERTAIN');
+    if (this.#disposed || this.#disposing) throw actionRequired('PROVIDER_PROCESS_UNCERTAIN');
     if (this.#start) {
       if(this.#lost && !this.#launching){
         let timer;try{return await Promise.race([this.#recover(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(actionRequired('PROVIDER_UNAVAILABLE')),7000);})]);}finally{clearTimeout(timer);}
@@ -61,7 +61,7 @@ class ServiceProvider extends EventEmitter {
     this.#launching = true;
     this.#start = (async () => {
       this.#config = await readProviderConfigAsync(this.#options);
-      if(this.#disposed)throw actionRequired('PROVIDER_PROCESS_UNCERTAIN');
+      if(this.#disposed || this.#disposing)throw actionRequired('PROVIDER_PROCESS_UNCERTAIN');
       const authority = this.authority;
       const child = (this.#options.spawnProcess || spawn)(this.#options.nodePath || process.execPath, [this.#config.entryPath],
         {cwd:path.dirname(this.#config.entryPath), env:providerEnvironment(this.#options.env || process.env),
@@ -129,7 +129,7 @@ class ServiceProvider extends EventEmitter {
       }
       for(const grant of [...this.#grants.values()].filter(grant=>grant.binding.appServerGeneration===binding.appServerGeneration)){try{this.#revoke(grant);}catch{this.#logFailure();}}
       queueMicrotask(()=>{
-        if(this.#disposed || this.#lost || this.#cli!==cli || this.#idle || this.#cliRestarting)return;
+        if(this.#disposed || this.#disposing || this.#lost || this.#cli!==cli || this.#idle || this.#cliRestarting)return;
         this.#cliRestarting=cli.start().then(()=>this.authenticate('reconnect')).catch(()=>{}).finally(()=>{this.#cliRestarting=null;});
       });
     });
@@ -157,7 +157,7 @@ class ServiceProvider extends EventEmitter {
     this.#scheduleRecovery();
   }
   #scheduleRecovery(){
-    if(this.#disposed || this.#attempts>=5)return;
+    if(this.#disposed || this.#disposing || this.#attempts>=5)return;
     clearTimeout(this.#retryTimer);
     this.#retryTimer=setTimeout(()=>{void this.#recover().catch(()=>{});},Math.min(10000,(this.#options.recoveryBackoffMs ?? 500)*2**this.#attempts));
     this.#retryTimer.unref?.();
@@ -498,9 +498,19 @@ class ServiceProvider extends EventEmitter {
   async dispose(trigger = 'serviceShutdown', {force=false} = {}) {
     if (this.#disposed) return;
     if (!force && (this.#turns.size || this.#preparing || this.#idle)) throw actionRequired('BUSY_ACTIVE');
-    this.#disposed = true;clearTimeout(this.#retryTimer);
-    try { if (!force && !this.#lost) await this.#call('dispose', {trigger, mode:'drain'}); } catch {}
-    finally {try{await this.#cli?.stop();}finally{this.#peer?.close();this.#child?.kill();}}
+    this.#disposing=true;clearTimeout(this.#retryTimer);
+    try {
+      try {if(!force && !this.#lost)await this.#call('dispose',{trigger,mode:'drain'});}catch{}
+      await this.#cli?.stop();
+    }catch(error){
+      if(!force){
+        // The child may already have accepted dispose; restart a fresh generation
+        // instead of resuming against that partially disposed peer.
+        this.#disposing=false;this.#lose();this.#scheduleRecovery();throw error;
+      }
+    }
+    this.#disposed=true;this.#disposing=false;clearTimeout(this.#retryTimer);
+    this.#cli?.dispose();this.#peer?.close();this.#child?.kill();
   }
 }
 module.exports = {ServiceProvider};

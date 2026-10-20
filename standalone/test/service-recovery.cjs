@@ -58,6 +58,15 @@ async function main(){
   assert(service.host.provider.cli.authenticated);await call(peer,'cancel_task',{taskId:resumed.taskId,requestId:'synthetic-cancel'});
   await until(()=>service.host.provider.activeTurns===0);
   for(const p of peers)p.close();await pause(50);
+  const failedCli=service.host.provider.cli,stop=failedCli.stop.bind(failedCli);
+  failedCli.stop=async()=>{throw Error('Synthetic CLI stop rejection');};
+  await assert.rejects(service.dispose());failedCli.stop=stop;
+  await service.host.provider.start();
+  const afterStopFailure=await connect();
+  const verified=await submit(afterStopFailure,'synthetic-after-stop-failure');
+  await until(()=>service.host.provider.activeTurns===1);assert(service.host.provider.cli.authenticated,'Failed disposal leaves recoverable provider');
+  await call(afterStopFailure,'cancel_task',{taskId:verified.taskId,requestId:'synthetic-stop-failure-cancel'});
+  await until(()=>service.host.provider.activeTurns===0);afterStopFailure.close();await pause(50);
   const dispose=service.host.dispose;service.host.dispose=async()=>{throw Error('Synthetic disposal failure');};
   await assert.rejects(service.dispose());service.host.dispose=dispose;
   const restored=await connect();assert((await call(restored,'list_tasks')).tasks.length>=3,'Shutdown failure resumes admissions/poller');restored.close();await pause(50);

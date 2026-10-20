@@ -216,7 +216,7 @@ The original normative prose does not settle every concrete payload choice.
 | Public success `fence` top-level vs companion `result.fence` | Public transport changed to `result.fence`; raw-wire tests added. Requests/events/errors retain top-level fence. |
 | Public string `error.code` vs numeric error + `message`/`data.code` | Public transport changed to numeric JSON-RPC error with fixed public name in both fields. |
 | Public hello `providerVersion` vs companion `version` | Public hello now sends `version`; result still uses `providerVersion`. |
-| Public depth 64, numeric IDs, unbounded string IDs, 32 per direction vs companion depth 16/string 1вЂ“128/32 total | Public provider framing now uses the companion's tighter bounds. Config parsing retains its separate bound. |
+| Public depth 64, numeric IDs, unbounded string IDs, 32 per direction vs companion depth 16/string 1–128/32 total | Public provider framing now uses the companion's tighter bounds. Config parsing retains its separate bound. |
 | Public callback string `owner` vs `{leaseId}` | Public callbacks now require `{leaseId}`; synthetic fixture updated. |
 | Public login/reconnect callback missing `idleGrantId` | Public now requires the exact live idleGrantId for both mutations. |
 | Public raw CLI callback result vs `{response,fence}` | Public now returns nested `response`, with callback fence inside result. The existing public `authGrantId`/`nextAccountRevision` login result extensions remain; companion must tolerate/use them until grant-order alignment below. |
@@ -319,8 +319,7 @@ zero remaining confirmed findings. No real account or CLI was used.
 
 ## Remaining work for 3a
 
-The two-space stdio/demand-start end-to-end suite and the owner-approved grant
-lifecycle alignments remain. Existing McpTasks recovery is retained; additional
+The owner-approved grant lifecycle alignments remain. Existing McpTasks recovery is retained; additional
 durable intents/recovery are deferred. Window
 projections/migration belong to 3b; real Windows scenarios belong to 3c. Private
 provider implementation, credential storage and rotation stay outside this repo.
@@ -365,3 +364,28 @@ split, split startup budget and read-only waiter reconnect error mapping. All
 three were fixed; the reviewer reran adapter and IPC suites and reported zero
 outstanding confirmed findings. Visual inspection then changed the service note
 to inherit theme text/background and corrected its copy button label.
+
+
+## Full synthetic transport path (item 5)
+
+`test/service-e2e.cjs` runs by default in npm test. It installs the actual stable
+launcher/runtime into a synthetic root, starts two stdio MCP adapter children,
+and races their first negotiated tools/list calls to demand-start a separate
+service process. A test-only registered entry injects the synthetic provider
+and fake app-server; no production auth/files/accounts or network are used.
+
+Both adapters use real framed/authenticated service IPC. Their launch roots
+are synthetic Git repositories (one selected through CLAUDE_PROJECT_DIR); each
+submits execution into the other repository with the same requestId. Assertions
+cover separate task identities/lists, all foreign single-ID operations and a
+mixed wait set, completion reports, same-chat continuation, headless close,
+missing provider -> action_required without persisted submission, ephemeral CLI
+argv, connected-client idle suppression and actual process exit after disconnect.
+Existing service-cli tests additionally enforce no logout and login-generation
+gates; existing RPC/poller suites cover waiting_limit, cancellation and checkpoints.
+
+Item-5 read-only review reported zero outstanding confirmed findings and reran
+the end-to-end test. After one intermittent startup timeout, author inspection
+found that the initial 150ms test idle interval could expire within discovery's
+1s backoff; the fixture now uses 2s and verifies connected-client suppression
+for longer than that interval. Production idle timing remains five minutes.

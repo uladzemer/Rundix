@@ -86,7 +86,7 @@ async function main(){
     resumeClose();await Promise.all([inFlight,closing]);const afterClose=closingStore.acquire('mcp-bridge');afterClose();
     const changedRoot=make('service-changed'),changedSource=make('legacy-changed');seed(changedSource,'synthetic-original',a);registerRoot(changedRoot,changedSource);
     const changed=createMigration({root:changedRoot,hooks:{afterCopy(){seed(changedSource,'synthetic-added',a);}}});
-    await blocked(changed,changedSource,'needs_repair');assert(fs.existsSync(path.join(changedSource,'mcp','tasks')));assert(!fs.existsSync(path.join(changedSource,'mcp','service-migration.json')));await changed.close();
+    await blocked(changed,changedSource,'retry_later');assert(fs.existsSync(path.join(changedSource,'mcp','tasks')));assert(!fs.existsSync(path.join(changedSource,'mcp','service-migration.json')));await changed.close();
     const repaired=createMigration({root:changedRoot});await repaired.sync();assert.equal(repaired.visible(sa,[canonical(a)]).length,2);await repaired.close();
     // A completed receipt must verify both copied history and the retained backup.
     const changedId=fs.readdirSync(path.join(changedRoot,'legacy')).find(name=>/^[a-f0-9]{64}$/.test(name));
@@ -125,6 +125,30 @@ async function main(){
     const retrying=createMigration({root:retryRoot,clock:()=>now,hooks:{afterCopy(){if(++copies===1)throw Object.assign(Error('Synthetic temporary rename failure'),{code:'EBUSY'});}}});
     await retrying.sync();assert.equal(retrying.status(canonical(retrySource)).state,'retry_later');
     await retrying.sync();assert.equal(copies,1,'Backoff prevents an immediate retry');now=2000;await retrying.sync();assert.equal(retrying.status(canonical(retrySource)).state,'ready');await retrying.close();
+    const additiveRoot=make('service-additive'),additiveSource=make('legacy-additive');seed(additiveSource,'synthetic-repeat',a);registerRoot(additiveRoot,additiveSource);
+    let additive=createMigration({root:additiveRoot});await additive.sync();await additive.close();
+    // Switching back creates a new active task directory alongside an immutable backup.
+    seed(additiveSource,'synthetic-new',a);seed(additiveSource,'synthetic-repeat',a);
+    const repeatedFile=path.join(additiveSource,'mcp','tasks','mcp-task-synthetic-repeat.json');
+    const newer=JSON.parse(fs.readFileSync(repeatedFile,'utf8'));newer.progress='Synthetic newer generation';newer.updatedAt=2;fs.writeFileSync(repeatedFile,JSON.stringify(newer));
+    additive=createMigration({root:additiveRoot});await additive.sync();
+    assert.equal(additive.status(canonical(additiveSource)).state,'ready');assert.equal(additive.visible(sa,[canonical(a)]).length,2);
+    assert.equal(additive.visible(sa,[canonical(a)]).find(row=>row.task.taskId==='synthetic-repeat').task.progress,'Synthetic newer generation');
+    const backups=fs.readdirSync(path.join(additiveSource,'mcp')).filter(name=>name.startsWith('backup-'));assert.equal(backups.length,2);
+    await additive.sync();await additive.close();additive=createMigration({root:additiveRoot});await additive.sync();assert.equal(additive.visible(sa,[canonical(a)]).length,2);
+    // Reappearing older content is already imported and must not roll history back.
+    seed(additiveSource,'synthetic-repeat',a);await additive.sync();
+    assert.equal(additive.visible(sa,[canonical(a)]).find(row=>row.task.taskId==='synthetic-repeat').task.progress,'Synthetic newer generation');
+    seed(additiveSource,'synthetic-repeat',a);fs.writeFileSync(repeatedFile,JSON.stringify(newer));
+    const additiveSessions=new SessionStore(path.join(additiveSource,'sessions-v1')),transcript=additiveSessions.session('synthetic-session-synthetic-repeat');
+    transcript.items.push({id:'synthetic-transcript-update',type:'agentMessage',text:'Synthetic transcript-only update'});additiveSessions.saveSession(transcript);
+    await additive.sync();assert(additive.chat(sa,additive.visible(sa,[canonical(a)]).find(row=>row.task.taskId==='synthetic-repeat').taskId,[canonical(a)],'synthetic-generation').items.some(item=>item.text==='Synthetic transcript-only update'));await additive.close();
+    const recopyRoot=make('service-recopy'),recopySource=make('legacy-recopy');seed(recopySource,'synthetic-changing',a);registerRoot(recopyRoot,recopySource);
+    let changedOnce=false;const recopy=createMigration({root:recopyRoot,hooks:{afterCopy(){if(changedOnce)return;changedOnce=true;
+      const file=path.join(recopySource,'mcp','tasks','mcp-task-synthetic-changing.json'),row=JSON.parse(fs.readFileSync(file,'utf8'));row.progress='Synthetic changed during copy';fs.writeFileSync(file,JSON.stringify(row));
+    }}});
+    await recopy.sync();assert.equal(recopy.status(canonical(recopySource)).state,'retry_later');await recopy.sync({force:true});
+    assert.equal(recopy.visible(sa,[canonical(a)])[0].task.progress,'Synthetic changed during copy');await recopy.close();
     console.log('PASS legacy migration: real mid-copy process crash, idempotent verify/marker/backup, live bridge/turn gates, lifetime lease, read-only inferred/unknown spaces, A/B isolation and no queued execution.');
   }finally{await migration?.close();clients.forEach(client=>client.close());await service?.shutdown();assert.equal(path.dirname(base),os.tmpdir());assert(path.basename(base).startsWith('rundix-migration-synthetic-'));fs.rmSync(base,{recursive:true,force:true});}
 }

@@ -63,32 +63,57 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
     const sourceId=createHash('sha256').update(process.platform+'\0'+source).digest('hex');
     const sourceStore=new SessionStore(path.join(source,'sessions-v1'));
     if(!leases.has(source)){try{leases.set(source,sourceStore.acquire('mcp-bridge'));}catch{throw failure('legacy_owner_active');}}
-    const mcp=path.join(source,'mcp'),active=path.join(mcp,'tasks'),backup=path.join(mcp,'backup-'+sourceId,'tasks');
-    const hasActive=await exists(active),hasBackup=await exists(backup);
-    if(hasActive && hasBackup)throw failure('migration_conflict');
-    const tasksDirectory=hasActive?active:hasBackup?backup:null;
-    const receiptFile=path.join(root,'migrations',sourceId+'.json'),markerFile=path.join(mcp,'service-migration.json');
+    const mcp=path.join(source,'mcp'),active=path.join(mcp,'tasks'),receipts=path.join(root,'migrations');
+    const receiptFile=path.join(receipts,sourceId+'.json'),markerFile=path.join(mcp,'service-migration.json');
     const previous=await exists(receiptFile)?await read(receiptFile):null;
-    if(previous?.phase==='cutover'){
-      if(hasActive || previous.source!==source || previous.manifest?.sourceId!==sourceId || !Array.isArray(previous.manifest?.records))throw failure('migration_conflict');
-      const marker=await read(markerFile);if(marker.manifestHash!==digest(previous.manifest))throw failure('migration_conflict');
-      const actual=hasBackup?(await fsp.readdir(backup)).filter(name=>/^mcp-task-[\w-]+\.json$/.test(name)).sort():[];
-      if(json(actual)!==json(previous.manifest.records.map(entry=>'mcp-task-'+entry.taskId+'.json').sort()))throw failure('migration_conflict');
-      const saved=[];
-      for(const entry of previous.manifest.records){
+    const backupFor=g=>path.join(mcp,'backup-'+sourceId+(g?'-g'+g:''),'tasks');
+    const targetFor=(g,id)=>path.join(root,'legacy',sourceId,...(g?['g'+g]:[]),'task-'+id+'.json');
+    const generationOf=receipt=>receipt.generation || 0;
+    const saved=[];
+    async function verified(receipt){
+      const generation=generationOf(receipt),manifest=receipt.manifest,backup=backupFor(generation);
+      if(!Number.isSafeInteger(generation) || generation<0 || receipt.source!==source || manifest?.sourceId!==sourceId || !Array.isArray(manifest.records) || manifest.records.length>1000)throw failure('migration_conflict');
+      const names=await exists(backup)?(await fsp.readdir(backup)).filter(name=>/^mcp-task-[\w-]+\.json$/.test(name)).sort():[];
+      if(json(names)!==json(manifest.records.map(entry=>'mcp-task-'+entry.taskId+'.json').sort()))throw failure('migration_conflict');
+      const records=[];
+      for(const entry of manifest.records){
         if(!key(entry.taskId))throw failure('migration_conflict');
-        const row=await read(path.join(root,'legacy',sourceId,'task-'+entry.taskId+'.json'));
+        const row=await read(targetFor(generation,entry.taskId));
         if(digest(row)!==entry.hash || row.sourceId!==sourceId || digest(await read(path.join(backup,'mcp-task-'+entry.taskId+'.json')))!==digest(row.task))throw failure('migration_conflict');
-        saved.push(row);
+        records.push(row);
       }
-      await finish(source,sourceId,saved);return;
+      return records;
     }
-    const names=tasksDirectory?(await fsp.readdir(tasksDirectory)).filter(name=>/^mcp-task-[\w-]+\.json$/.test(name)).sort():[];
+    // Older generations and targets are immutable. The primary receipt is only
+    // replaced after the next generation has been copied and verified.
+    const histories=await exists(receipts)?(await fsp.readdir(receipts)).filter(name=>name.startsWith(sourceId+'-g') && /^.+-g[0-9]+\.json$/.test(name)) : [];
+    histories.sort((a,b)=>Number(a.match(/-g([0-9]+)\.json$/)[1])-Number(b.match(/-g([0-9]+)\.json$/)[1]));
+    for(const file of histories){const receipt=await read(path.join(receipts,file));if(receipt.phase!=='cutover')throw failure('migration_conflict');saved.push(...await verified(receipt));}
+    let generation=previous?generationOf(previous):0;
+    if(previous?.phase==='cutover'){
+      const marker=await read(markerFile);if(marker.manifestHash!==digest(previous.manifest))throw failure('migration_conflict');
+      saved.push(...await verified(previous));
+      if(!await exists(active)){await finish(source,sourceId,selected(saved));return;}
+      await copy(path.join(receipts,sourceId+'-g'+generation+'.json'),previous);
+      generation++;
+    }else if(previous && previous.phase!=='verified')throw failure('migration_conflict');
+    const backup=backupFor(generation);
+    if(previous?.phase==='verified' && await exists(backup)){
+      // Crash after rename: finish this generation before considering a newly
+      // recreated active directory. Session changes cannot alter copied history.
+      const rows=await verified(previous),marker=await read(markerFile);
+      if(marker.manifestHash!==digest(previous.manifest))throw failure('migration_conflict');
+      await atomic(receiptFile,{...previous,phase:'cutover'});saved.push(...rows);
+      await finish(source,sourceId,selected(saved));return;
+    }
+    if(await exists(backup))throw failure('migration_conflict');
+    const hasActive=await exists(active),names=hasActive?(await fsp.readdir(active)).filter(name=>/^mcp-task-[\w-]+\.json$/.test(name)).sort():[];
     if(names.length>1000)throw failure('migration_conflict');
     const records=[],checks=[],sessionLeases=[];
+    const changed=()=>Object.assign(Error('Legacy source changed; retry later.'),{code:'legacy_source_changed'});
     try{
       for(const name of names){
-        const sourceFile=path.join(tasksDirectory,name),task=await read(sourceFile);
+        const sourceFile=path.join(active,name),task=await read(sourceFile);
         if(!key(task.taskId) || task.taskId!==name.slice(9,-5) || !key(task.sessionKey) || typeof task.projectDirectory!=='string' || !path.isAbsolute(task.projectDirectory) || task.projectDirectory.includes('\0'))throw failure('migration_conflict');
         if(!['queued','running','waiting_approval','waiting_limit','completed','error','cancelled'].includes(task.state) || !Array.isArray(task.operations))throw failure('migration_conflict');
         let session=null;const sessionFile=sourceStore.file('session',task.sessionKey);
@@ -101,28 +126,32 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
         try{inferred=resolveSpace(directory).spaceId;directory=canonical(directory);}catch{}
         const interrupted=['running','waiting_approval'].includes(task.state) || !!task.recoveryRequired || !!task.needsReconcile || session?.lastTurnStatus==='inProgress';
         const row={schemaVersion:1,sourceId,taskId:'legacy-'+sourceId+'-'+task.taskId,projectDirectory:directory,inferredSpace:inferred,task,session,...(interrupted?{interrupted:true}:{})};
-        const target=path.join(root,'legacy',sourceId,'task-'+task.taskId+'.json');await copy(target,row);
+        // Only this pending generation may be re-copied. Committed targets stay
+        // immutable, including when a taskId reappears with newer source data.
+        await atomic(targetFor(generation,task.taskId),row);
         records.push(row);checks.push({file:sourceFile,hash:digest(task)});if(session)checks.push({file:sessionFile,hash:digest(session)});
         await hooks.afterCopy?.(records.length);
       }
-      // Re-read both source and target under the bridge/thread leases before marking.
-      for(const check of checks)if(digest(await read(check.file))!==check.hash)throw failure('migration_conflict');
-      const verifyNames=async()=>{const current=tasksDirectory?(await fsp.readdir(tasksDirectory)).filter(name=>/^mcp-task-[\w-]+\.json$/.test(name)).sort():[];if(json(current)!==json(names))throw failure('migration_conflict');};
-      await verifyNames();
-      for(const row of records){const file=path.join(root,'legacy',sourceId,'task-'+row.task.taskId+'.json');if(digest(await read(file))!==digest(row))throw failure('migration_conflict');}
+      const verifySource=async()=>{
+        const current=hasActive?(await fsp.readdir(active)).filter(name=>/^mcp-task-[\w-]+\.json$/.test(name)).sort():[];
+        if(json(current)!==json(names))throw changed();
+        for(const check of checks)if(digest(await read(check.file))!==check.hash)throw changed();
+      };
+      await verifySource();
+      for(const row of records)if(digest(await read(targetFor(generation,row.task.taskId)))!==digest(row))throw failure('migration_conflict');
       const manifest={schemaVersion:1,sourceId,source,records:records.map(row=>({taskId:row.task.taskId,hash:digest(row)}))};
-      if(previous && (previous.source!==source || !previous.manifest || digest(previous.manifest)!==digest(manifest)))throw failure('migration_conflict');
-      if(previous && !tasksDirectory && previous.manifest.records.length)throw failure('migration_conflict');
-      const marker={schemaVersion:1,sourceId,manifestHash:digest(manifest)};
-      if(await exists(markerFile)){if(digest(await read(markerFile))!==digest(marker))throw failure('migration_conflict');}
-      await atomic(receiptFile,{schemaVersion:1,source,manifest,phase:'verified'});await hooks.afterVerify?.();
-      await verifyNames();for(const check of checks)if(digest(await read(check.file))!==check.hash)throw failure('migration_conflict');
-      await atomic(markerFile,marker);await hooks.afterMarker?.();
-      await verifyNames();for(const check of checks)if(digest(await read(check.file))!==check.hash)throw failure('migration_conflict');
+      const receipt={schemaVersion:1,source,generation,manifest,phase:'verified'};
+      await atomic(receiptFile,receipt);await hooks.afterVerify?.();await verifySource();
+      await atomic(markerFile,{schemaVersion:1,sourceId,generation,manifestHash:digest(manifest)});await hooks.afterMarker?.();await verifySource();
       if(hasActive){await fsp.mkdir(path.dirname(backup),{recursive:true,mode:0o700});await fsp.rename(active,backup);}
-      await atomic(receiptFile,{schemaVersion:1,source,manifest,phase:'cutover'});
-      await finish(source,sourceId,records);
+      await atomic(receiptFile,{...receipt,phase:'cutover'});
+      await finish(source,sourceId,selected([...saved,...records]));
     }finally{for(const release of sessionLeases)release();}
+  }
+  function selected(records){
+    const latest=new Map(),seen=new Set();
+    for(const row of records){const session=row.session?Object.fromEntries(Object.entries(row.session).filter(([name])=>!['updatedAt','revision'].includes(name))):null;const identity=row.taskId+'\0'+digest({task:row.task,session});if(seen.has(identity))continue;seen.add(identity);latest.set(row.taskId,row);}
+    return [...latest.values()];
   }
   async function sync({force=false}={}){
     if(closed)throw failure('migration_conflict');if(syncing)return syncing;
@@ -131,6 +160,7 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
         try{registerRoot(root,source);pendingRegistrations.delete(identity);statuses.delete(identity);}
         catch(error){const attempt=(status(identity).attempt || 0)+1;publish(identity,{state:['EPERM','EACCES','EBUSY'].includes(error.code)?'retry_later':'needs_repair',code:'migration_conflict',attempt,retryAt:clock()+Math.min(60000,retryMs*2**Math.min(attempt-1,6))});}
       }
+      for(const source of ready){try{if(await exists(path.join(source,'mcp','tasks')))ready.delete(source);}catch{ready.delete(source);}}
       const visited=new Set();
       for(;;){const pending=roots(store).filter(source=>!visited.has(source) && !ready.has(source) && (force || !(status(source).retryAt>clock())));if(!pending.length)return;
         for(const source of pending){visited.add(source);try{await importRoot(source);}catch(error){
@@ -142,7 +172,7 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
             }catch(drop){error=drop;}
           }
           const attempt=(status(source).attempt || 0)+1;
-          const busy=error.code==='legacy_owner_active',transient=['EPERM','EBUSY','EACCES','ENOENT'].includes(error.code);
+          const busy=error.code==='legacy_owner_active',transient=['EPERM','EBUSY','EACCES','ENOENT','legacy_source_changed'].includes(error.code);
           publish(source,{state:busy?'busy':transient?'retry_later':'needs_repair',code:busy?'legacy_owner_active':transient?'legacy_retry_later':'migration_conflict',attempt,
             retryAt:clock()+Math.min(60000,retryMs*2**Math.min(attempt-1,6))});
         }}

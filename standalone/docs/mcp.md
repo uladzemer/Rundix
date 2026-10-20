@@ -140,7 +140,16 @@ read through bounded CLI history pages owned by the service. Legacy 0.3.x MCP
 history is copied, verified and moved to a backup after a cutover marker. It is
 read-only, including inferred project spaces; unknown projects appear only in
 a containing workspace. The service holds the legacy bridge lease until shutdown.
-A running old executor or unresolved legacy turn blocks migration and admission.
+A live old executor delays only that root's import. Abandoned running tasks
+are imported as interrupted after bridge and thread leases can be acquired.
+Busy or damaged roots show a separate legacy status while the service remains
+available; temporary failures retry with backoff.
+Migration is additive across generations. Switching back to window mode starts
+with an empty window task list; migrated history stays in the service. Original
+records remain under `<globalStorage>/mcp/backup-<sourceId>[-gN]/tasks`. Re-enabling
+service mode imports newly created `mcp/tasks` as another generation. Previously
+imported taskId/content pairs are not imported again into the displayed history;
+new content is preserved separately, without overwriting earlier backups.
 
 The adapter binds tasks to the Git root of `CLAUDE_PROJECT_DIR`, falling back to
 its cwd, including the main repository for `.claude/worktrees`. In a non-Git

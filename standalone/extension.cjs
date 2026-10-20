@@ -242,7 +242,7 @@ function activate(context) {
     if(serviceDisposed || !vscode.workspace.isTrusted)throw Object.assign(Error('Workspace trust is required.'),{code:'workspace_untrusted'});
     if(!serviceClient) {
       const client=new (require('./runtime/service-window-client.cjs').ServiceWindowClient)({root:serviceInstallation.root,
-        trusted:true,workspaceFolders:(vscode.workspace.workspaceFolders || []).map(folder=>folder.uri.toString())});
+        legacyRoot:context.globalStorageUri.fsPath,trusted:true,workspaceFolders:(vscode.workspace.workspaceFolders || []).map(folder=>folder.uri.toString())});
       serviceClient=client;
       const folder=lastEditor && vscode.workspace.getWorkspaceFolder(lastEditor.document.uri);
       if(folder)try{serviceSpaceId=require('./runtime/service-space.cjs').resolveSpace(folder.uri.fsPath).spaceId;}catch{}
@@ -451,14 +451,14 @@ function activate(context) {
     serviceStartingEpoch=epoch;
     serviceStarting=(async()=>{
       if(serviceDisposed || !vscode.workspace.isTrusted)throw Error('Workspace trust is required.');
-      serviceInstallation ||= await require('./runtime/service-launcher.cjs').installLauncherAsync();
+      serviceInstallation ||= await require('./runtime/service-launcher.cjs').installLauncherAsync({legacyRoot:context.globalStorageUri.fsPath});
       if(serviceDisposed || serviceEpoch!==epoch)throw Error('Window binding changed.');
       await syncServiceSettings();
       if(serviceEpoch!==epoch)throw Error('Window binding changed.');
       await connectServiceWindow();
       await context.globalState.update('mcpEnabled',true);publishMcpPanel(true);
       return serviceInstallation.launcher;
-    })().catch(error=>{serviceError='service_unavailable';publishMcpPanel(true);throw error;}).finally(()=>{serviceStarting=null;});
+    })().catch(error=>{serviceError=['legacy_owner_active','migration_conflict'].includes(error.code)?error.code:'service_unavailable';publishMcpPanel(true);throw error;}).finally(()=>{serviceStarting=null;});
     return serviceStarting;
   }
   async function stopMcp() {

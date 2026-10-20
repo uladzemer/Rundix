@@ -26,9 +26,10 @@ function registration(root) {
     return value;
   } catch { throw Object.assign(Error('Install the service launcher from Rundix first.'), {code:'service_install_required'}); }
 }
-function installLauncher({source = path.join(__dirname, '..'), nodePath = process.execPath, root} = {}) {
+function installLauncher({source = path.join(__dirname, '..'), nodePath = process.execPath, root,legacyRoot} = {}) {
   root = locations({root}).directory;
   protectDirectory(root);
+  if(legacyRoot)require('./service-migration.cjs').registerRoot(root,legacyRoot);
   const store=new SessionStore(root),until=Date.now()+10000;let unlock;
   while(!unlock){try{unlock=store.acquire('service-install');}catch(error){if(Date.now()>=until)throw error;Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,20);}}
   try {

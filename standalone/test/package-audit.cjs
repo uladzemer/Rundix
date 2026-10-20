@@ -51,7 +51,7 @@ function audit(file) {
   for (const module of ['service-endpoint','service-ipc','service-process','service-lifecycle','service-space','service-cli',
     'service-json','service-provider-config','service-provider-rpc','service-provider-contract','service-provider',
     'service-headless-host','service-main','service-task-rpc','service-limit-poller','service-adapter','service-launcher','service-environment','service-settings','service-task-archive','service-fatal',
-    'service-connection','service-window-rpc','service-window-client','service-projection','service-task-chat']) {
+    'service-connection','service-window-rpc','service-window-client','service-projection','service-task-chat','service-migration']) {
     assert(names.has(`extension/runtime/${module}.cjs`), 'Missing headless module');
   }
   for (const required of ['extension/extension.cjs', 'extension/package.json', 'extension/readme.md', 'extension/changelog.md',

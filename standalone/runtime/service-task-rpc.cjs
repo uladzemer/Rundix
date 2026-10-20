@@ -7,10 +7,10 @@ const budget = (name, args) => ['wait_task', 'wait_tasks'].includes(name)
   ? (Number.isInteger(args?.waitSeconds) ? Math.max(1, Math.min(1500, args.waitSeconds)) : 600) * 1000 + 15000 : 12000;
 const TOOLS = new Set(['submit_task', 'get_task', 'wait_task', 'wait_tasks', 'list_tasks', 'continue_task', 'cancel_task', 'close_task', 'list_models', 'reload_window']);
 const SAFE = new Set(['unknown_task', 'space_not_bound', 'stale_instance', 'invalid_argument', 'invalid_directory', 'request_conflict', 'task_active',
-  'connection_unavailable', 'approval_not_pending', 'approval_rejected', 'delivery_unknown', 'response_too_large', 'storage_unavailable', 'limit', 'unsupported']);
+  'connection_unavailable', 'approval_not_pending', 'approval_rejected', 'delivery_unknown', 'response_too_large', 'storage_unavailable', 'limit', 'unsupported','legacy_owner_active','migration_conflict']);
 const failure = code => Object.assign(Error(code), {code});
 function createTaskRpc({providerOptions = {}} = {}) {
-  const scope = new AsyncLocalStorage(); let host, windows, stopping = false;
+  const scope = new AsyncLocalStorage(); let host, windows, migration, stopping = false;
   function hello(params, peer) {
     if (stopping) throw failure('service_initializing');
     if (params.clientKind === 'window') {
@@ -28,6 +28,7 @@ function createTaskRpc({providerOptions = {}} = {}) {
     const binding = isWindow ? {spaceId:params.spaceId} : peer.spaceBinding;
     if (isWindow ? !windows.bound(params, peer) : !binding || params.bindingId !== binding.bindingId || params.spaceId !== binding.spaceId)
       return {error:{code:'space_not_bound', message:'Space is not bound.'}};
+    if(isWindow && peer.windowBinding.spaces.get(params.spaceId)?.kind==='legacy' && method==='task.call')return {error:{code:'unknown_task',message:'Unknown taskId'}};
     if (isWindow && ['space.subscribe','space.unsubscribe','chat.open','chat.subscribe','chat.unsubscribe','chat.history'].includes(method)) {
       try {return {result:await scope.run({spaceId:binding.spaceId,signal:peer.signal},()=>windows.call(method, params, peer))};}
       catch (error) {return {error:{code:SAFE.has(error.code) ? error.code : 'rejected', message:'Request rejected.'}};}
@@ -39,6 +40,7 @@ function createTaskRpc({providerOptions = {}} = {}) {
         // Ownership precedes provider/connection lookup, including mutation replay.
         if (params.arguments.taskId !== undefined) host.mcp.tasks.get(params.arguments.taskId);
         if (params.name === 'submit_task') await readProviderConfigAsync(providerOptions);
+        if(params.name==='submit_task' || params.name==='continue_task' && !params.arguments.approval){await migration?.sync();migration?.assertReady();}
         if (context.signal.aborted || peer.signal.aborted) return null;
         if (params.name === 'reload_window') throw failure('unsupported');
         const value = await host.mcp.tasks.call(params.name, params.arguments);
@@ -53,7 +55,7 @@ function createTaskRpc({providerOptions = {}} = {}) {
   }
   return {scope:() => scope.getStore()?.spaceId, signal:() => scope.getStore()?.signal, hello, call,
     changed:task => {windows?.changed(task.space);windows?.chatChanged(task);},sessionChanged:session=>windows?.sessionChanged(session),
-    attach:(value, generation) => {host = value; windows = createWindowRpc({generation, tasks:() => host.mcp.tasks,core:()=>host.core});},
+    attach:(value, generation,legacy) => {host = value;migration=legacy; windows = createWindowRpc({generation, tasks:() => host.mcp.tasks,core:()=>host.core,migration});},
     stop:() => {stopping = true;}, resume:()=>{stopping=false;},
     getHandlerTimeoutMs(method, params) {return method === 'task.call' ? budget(params?.name, params?.arguments) : 12000;}};
 }

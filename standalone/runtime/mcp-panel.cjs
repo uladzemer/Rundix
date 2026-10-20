@@ -21,7 +21,7 @@ function snapshot({records,language,connection,connected,bridgeRunning,pending})
   return {language,connection,connected,bridgeRunning,tasks};
 }
 function serviceSnapshot({client,language,installed,selectedSpaceId,error,taskChatsAvailable=false}) {
-  const spaces=(client?.spaces || []).map(space=>({spaceId:space.spaceId,label:space.root}));
+  const spaces=(client?.spaces || []).map(space=>({spaceId:space.spaceId,label:space.kind==='legacy'?(language==='ru'?'История старой версии':'Legacy history')+' · '+space.spaceId.slice(-8):space.root}));
   const spaceId=spaces.some(space=>space.spaceId===selectedSpaceId)?selectedSpaceId:spaces[0]?.spaceId || null;
   const projection=client?.snapshots.get(spaceId);
   return {language,serviceMode:true,bridgeRunning:!!client?.peer && !client.peer.closed,

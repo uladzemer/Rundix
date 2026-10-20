@@ -136,8 +136,11 @@ resumes that thread locally. Composer and question drafts survive failed sends,
 tab recreation and window reload. Closing a finished task asks subscribed tabs
 to persist their drafts before closing; closing a tab alone does not cancel work.
 Large display items are shortened with an explicit notice; earlier messages are
-read through bounded CLI history pages owned by the service. Legacy history
-migration is not implemented yet.
+read through bounded CLI history pages owned by the service. Legacy 0.3.x MCP
+history is copied, verified and moved to a backup after a cutover marker. It is
+read-only, including inferred project spaces; unknown projects appear only in
+a containing workspace. The service holds the legacy bridge lease until shutdown.
+A running old executor or unresolved legacy turn blocks migration and admission.
 
 The adapter binds tasks to the Git root of `CLAUDE_PROJECT_DIR`, falling back to
 its cwd, including the main repository for `.claude/worktrees`. In a non-Git
@@ -151,8 +154,8 @@ The launcher preserves --wait/--timeout/--brief. Its background waiter reconnect
 after transient service loss; mutations are never automatically replayed. Reuse
 the same requestId explicitly after an uncertain response. Connected adapters
 keep the service alive; otherwise it exits after five idle minutes with no
-nonterminal tasks or uncertain turns. Hung-owner recovery and old-window history
-migration are not implemented by this experimental switch. The Stop MCP command in the window
+nonterminal tasks or uncertain turns. Hung-owner recovery is not implemented
+by this experimental switch. The Stop MCP command in the window
 only disables its configuration controls; it does not kill background tasks.
 
 

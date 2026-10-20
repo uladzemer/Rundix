@@ -99,7 +99,7 @@
       if(!Object.hasOwn(saved,'draft') && data.draftState){draft=data.draftState.draft || '';questionDrafts=data.draftState.questionDrafts || {};attempts=data.draftState.attempts || {};input.value=draft;}
       initialized=true;
     }
-    persist();title.textContent=state.title;owner.textContent=tr('Service-owned task · Rundix','Задача фонового сервиса · Rundix');
+    persist();title.textContent=state.title;owner.textContent=state.readOnly?tr('Legacy history · read only','История старой версии · только чтение'):tr('Service-owned task · Rundix','Задача фонового сервиса · Rundix');
     const labels={queued:tr('Queued','В очереди'),running:tr('Running','Выполняется'),waiting_approval:tr('Waiting for approval','Ожидает подтверждения'),waiting_limit:tr('Waiting for limits','Ожидает лимитов'),completed:tr('Completed','Завершена'),error:tr('Error','Ошибка'),cancelled:tr('Cancelled','Отменена')};
     status.textContent=(labels[state.state] || state.state)+(state.progress?' · '+state.progress:'');
     notice.hidden=!state.historyTruncated && !state.itemsTruncated;notice.textContent=tr('Showing a bounded transcript. Large items are shortened.','Показан ограниченный фрагмент истории. Большие элементы сокращены.');

@@ -27,7 +27,7 @@ function windowBinding(binding) {
   return {bindingId:randomUUID(), windowId:binding.windowId, folders, spaces};
 }
 
-function createWindowRpc({generation, tasks,core}) {
+function createWindowRpc({generation, tasks,core,migration}) {
   const peers = new Set(), revisions = new Map(), chatRevisions=new Map();
   const revision = spaceId => revisions.get(spaceId) || 0;
   function changed(spaceId) {
@@ -37,8 +37,11 @@ function createWindowRpc({generation, tasks,core}) {
       catch { peer.close(); }
     }
   }
-  function hello(params, peer) {
+  async function hello(params, peer) {
     const binding = windowBinding(params.binding);
+    if(params.binding.legacyRoot)await migration?.register(params.binding.legacyRoot);
+    for(const space of migration?.spaces(binding.folders) || [])binding.spaces.set(space.spaceId,space);
+    if(peer.closed || peer.signal.aborted)throw failure('service_unavailable');
     peer.windowBinding = binding; peer.subscriptions = new Map();peer.chats=new Map(); peers.add(peer);
     peer.once('closed', () => {
       peers.delete(peer);
@@ -52,7 +55,7 @@ function createWindowRpc({generation, tasks,core}) {
   function bound(params, peer) {
     return peer.windowBinding?.bindingId === params.bindingId && peer.windowBinding.spaces.has(params.spaceId);
   }
-  function snapshot(spaceId, limit) {
+  function snapshot(spaceId, limit,peer) {
     const serviceTasks = tasks();
     const order = (a,b) => Number(active.has(b.state)) - Number(active.has(a.state)) || b.createdAt - a.createdAt || a.taskId.localeCompare(b.taskId);
     const page = []; let totalTasks = 0;
@@ -64,11 +67,15 @@ function createWindowRpc({generation, tasks,core}) {
     for (const task of serviceTasks.tasks.values()) include(task);
     // Restored/crash-duplicate active records take precedence over the archive.
     for (const task of serviceTasks.archive?.records() || []) if (!serviceTasks.tasks.has(task.taskId)) include(task);
+    const legacy=migration?.visible(spaceId,peer.windowBinding.folders) || [];
+    for(const row of legacy)include({...row.task,taskId:row.taskId,space:spaceId,legacy:true,readOnly:true});
     const result = {generation, schemaVersion:1, spaceId, viewRevision:revision(spaceId),
-      tasks:page.map(task => ({...serviceTasks.summary(task),report:projection.report(task.report),closed:!!task.closedAt,
+      tasks:page.map(task => ({...(task.legacy?{taskId:task.taskId,title:String(task.description || '').slice(0,160),state:task.state,progress:task.progress,
+        chatId:task.chatId || null,projectDirectory:task.projectDirectory,unsentInputCount:task.unsentInputs?.length || 0,pendingRequests:0,recoveryRequired:false}:serviceTasks.summary(task)),
+        readOnly:!!task.readOnly,report:projection.report(task.report),closed:!!task.closedAt,
         actionRequired:task.providerFailureCode || (task.error?.startsWith('action_required') ? 'provider_unavailable' : null)})),
       chats:page.filter(task => task.chatId).map(task => ({taskId:task.taskId, chatId:task.chatId,
-        owner:'service', title:('MCP · ' + task.description).slice(0,167), visibility:task.closedAt ? 'closed' : 'open'})),
+        owner:task.legacy?'legacy':'service',readOnly:!!task.readOnly,title:('MCP · ' + task.description).slice(0,167), visibility:task.closedAt ? 'closed' : 'open'})),
       windows:[...new Set([...peers].filter(peer => peer.subscriptions.has(spaceId)).map(peer => peer.windowBinding.windowId))]
         .map(windowId => ({windowId})), totalTasks, hasMoreHistory:totalTasks > page.length};
     // No partial projection masquerades as a full snapshot; preserve stored data.
@@ -84,6 +91,12 @@ function createWindowRpc({generation, tasks,core}) {
   async function call(method, params, peer) {
     if (!bound(params, peer)) throw failure('space_not_bound');
     if(['chat.open','chat.subscribe','chat.unsubscribe','chat.history'].includes(method)){
+      if(typeof params.taskId==='string' && params.taskId.startsWith('legacy-')){
+        if(method==='chat.unsubscribe'){peer.chats.delete(params.taskId);return {unsubscribed:true};}
+        if(method==='chat.history')throw failure('unsupported');
+        const snapshot=migration?.chat(params.spaceId,params.taskId,peer.windowBinding.folders,generation);
+        if(!snapshot)throw failure('unknown_task');return snapshot;
+      }
       const task=tasks().get(params.taskId);
       if(method==='chat.unsubscribe'){peer.chats.delete(task.taskId);return {unsubscribed:true};}
       if(method==='chat.history')return require('./service-task-chat.cjs').history({core:core(),tasks:tasks(),task,cursor:params.cursor});
@@ -101,7 +114,7 @@ function createWindowRpc({generation, tasks,core}) {
     const subscribed = peer.subscriptions.has(params.spaceId);
     peer.subscriptions.set(params.spaceId, limit);
     if (!subscribed) changed(params.spaceId);
-    return snapshot(params.spaceId, limit);
+    return snapshot(params.spaceId, limit,peer);
   }
   return {hello, bound, call, changed,chatChanged,
     sessionChanged(session){const task=[...tasks().tasks.values()].find(task=>task.sessionKey===session.key);if(task)chatChanged(task);},

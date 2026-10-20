@@ -96,3 +96,4 @@
 !runtime/service-window-client.cjs
 !runtime/service-projection.cjs
 !runtime/service-task-chat.cjs
+!runtime/service-migration.cjs

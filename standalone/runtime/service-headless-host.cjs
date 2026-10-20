@@ -36,7 +36,7 @@ function providerWait(outcome) {
 }
 
 async function createHeadlessHost({root, generation, providerOptions = {}, resolveCli, clock = {now:Date.now, setTimeout, clearTimeout},
-  taskOptions = {}, decorateAdapter,onSessionChanged=()=>{}} = {}) {
+  taskOptions = {}, decorateAdapter,onSessionChanged=()=>{},beforeAdmission=async()=>{}} = {}) {
   const settings = plainSettings(root), logger = boundedLogger(root);
   const kv = new SessionStore(path.join(root, 'state'));
   const workspaceState = {
@@ -91,6 +91,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       if (method !== 'turn/start') return this.cli.request(method, params, timeoutMs);
       const task = taskForThread(params.threadId);
       if (!task || runs.has(params.threadId)) throw Object.assign(actionRequired('BUSY_ACTIVE'), {notSent:true, deliveryUncertain:false});
+      try{await beforeAdmission();}catch(error){throw Object.assign(error,{notSent:true,deliveryUncertain:false});}
       let outcome;
       try {outcome = await provider.prepareTurn({taskId:task.taskId, spaceId:task.space || 'unbound',
         attemptId:randomUUID(), runId:randomUUID(), ...(task.waitId ? {waitId:task.waitId} : {})});}
@@ -101,6 +102,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
           {notSent:true, deliveryUncertain:false, providerWait:wait, retryable:outcome.code === 'BUSY_ACTIVE'});
       }
       if (task.cancelRequested || disposed) { provider.releaseReserved(outcome.grant); throw Object.assign(actionRequired(), {notSent:true, deliveryUncertain:false}); }
+      try{await beforeAdmission();}catch(error){provider.releaseReserved(outcome.grant);throw Object.assign(error,{notSent:true,deliveryUncertain:false});}
       const row = {threadId:params.threadId, taskId:task.taskId, grant:outcome.grant, completed:new Set()}; runs.set(params.threadId, row);
       delete task.providerFailureCode;
       try {

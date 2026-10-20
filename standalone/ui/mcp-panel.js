@@ -83,7 +83,8 @@
       for(const row of task.unsentInputs)recovery.append(element('pre',row.text+(row.truncated?'…':''),'configuration-json'));
       detail.append(recovery);
     }
-    const taskActions=element('div',undefined,'actions');taskActions.append(button(t('open'),'openChat',{taskId:task.taskId},!task.chatId || state.serviceMode && !state.taskChatsAvailable),button(t('cancel'),'cancel',{taskId:task.taskId},!state.bridgeRunning || (!['queued','running','waiting_approval','waiting_limit'].includes(task.state) && !task.recoveryRequired)));if(state.serviceMode)taskActions.append(button(t('close'),'close',{taskId:task.taskId},!state.bridgeRunning || !['completed','error','cancelled'].includes(task.state) || task.recoveryRequired || task.closed));detail.append(taskActions);
+    if(task.readOnly)detail.append(element('p',state.language==='ru'?'История старой версии · только чтение':'Legacy history · read only','notice'));
+    const taskActions=element('div',undefined,'actions');taskActions.append(button(t('open'),'openChat',{taskId:task.taskId},!task.chatId || state.serviceMode && !state.taskChatsAvailable),button(t('cancel'),'cancel',{taskId:task.taskId},task.readOnly || !state.bridgeRunning || (!['queued','running','waiting_approval','waiting_limit'].includes(task.state) && !task.recoveryRequired)));if(state.serviceMode)taskActions.append(button(t('close'),'close',{taskId:task.taskId},task.readOnly || !state.bridgeRunning || !['completed','error','cancelled'].includes(task.state) || task.recoveryRequired || task.closed));detail.append(taskActions);
     if(task.report){
       const report=element('section',undefined,'report');report.append(element('h3',t('report')));
       if(task.report.truncated)report.append(element('p',state.language==='ru'?'Показана сокращённая версия. Полный отчёт доступен через get_task.':'Showing a shortened report. Full report is available through get_task.','notice'));
@@ -97,8 +98,8 @@
     }
     const form=element('form'), label=element('label',t('follow')), input=element('textarea');
     label.htmlFor='clarification';input.id='clarification';input.placeholder=t('placeholder');input.maxLength=100000;input.rows=4;input.value=drafts[task.taskId] || '';
-    input.addEventListener('input',()=>{drafts[task.taskId]=input.value;versions[task.taskId]=(versions[task.taskId] || 0)+1;persist();submit.disabled=pending || !state.bridgeRunning || !input.value.trim();});
-    const submit=element('button',t('send'));submit.type='submit';submit.disabled=pending || !state.bridgeRunning || !input.value.trim();
+    input.addEventListener('input',()=>{drafts[task.taskId]=input.value;versions[task.taskId]=(versions[task.taskId] || 0)+1;persist();submit.disabled=pending || task.readOnly || !state.bridgeRunning || !input.value.trim();});
+    const submit=element('button',t('send'));submit.type='submit';submit.disabled=pending || task.readOnly || !state.bridgeRunning || !input.value.trim();
     form.addEventListener('submit',event=>{event.preventDefault();if(!submit.disabled)action('continue',{taskId:task.taskId,clarification:input.value});});
     form.append(label,input,submit);detail.append(form);root.append(detail);
     if(focused==='clarification'){input.focus({preventScroll:true});input.setSelectionRange(start,end);}

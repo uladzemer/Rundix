@@ -1,4 +1,4 @@
-# Headless service implementation status (step 3b, panel and task chats)
+# Headless service implementation status (step 3b)
 
 Window-owned MCP remains the default. The experimental service switch installs
 the headless runtime and connects the MCP panel as a window client on demand.
@@ -548,7 +548,7 @@ If CLI stop fails during idle disposal, provider disposal rolls back its closing
 state and recovers with a fresh generation before admitting new turns. The service
 may resume admissions; it never resumes against a permanently disposed provider.
 
-## Step 3b: window IPC runtime and MCP panel (partial)
+## Step 3b: window IPC runtime and MCP panel
 
 The service-mode extension connects on panel demand or Start MCP and when a
 previously enabled window reloads. Its panel shows selected-space tasks and
@@ -556,7 +556,7 @@ bounded reports, quota waits/resetAt, action-required reasons and unsent counts.
 Continue/cancel/close use service RPC; close never interrupts execution. Space
 bindings refresh on workspace folder changes. Stop/disposal drops this client
 only; delayed work cannot restart a stopped client. Ordinary window-owned MCP and
-manual chats retain their existing behavior. Step 3b is not complete.
+manual chats retain their existing behavior.
 
 - `service-window-rpc.cjs`: trusted window hello, server-recomputed local folder
   spaces, deduplicated multi-root bindings, connection-owned subscriptions,
@@ -581,9 +581,8 @@ empty windows, trust/URI rejection, full snapshots, dropped-event resync, reload
 backoff reconnect, same-thread continuation, synthetic answer routing/dedup and
 no automatic mutation replay. It does not exercise VS Code task tabs or migration.
 
-Remaining: legacy copy/verify/marker/backup import and lifetime legacy leases,
-and migration acceptance tests. Legacy history must remain
-read-only, even when projectDirectory can infer a display space.
+Legacy history remains read-only, even when projectDirectory infers a display space;
+see the migration section below.
 
 Validation of this runtime slice: npm test, npm run test:browser (existing panel
 RU/EN, both themes, narrow/wide), isolated mcp-host/startup-host/local-auth-host/
@@ -623,3 +622,33 @@ Browser tests cover RU/EN, both themes and widths, safe Markdown, composer/quest
 drafts, explicit same-ID retry, historical code copy and stable history cursors.
 Independent read-only review ran three rounds; the final round reported zero
 confirmed remaining findings after history/copy/cursor fixes.
+
+## Stage-1 legacy migration
+
+`service-migration.cjs` registers explicit legacy globalStorage roots, acquires
+`sessions-v1/lease-mcp-bridge.json` for the service lifetime, and imports only
+validated MCP task/session pairs. A live legacy executor or unresolved running
+turn blocks migration and new admissions. Manual sessions are never imported.
+No imported queued input is executed.
+
+Each import copies into a private source-specific namespace, verifies content
+hashes and unchanged source membership, writes a verified receipt and source
+marker, then renames `mcp/tasks` to `mcp/backup-<sourceId>/tasks`. Atomic receipts
+and deterministic IDs allow restart after copy or marker publication. Conflicting
+source/backup/target data fails closed. Shutdown waits for an active copy before
+releasing the legacy lease. Completed imports validate their receipt/backup
+without re-inferring a project that may have disappeared.
+
+The inferred Git root controls display only. Windows must contain the original
+projectDirectory and bind the inferred space. Unknown roots use a read-only
+legacy bucket visible only to a containing workspace. Imported chats read their
+copied transcript without resuming a CLI thread. A v1 error-only bridge returns
+`adapter_upgrade_required`; a new adapter accepts --bridge only after validating
+the cutover receipt and never derives task ownership from that argument.
+
+`test/service-migration.cjs` uses synthetic temporary roots and an actual child
+process crash during copy. It checks restart/idempotency, marker recovery, source
+mutation conflicts, simultaneous registrations, live legacy/thread leases,
+shutdown ordering, backup, A/B visibility and no imported execution. Independent
+read-only review closed the concurrency and source-membership findings; the
+second round reported no new confirmed findings.

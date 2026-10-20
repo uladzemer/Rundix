@@ -16,7 +16,8 @@ class ServiceWindowClient extends EventEmitter {
     this.spaces = [...windowBinding(binding).spaces.values()];
     this.snapshots = new Map(); this.reads = new Map(); this.wanted = new Map();
     this.options = options; this.closed = false; this.delay = 250;
-    this.connection = createServiceConnection(options, {clientKind:'window', binding});
+    this.localSpaces=this.spaces.slice();
+    this.connection = createServiceConnection(options, {clientKind:'window', binding:{...binding,...(options.legacyRoot?{legacyRoot:options.legacyRoot}:{})}});
   }
   start() {
     if (this.closed) return Promise.reject(failure('service_unavailable'));
@@ -32,9 +33,12 @@ class ServiceWindowClient extends EventEmitter {
       peer = await this.connection.connect();
       if (this.closed) {peer.close(); throw failure('service_unavailable');}
       const received = peer.binding.spaces;
+      const local=Array.isArray(received)?received.filter(space=>space.kind!=='legacy'):[];
       if (!peer.binding.capabilities?.includes('spaceSnapshot.v1') || !Array.isArray(received) ||
-          received.length !== this.spaces.length || received.some(space => !this.spaces.some(own => own.spaceId === space.spaceId)))
+          local.length !== this.localSpaces.length || local.some(space => !this.localSpaces.some(own => own.spaceId === space.spaceId)) ||
+          received.some(space=>space.kind==='legacy' && !/^legacy:[a-f0-9]{64}$/.test(space.spaceId)))
         throw failure('protocol_incompatible');
+      this.spaces=received;
       this.peer = peer;
       peer.on('event', (method, params) => {
         if(this.peer===peer && method==='chat.changed'){

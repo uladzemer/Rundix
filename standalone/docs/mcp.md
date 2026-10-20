@@ -36,6 +36,10 @@ The connection indicator is based on the existing CLI account/limit reads throug
 
 The panel displays up to 100 recent tasks, state, directory and report. **Open chat** opens the original Codex chat. **Send continuation** queues a follow-up in that chat; **Cancel task** uses the same task service as Claude's MCP call. Permission requests are reviewed in the chat or Claude, never automatically approved by the panel. Drafts survive background refresh, failed submission and text typed while a prior submission is pending. Recent tasks remain visible with the bridge stopped.
 
+## Access mode and chat titles
+
+Each task opens a visible Rundix chat titled `MCP · <first line of the description>`. Its access mode comes from the user setting **Rundix: Mcp Access Mode** (`rundix.mcpAccessMode`): `workspace` (default, asks for extended actions), `manual`, `auto` (Codex automatic review) or `full`. With `full`, Codex may change files and use the network outside the project without approval requests, so `pendingRequests` normally stays empty. The mode is applied once, when the task's chat is created; continuations keep whatever mode the chat has, including changes you make in the chat. The value is read only from your user settings: workspace settings of a repository cannot grant MCP access. Plan mode is not offered because MCP tasks run unattended.
+
 ## Tools
 
 Every mutation requires a caller-generated, globally unique `requestId` (for example a UUID). On timeout, resend **identical arguments with the same ID**. Reusing an ID with different arguments fails. JSON-RPC transport IDs are not task idempotency keys.

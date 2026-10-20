@@ -4,6 +4,7 @@ Install and update Rundix through [Microsoft Marketplace](https://marketplace.vi
 
 ## Unreleased
 
+- MCP: new user setting `rundix.mcpAccessMode` chooses the access mode of chats created by MCP tasks, including full access; workspace settings cannot change it. MCP task chats are titled `MCP · <task description>` instead of a generic name.
 - MCP: `wait_task` blocks until a task needs attention, and the launcher's `--wait` mode lets Claude wait in the background and be notified on completion, so clients no longer poll `get_task`. Tasks carry a `revision`.
 - MCP: Claude's configuration now points at a stable launcher copy in extension storage that survives Rundix updates; copy the configuration once more after updating from 0.2.2.
 - MCP: errors carry a code and the next step (for example how to start the bridge); `list_tasks` returns compact summaries with state/directory filters and a cursor; `effort` is honoured without `model`.

@@ -8,3 +8,4 @@ auth.json
 **/auth.json
 **/.wrangler/
 .DS_Store
+.claude/worktrees/

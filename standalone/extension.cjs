@@ -263,6 +263,8 @@ function activate(context) {
         catch{mcpLauncher=path.join(context.extensionUri.fsPath,'runtime','mcp-server.cjs');}
         mcpTasks=new McpTasks({store:new SessionStore(path.join(root,'tasks')),directoryStore:store,
           adapter:mcpExecutor({connections,sessions,store,create,send,resume,handle,pending:pendingRequests,save,alive:()=>!disposed && !!mcpBridge,
+            // Only the user's own settings count: a repository's workspace settings must not grant MCP full access.
+            accessMode:()=>vscode.workspace.getConfiguration('rundix').inspect('mcpAccessMode')?.globalValue || 'workspace',
             async sent(s,text){
               publish(s,true);
               await s.panel?.webview.postMessage({type:'sent',key:s.key,text});

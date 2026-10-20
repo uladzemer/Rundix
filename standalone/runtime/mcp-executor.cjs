@@ -16,14 +16,25 @@ function report(session, task) {
     remainingIssues:[...(session.error?[session.error]:[]),'Structured report unavailable; review the result and command evidence.',
       ...(session.cursor?['Transcript evidence is incomplete: older session items were not loaded; commands and file changes may be missing.']:[])],source:'transcript_evidence'};
 }
-function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,retainTurn=()=>{},sent=()=>{}}) {
+// MCP chats may start in these modes; plan mode needs an interactive discussion and is never used.
+const taskModes={manual:'read',workspace:'workspace',auto:'workspace',full:'full'};
+function taskTitle(description) {
+  const line=String(description || '').split(/\r?\n/).map(text=>text.trim()).find(Boolean) || '';
+  const short=line.length>60?line.slice(0,59).trimEnd()+'…':line;
+  return short?'MCP · '+short:'MCP task';
+}
+function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,accessMode=()=>'workspace',retainTurn=()=>{},sent=()=>{}}) {
   function session(task) {
     const existing=sessions.get(task.sessionKey);
     if(existing)return existing;
     const saved=store.session(task.sessionKey);
     if(task.chatId && saved?.id!==task.chatId)throw Error('Task chat metadata is unavailable.');
-    return create(saved || {key:task.sessionKey,cwd:task.projectDirectory,model:task.model,effort:task.effort,
-      prefs:{access:'workspace',ide:false,plan:false},name:'MCP task',customName:true});
+    if(saved)return create(saved);
+    // The mode is chosen once, when the chat is created; later changes in the chat itself are respected.
+    const mode=Object.hasOwn(taskModes,accessMode())?accessMode():'workspace';
+    task.accessMode=mode;
+    return create({key:task.sessionKey,cwd:task.projectDirectory,model:task.model,effort:task.effort,
+      prefs:{mode,access:taskModes[mode],ide:false,plan:false},name:taskTitle(task.description),customName:true});
   }
   const adapter={
     connection:()=>{const c=connections.selection();return {id:c.id,owner:c.owner,revision:c.revision};},
@@ -104,4 +115,4 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
   };
   return adapter;
 }
-module.exports={executor,reportSchema,report};
+module.exports={executor,reportSchema,report,taskTitle};

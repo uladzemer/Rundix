@@ -16,7 +16,7 @@ const {plainSettings}=require('./service-settings.cjs');
 function boundedLogger(root) {
   const directory = path.join(root, 'diagnostics'); fs.mkdirSync(directory, {recursive:true, mode:0o700});
   const file = index => path.join(directory, 'service-' + index + '.log');
-  const codes = new Set(['host_error', 'service_started', 'service_stopped', 'idle_exit_failed', 'provider_unavailable','archive_record_corrupt','archive_record_unavailable','archive_index_corrupt','archive_index_unavailable']);
+  const codes = new Set(['host_error', 'cli_stopped', 'service_started', 'service_stopped', 'idle_exit_failed', 'provider_unavailable','archive_record_corrupt','archive_record_unavailable','archive_index_corrupt','archive_index_unavailable']);
   return input => {
     const code = codes.has(input?.code) ? input.code : 'host_error';
     try {
@@ -44,7 +44,9 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     async update(key, value) { kv.write('value', createHash('sha256').update(key).digest('hex'), {value}); },
   };
   const provider = new ServiceProvider({...providerOptions, serviceGeneration:generation, logger});
-  let core, mcp, disposed = false;
+  let core, mcp, disposed = false, stopping = false;
+  const coreLogger = input => logger(stopping && input === 'CLI stopped. Reconnect the provider.'
+    ? {code:'cli_stopped'} : input);
   const runs = new Map();
   const noop = () => {};
   const taskForThread = threadId => {
@@ -124,7 +126,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       this.listeners = []; this.cli?.dispose(); this.cli = null;
     }
   }
-  core = createSessionCore({paths:{storage:root}, workspaceState, settings, logger, clock,
+  core = createSessionCore({paths:{storage:root}, workspaceState, settings, logger:coreLogger, clock,
     trusted:() => true, events:{changed:noop, sessionChanged:onSessionChanged, treeChanged:noop, notify:noop, completed:noop},
     hasChat:() => true, isActive:() => false, activeSession:() => null, openChat:noop, loadSelected:noop,
     defaultDirectory:() => root, editorSelection:() => null, activateConnectionOwner:noop,
@@ -187,7 +189,9 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       if (disposed) return;
       if (!force && (provider.busy || [...mcp.tasks.tasks.values()].some(task => !['completed', 'error', 'cancelled'].includes(task.state) || task.recoveryRequired)))
         throw Object.assign(Error('Service has unfinished tasks.'), {code:'service_busy'});
+      stopping = true;
       try{await provider.dispose('serviceShutdown',{force});}catch(error){if(!force)throw error;logger({code:'host_error'});}
+      finally{stopping = false;}
       disposed = true; core.state.disposed = true; core.state.server?.dispose(); mcp.dispose(); logger({code:'service_stopped'});
     },
   };

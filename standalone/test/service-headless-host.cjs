@@ -91,7 +91,18 @@ async function main() {
       fs.writeFileSync(path.join(root, 'diagnostics', 'service-0.log'), '0'.repeat(1024 * 1024)); log({code:'service_started'});
     }
     assert.equal(fs.readdirSync(path.join(root, 'diagnostics')).length, 3);
+    const shutdownLog = path.join(root, 'diagnostics', 'service-0.log');
+    fs.writeFileSync(shutdownLog, '');
+    host.core.state.server.emit('protocolError', 'CLI stopped. Reconnect the provider.');
+    const disposeProvider = host.provider.dispose.bind(host.provider);
+    host.provider.dispose = async (...args) => {
+      host.core.state.server.emit('protocolError', 'Synthetic shutdown protocol failure');
+      return disposeProvider(...args);
+    };
     await host.dispose(); host = null;
+    assert.deepEqual(fs.readFileSync(shutdownLog, 'utf8').trim().split('\n').map(line => JSON.parse(line).code),
+      ['host_error', 'host_error', 'cli_stopped', 'service_stopped'],
+      'Only the expected stop message during disposal gets cli_stopped; other errors remain host_error');
     const absentRoot = path.join(root, 'no-provider'); fs.mkdirSync(absentRoot);fs.writeFileSync(path.join(absentRoot,'settings.json'),'{}');
     const absent = await createHeadlessHost({root:absentRoot, generation:'synthetic-absent-provider',
       resolveCli:async () => process.execPath, providerOptions:{configPath:path.join(absentRoot, 'absent-provider.json')}});

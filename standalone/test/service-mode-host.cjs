@@ -4,7 +4,8 @@ exports.run = async () => {
   const report = {syntheticTransport:true, inferencePerformed:false}, launcher = require('../runtime/service-launcher.cjs');
   const original = launcher.installLauncherAsync; let installs = 0;
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-service-panel-synthetic-'));
-  const data=require('./service-fixture.cjs').fixture(root,{nodePath:'node'});let service,peer,api;
+  const data=require('./service-fixture.cjs').fixture(root,{nodePath:'node'});let service,peer,api,activationContext;
+  const entry=require('../extension.cjs'),activate=entry.activate;entry.activate=context=>{activationContext=context;return activate(context);};
   try {
     service=await require('../runtime/service-main.cjs').runService({root,hostOptions:data.hostOptions});
     await vscode.workspace.getConfiguration('rundix').update('mcpService', 'service', vscode.ConfigurationTarget.Global);
@@ -57,11 +58,18 @@ exports.run = async () => {
     await Promise.all([stale,stop,restart]);assert.equal(api.mcp.panelSnapshot().bridgeRunning,true,'Explicit restart outlives stale start');
     report.startStopStart=true;
     await api.mcp.stop(); assert.equal(api.mcp.panelSnapshot().bridgeRunning, false);
+    assert.equal(activationContext.globalState.get('mcpServiceStopped'),true);
+    for(const subscription of activationContext.subscriptions.splice(0).reverse())await subscription.dispose();
+    const beforeReload=installs;api=await activate(activationContext);
+    await api.mcp.panelAction({action:'ready'});await api.mcp.panelAction({action:'refresh'});
+    assert.equal(installs,beforeReload,'Reload and panel demand do not undo Stop MCP');assert.equal(api.mcp.panelSnapshot().bridgeRunning,false);
+    await api.mcp.start();assert.equal(activationContext.globalState.get('mcpServiceStopped'),false);assert.equal(api.mcp.panelSnapshot().bridgeRunning,true);
+    await api.mcp.stop();report.stopPersistsAcrossReload=true;
     report.globalOnly = true; report.noWindowExecutor = true; report.serviceConfiguration = true; report.passed = true;
   } catch (error) {report.error = 'synthetic_service_panel_check_failed';report.passed = false;}
   finally {
     await api?.mcp.stop();peer?.close();await service?.shutdown();await data.close();
-    launcher.installLauncherAsync = original;fs.writeFileSync(path.join(__dirname,'../.verification/service-mode-host.json'), JSON.stringify(report,null,2));
+    launcher.installLauncherAsync = original;entry.activate=activate;fs.writeFileSync(path.join(__dirname,'../.verification/service-mode-host.json'), JSON.stringify(report,null,2));
     assert.equal(path.dirname(root),os.tmpdir());assert(path.basename(root).startsWith('rundix-service-panel-synthetic-'));fs.rmSync(root,{recursive:true,force:true});
   }
 };

@@ -231,7 +231,7 @@ function activate(context) {
   const serviceMode=vscode.workspace.getConfiguration('rundix').inspect('mcpService')?.globalValue==='service';
   let serviceInstallation=null;
   let serviceClient=null, serviceStarting=null, serviceStartingEpoch=null, serviceSpaceId=null, serviceError=null, serviceDisposed=false, serviceEpoch=0;
-  let serviceWanted=serviceMode && context.globalState.get('mcpEnabled',false), serviceStopped=false;
+  let serviceWanted=serviceMode && context.globalState.get('mcpEnabled',false), serviceStopped=serviceMode && context.globalState.get('mcpServiceStopped',false);
   function closeServiceClient() {
     serviceEpoch++;
     const client=serviceClient;serviceClient=null;client?.close();serviceSpaceId=null;
@@ -408,7 +408,7 @@ function activate(context) {
       const key=serviceChatKey(state.spaceId,state.taskId);
       if(serviceChats.has(key)){panel.dispose();return;}
       const record=attachServiceChat(panel,state.spaceId,state.taskId);
-      try{await startMcp();await refreshServiceChat(record);}catch{await postServiceChat(record,null);}
+      try{if(serviceStopped){await postServiceChat(record,null);return;}await startMcp();await refreshServiceChat(record);}catch{await postServiceChat(record,null);}
     },
   }));
   const mcpPanelTimer=setInterval(()=>publishMcpPanel(),1000);
@@ -451,6 +451,8 @@ function activate(context) {
     serviceStartingEpoch=epoch;
     serviceStarting=(async()=>{
       if(serviceDisposed || !vscode.workspace.isTrusted)throw Error('Workspace trust is required.');
+      await context.globalState.update('mcpServiceStopped',false);
+      if(serviceEpoch!==epoch || !serviceWanted)throw Error('Window binding changed.');
       serviceInstallation ||= await require('./runtime/service-launcher.cjs').installLauncherAsync({legacyRoot:context.globalStorageUri.fsPath});
       if(serviceDisposed || serviceEpoch!==epoch)throw Error('Window binding changed.');
       await syncServiceSettings();
@@ -465,7 +467,7 @@ function activate(context) {
     if(!serviceMode)return mcpHost.stop();
     serviceWanted=false;
     serviceStopped=true;
-    closeServiceClient();serviceInstallation=null;await context.globalState.update('mcpEnabled',false);
+    closeServiceClient();serviceInstallation=null;await context.globalState.update('mcpServiceStopped',true);await context.globalState.update('mcpEnabled',false);
   }
   context.subscriptions.push(vscode.commands.registerCommand('rundix.mcpStart',async()=>{
     if(!serviceMode)await connectMcpPool();
@@ -475,7 +477,7 @@ function activate(context) {
     await vscode.window.showTextDocument(document);
     return descriptor;
   }),vscode.commands.registerCommand('rundix.mcpStop',stopMcp));
-  if(context.globalState.get('mcpEnabled',false))void startMcp().catch(()=>{});
+  if(context.globalState.get('mcpEnabled',false) && (!serviceMode || !serviceStopped))void startMcp().catch(()=>{});
   const virtualDocuments = new Map();
   context.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(

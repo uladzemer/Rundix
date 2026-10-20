@@ -24,7 +24,7 @@ The CLI syntax follows [Claude Code's stdio instructions](https://code.claude.co
 
 Do not commit generated configuration containing personal paths. The descriptor contains a random bridge capability, consumed only by the local Node process; never paste its contents into a chat. The bridge listens only on `127.0.0.1`, requires this capability, rejects browser origins and bounds request sizes/timeouts. Storage uses user-only directory permissions (Windows DACL: current user and SYSTEM; POSIX: 0700 directory, 0600 records). Other processes running as the same OS user are part of the trust boundary.
 
-Only one Extension Host per extension storage/profile owns the bridge. After opt-in, it starts again when Rundix activates (including VS Code startup). Start it in the intended trusted window. **Rundix: Stop MCP bridge** disables automatic startup; cancel active tasks and wait for confirmation first. No VS Code settings outside Rundix are changed.
+In default window mode, only one Extension Host per extension storage/profile owns the bridge. After opt-in, it starts again when Rundix activates (including VS Code startup). Start it in the intended trusted window. **Rundix: Stop MCP bridge** disables automatic startup; in window mode, cancel active tasks and wait for confirmation first. In experimental service mode, Stop MCP disconnects only this window and persists across reload; only an explicit Start MCP reconnects it. No VS Code settings outside Rundix are changed.
 
 The **MCP** button in the chat shows a green dot while this Extension Host's bridge is running. Opening it preserves the current chat draft and does not switch the connection or start the bridge. The editor tab and sidebar share the same task service. Existing command-palette commands remain available for compatibility, but the normal controls and configuration copy are all in the UI.
 
@@ -165,7 +165,9 @@ the same requestId explicitly after an uncertain response. Connected adapters
 keep the service alive; otherwise it exits after five idle minutes with no
 nonterminal tasks or uncertain turns. Hung-owner recovery is not implemented
 by this experimental switch. The Stop MCP command in the window
-only disables its configuration controls; it does not kill background tasks.
+disconnects its client and disables automatic reconnection, including after reload.
+Opening or refreshing the panel does not restart a stopped client; use Start MCP.
+Background tasks continue running.
 
 
 In service mode Start MCP and subsequent setting changes atomically copy only

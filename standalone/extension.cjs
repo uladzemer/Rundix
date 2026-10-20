@@ -1422,7 +1422,9 @@ function activate(context) {
           settings: {
             model: selection.model,
             reasoning_effort: selection.effort,
-            developer_instructions: (s.preflight?.enabled?preflight.instructions(s.preflight):'When a clarification would materially improve the task, ask a concise structured quiz using request_user_input or request_user_input_async when available. Put the recommended option first and mark its label (Recommended). Ask when the user requests a quiz. Do not ask about routine implementation details. A skipped quiz or empty answers are not consent or a selection; continue with reasonable assumptions where possible.') +
+            developer_instructions: (options.taskId || options.projectDirectory
+              ? 'The requester is an automated agent client; no human watches this task chat. Decide routine implementation details yourself. When a decision really requires the client, use the blocking request_user_input tool with concise options. Put the recommended option first and mark its label (Recommended). Never use request_user_input_async and never wait for a human in the chat. A skipped question or empty answers are not consent or a selection; continue with reasonable assumptions where possible.'
+              : s.preflight?.enabled?preflight.instructions(s.preflight):'When a clarification would materially improve the task, ask a concise structured quiz using request_user_input or request_user_input_async when available. Put the recommended option first and mark its label (Recommended). Ask when the user requests a quiz. Do not ask about routine implementation details. A skipped quiz or empty answers are not consent or a selection; continue with reasonable assumptions where possible.') +
               (s.prefs.focus?' Before using tools for a task, send a brief user-facing commentary explaining your next action. During longer work, send concise commentary at meaningful progress boundaries before the related tool steps. Use commentary messages for these updates, not tool output or private reasoning. Do not invent progress or delay direct answers that require no tools.':''),
           },
         },
@@ -1715,16 +1717,28 @@ function activate(context) {
       const item=s.items.find(item=>item.id===msg.itemId);
       if(!item || s.asyncQuestionReplies?.[item.id] || asyncQuestions.hasReply(s.items,item.id))throw Error('This question has already been answered or is unavailable.');
       const text=asyncQuestions.buildReply(item,msg.answers,{skip:msg.skip===true});
+      // In an MCP task chat, answer through the task so its directory lease, connection and report stay consistent.
+      const owner=typeof msg.sendReply!=='function' && mcpTasks?[...mcpTasks.tasks.values()].find(task=>task.sessionKey===s.key && mcpTasks.adapter.pending(task).some(request=>request.id==='async-question:'+item.id)):null;
+      if(owner){
+        await mcpTasks.call('continue_task',{requestId:randomUUID(),taskId:owner.taskId,approval:{id:'async-question:'+item.id,...(msg.skip===true?{skip:true}:{answers:msg.answers})}});
+        return;
+      }
       if(preflight.preparing(s.preflight))s.preflight.skipped=msg.skip===true;
       s.asyncQuestionSending=item.id;publish(s);
       try{
         let queued=false;
-        if(s.busy){
-          if(!await steer(s,text,[])){await queueFollowUp(s,text,[]);queued=true;}
-        }else{
-          const result=await send(s,text,[],{includeIde:false});
+        const sendReply=async()=>{
+          const result=await (typeof msg.sendReply==='function'?msg.sendReply(text):send(s,text,[],{includeIde:false}));
           if(result?.waitUntil)throw Error(locale.t('Очередь ожидает сброса лимитов. Повторите отправку позже.'));
-        }
+        };
+        if(s.busy){
+          if(!await steer(s,text,[])){
+            if(typeof msg.sendReply==='function'){
+              if(s.busy)throw Error('The turn is finishing. Retry the question answer after its status updates.');
+              await sendReply();
+            }else{await queueFollowUp(s,text,[]);queued=true;}
+          }
+        }else await sendReply();
         s.asyncQuestionReplies={...s.asyncQuestionReplies,[item.id]:queued?'queued':msg.skip===true?'skipped':'sent'};
         questionRecords.remember(s,{id:'a:'+item.id,origin:'async',parentItemId:item.id,questions:questionRecords.fromAsync(item),answers:msg.answers,skipped:msg.skip===true,status:queued?'queued':'sent'});
         await save(s);

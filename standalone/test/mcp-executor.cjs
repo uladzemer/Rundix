@@ -31,6 +31,9 @@ async function hostSendChecks(project,store) {
  assert.equal(turns[0].collaborationMode.settings.reasoning_effort,'high');assert.equal(turns[0].serviceTierForTurn,'fast');
  await send(s,'Synthetic defaults',[],{includeIde:false});
  assert.equal(turns[1].effort,'low');assert.equal(turns[1].model,'synthetic-default');
+ const ordinaryInstructions=turns[1].collaborationMode.settings.developer_instructions;
+ assert.match(ordinaryInstructions,/ask a concise structured quiz using request_user_input or request_user_input_async/);
+ assert.doesNotMatch(ordinaryInstructions,/automated agent client/);
  await send(s,'Synthetic explicit model',[],{modelSelection:{model:'synthetic-other',effort:'medium',fast:false},includeIde:false});
  assert.equal(turns[2].model,'synthetic-other');assert.equal(turns[2].effort,'medium');assert.equal(turns[2].serviceTierForTurn,'default');
 
@@ -41,8 +44,21 @@ async function hostSendChecks(project,store) {
   create(){throw Error('Unexpected creation');},pending:new Map(),save:noop,alive:()=>true});
  await assert.rejects(()=>adapter.start(task,'Synthetic checkpoint failure',()=>{if(task.turnId)throw Error('Synthetic persistence failure');}),/Synthetic persistence failure/);
  assert.equal(task.turnId,'synthetic-host-turn-4');assert.equal(s.busy,true,'Post-send checkpoint failure must preserve the active host turn');
+ const agentInstructions=turns[3].collaborationMode.settings.developer_instructions;
+ assert.match(agentInstructions,/requester is an automated agent client/);
+ assert.match(agentInstructions,/Decide routine implementation details yourself/);
+ assert.match(agentInstructions,/blocking request_user_input tool with concise options/);
+ assert.match(agentInstructions,/recommended option first/);
+ assert.match(agentInstructions,/Never use request_user_input_async and never wait for a human/);
  assert.throws(()=>acquire(store,project), 'Accepted turn retains its directory lease after checkpoint failure');
  turnLeases.get(s.id)();turnLeases.delete(s.id);
+ s.busy=false;complete=true;
+ await send(s,'Synthetic directory-only routing',[],{projectDirectory:project,includeIde:false});
+ assert.equal(turns.at(-1).collaborationMode.settings.developer_instructions,agentInstructions);
+ await send(s,'Synthetic task-only routing',[],{taskId:task.taskId,includeIde:false});
+ assert.equal(turns.at(-1).collaborationMode.settings.developer_instructions,agentInstructions);
+ await send(s,'Synthetic ordinary chat after MCP',[],{includeIde:false});
+ assert.equal(turns.at(-1).collaborationMode.settings.developer_instructions,ordinaryInstructions);
 }
 (async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-mcp-executor-synthetic-'));

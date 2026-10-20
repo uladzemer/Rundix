@@ -203,7 +203,8 @@ class McpTasks {
   // Blocked tasks are re-probed at most once a second, even while other tasks keep the scheduler busy.
   block(task, reason) { task.blockedUntil=Date.now()+1000; this.update(task, ()=>{ task.progress=reason; }); return 'blocked'; }
   async prepare(task) {
-    if (task.blockedUntil > Date.now()) return 'blocked';
+    // A throttled task whose recovered turn is still live keeps occupying its slot.
+    if (task.blockedUntil > Date.now()) return task.liveRecovery ? 'stopped' : 'blocked';
     try { this.adapter.assertConnection(task); }
     catch { return this.block(task, 'Waiting for the selected companion connection; inspect the Rundix MCP panel'); }
     // Recovery only observes the old chat; it never resubmits its old input.
@@ -213,10 +214,10 @@ class McpTasks {
       if (this.closed) return 'stopped';
       if (!status.done) {
         if (task.cancelRequested) { task.state='running'; task.progress='Cancellation requested'; this.save(task); return 'stopped'; }
-        // A live recovered turn still occupies the serial executor: start nothing else.
-        this.block(task, 'Waiting for the previous turn of this chat to finish'); return 'stopped';
+        // A live recovered turn still occupies a slot, even before it is observed again.
+        task.liveRecovery=true; this.block(task, 'Waiting for the previous turn of this chat to finish'); return 'stopped';
       }
-      task.recoveryRequired=false;
+      task.recoveryRequired=false; task.liveRecovery=false;
     }
     if (task.cancelRequested) {
       task.state='cancelled'; task.progress='Cancellation confirmed';
@@ -250,19 +251,21 @@ class McpTasks {
         }
       }
       // Up to maxParallel turns run at once; directory leases keep one turn per project/worktree.
-      let capacity = this.limit() - [...this.tasks.values()].filter(t=>['running','waiting_approval'].includes(t.state)).length;
+      // Queued tasks whose recovered turn is known to be live are counted up front, so the limit holds before they are reached.
+      const counted = new Set([...this.tasks.values()].filter(t=>t.state==='queued' && t.liveRecovery).map(t=>t.taskId));
+      let capacity = this.limit() - [...this.tasks.values()].filter(t=>['running','waiting_approval'].includes(t.state)).length - counted.size;
       // A blocked task must not stall tasks for other directories; order within one directory is preserved.
       const blocked = new Set();
       for (const task of [...this.tasks.values()].filter(t=>t.state==='queued').sort((a,b)=>a.createdAt-b.createdAt)) {
-        if (capacity <= 0) break;
+        if (capacity <= 0 && !counted.has(task.taskId)) continue;
         if (blocked.has(task.projectDirectory)) continue;
         const outcome = await this.prepare(task);
         // start() releases the fresh reservation itself if the executor closed meanwhile.
         // Starting can wait for a quota reset; it runs alongside the scheduler so other tasks keep being observed.
-        if (outcome === 'ready') { capacity--; this.launch(task); continue; }
+        if (outcome === 'ready') { if (!counted.has(task.taskId)) capacity--; this.launch(task); continue; }
         if (this.closed) return;
         // A live recovered turn or a pending cancellation still occupies a slot.
-        if (outcome === 'stopped') { capacity--; blocked.add(task.projectDirectory); continue; }
+        if (outcome === 'stopped') { if (!counted.has(task.taskId)) capacity--; blocked.add(task.projectDirectory); continue; }
         if (outcome === 'blocked') { blocked.add(task.projectDirectory); continue; }
       }
     } finally {
@@ -288,7 +291,7 @@ class McpTasks {
       delete task.nextInput;
       task.chatId=this.adapter.chatId(task); this.save(task);
     } catch (error) {
-      if(task.cancelRequested && task.awaitingPreparation){
+      if(task.cancelRequested && (task.awaitingPreparation || error?.retryable)){
         task.state='cancelled';task.recoveryRequired=false;task.progress='Cancelled before model execution';
         directories.release(this.directoryStore,task.projectDirectory,task.taskId);this.save(task);return;
       }

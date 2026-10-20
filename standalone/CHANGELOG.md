@@ -4,6 +4,7 @@ Install and update Rundix through [Microsoft Marketplace](https://marketplace.vi
 
 ## Unreleased
 
+- MCP: task turns address Codex as an automated agent client, so its questions go to Claude as blocking requests; asynchronous chat quizzes in MCP task chats are surfaced as `rundix/asyncQuestion` pending requests and answered through `continue_task`.
 - MCP: tasks for different projects or worktrees run in parallel, up to `rundix.mcpMaxParallelTasks` (default 3); `wait_tasks` and `--wait <id1>,<id2>` wake the client on the first task that needs attention. The shared Codex app-server no longer pins a task's worktree folder on Windows.
 - MCP: new user setting `rundix.mcpAccessMode` chooses the access mode of chats created by MCP tasks, including full access; workspace settings cannot change it. MCP task chats are titled `MCP · <task description>` instead of a generic name.
 - MCP: `wait_task` blocks until a task needs attention, and the launcher's `--wait` mode lets Claude wait in the background and be notified on completion, so clients no longer poll `get_task`. Tasks carry a `revision`.

@@ -47,7 +47,7 @@ Every mutation requires a caller-generated, globally unique `requestId` (for exa
 | Tool | Arguments | Result |
 | --- | --- | --- |
 | `submit_task` | `requestId`, `description`, absolute `projectDirectory`, `acceptanceCriteria`; optional `model`, `effort` | A persisted `taskId` and initial snapshot, before model execution |
-| `get_task` | `taskId`; optional `brief` (boolean, default false) | State, progress, `chatId`, canonical directory, timestamps, `revision`, `accessMode` of the task chat, pending requests, report (or compact `reportSummary` with `brief:true`), recovery flag |
+| `get_task` | `taskId`; optional `brief` (boolean, default false) | State, progress, `chatId`, canonical directory, timestamps, `revision`, `accessMode` the task chat was created with (later changes made in the chat are not reflected), pending requests, report (or compact `reportSummary` with `brief:true`), recovery flag |
 | `wait_task` | `taskId`; optional `waitSeconds` (1–1500, default 600), `afterRevision`, `brief` (boolean, default false) | Blocks until the task is settled (`completed`, `error`, `cancelled`, `waiting_approval`) or the time elapses; the `get_task` snapshot plus `timedOut` |
 | `wait_tasks` | `taskIds` (1–50); optional `waitSeconds`, `brief` | Blocks until any listed task is settled; `{settled, waiting, timedOut}` |
 | `continue_task` | `requestId`, `taskId`, `clarification` (queued during an active turn); or `approval` for a pending request | Same task and same chat; a queued/new turn or approval response |
@@ -79,6 +79,8 @@ States: `queued`, `running`, `waiting_approval`, `completed`, `error`, `cancelle
 ```json
 {"requestId":"synthetic-approval-1","taskId":"<taskId>","approval":{"id":"<pending-id>","decision":"accept"}}
 ```
+
+MCP task turns tell Codex that the requester is an automated agent client: Codex decides routine details itself and, when it really needs a decision, asks with a blocking `item/tool/requestUserInput` request. If it still posts an asynchronous quiz in the chat, the task stays `waiting_approval` and the quiz appears in `pendingRequests` as method `rundix/asyncQuestion` with ID `async-question:<itemId>` and `params.questions` (`id`, `title`, `options`). Answer it like a blocking question, with `approval.answers` keyed by question `id`, or `skip:true`; the reply reaches Codex in the same chat and the task continues.
 
 Use `decline` or `cancel` to refuse. Blocking questions use `approval.answers` mapping question IDs to strings, or `skip:true`. Form elicitation uses `decision` and `content`. The extension's existing answer handler validates forms, available decisions and permissions. Session-wide approval is not exposed by this MCP. Approvals may also be answered in the Rundix chat. MCP never accepts them automatically.
 

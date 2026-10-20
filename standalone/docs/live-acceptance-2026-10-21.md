@@ -134,3 +134,84 @@ Code processes remained. The command-start marker still counted exactly one
 after shutdown, several minutes after the crash; no silent re-execution was
 observed. `git diff --check` passed. Fix, acceptance log and screenshot were
 committed locally with the requested co-author trailer; no push/publication.
+
+## N8: cold readiness and readable service reports
+
+Fix commit: `62a78b5`, based on `c19b879`. New temporary synthetic repositories
+A/B and a new isolated Code profile were used; the private provider was unchanged.
+
+**Reliability.** Three instrumented live cold starts before the fix (including
+one pair of racing submits) all completed: the historical N7 refusal did not
+recur. A controlled synthetic CLI then reproduced a public-runtime bootstrap
+race: login emits `account/updated`, background account/catalog reads begin
+before authentication changes the account revision and idle/account lease,
+and the cold connection joins the stale in-flight catalog request. The new
+regression failed with a terminal task error before the fix and passed after it.
+This establishes that race, not the exact cause of the earlier N7 refusal.
+
+Provider bootstrap now defers notification-triggered account refresh while
+the connection is starting. The awaited bootstrap performs its authoritative
+account/catalog reads after authentication. Existing bounded RPC budgets remain
+(hello 5 s, CLI initialize 30 s, authentication 70 s, metadata reads 30 s).
+Known temporary provider/CLI bootstrap failures, proven before model dispatch,
+leave the task queued for another bounded attempt instead of becoming a terminal
+refusal. Real auth/config/store refusals remain closed. Model sends and uncertain
+delivery are never replayed by this retry path; fence checks remain intact.
+Diagnostics record only fixed readiness/admission/read-failure codes and times.
+
+| Post-fix cold start | Submits | Result | Duration |
+| --- | --- | --- | --- |
+| 1 | A immediately | completed, report returned | 12 s |
+| 2 | A/B racing | both completed, reports returned | 20 s |
+| 3 | A immediately | completed, report returned | 11 s |
+| 4 | A/B racing | both completed, reports returned | 14 s |
+| 5 | A immediately | completed, report returned | 11 s |
+
+Five distinct demand-started service instances, seven tasks, **zero refusals**.
+Each instance was stopped only after its tasks were terminal and closed, with
+the PID verified as the installed service-main under the real service root.
+The isolated-window check subsequently demand-started another instance.
+Across these six instances, fixed diagnostics recorded six deferred bootstrap
+refreshes, 14 successful authentication calls and eight ready admissions
+(including the window task), with no auth/admission/read-failure codes.
+
+**UX.** The existing window report formatter was extracted into shared
+`ui/task-report.js`. Service agent reports render the result as safe Markdown
+and changed files/checks/remaining issues as localized lists. Stored transcripts
+and MCP responses retain their JSON. Ordinary text, partial reports and user
+JSON retain their presentation. Code copying uses the displayed Markdown.
+
+`npm.cmd run test:browser` passed. All eight RU/EN × light/dark × 320/900 px
+service-chat screenshots were visually inspected; long filenames wrap, lists
+remain readable, and horizontal overflow checks pass. Tests also cover HTML
+injection safety, code copying, locale refresh and preserved composer drafts.
+The installed VSIX's isolated service chat passed renderer checks for Markdown
+emphasis, lists, absence of raw report JSON and an empty composer; its service
+API snapshot still contained the original structured report. Host check: 3 s.
+
+![Isolated N8 service report rendered as Markdown and lists](assets/live-acceptance-n8-window.png)
+
+**Validation.** `npm.cmd test`: 55 suites, 63 real-root guard PASS messages,
+124 s. The cold regression covers single/racing first submissions, a temporary
+bootstrap failure remaining queued, and genuine access refusals. Full browser
+suite passed. Fresh package/actual ZIP audit passed (139 entries); identity,
+README, icons, shared formatter and affected runtime/UI bytes were verified.
+Read-only review identified the new readiness module's missing VSIX allowlist
+entry; it was added to both the allowlist and ZIP audit. Focused second review
+reported zero remaining confirmed findings. Review used synthetic/static work;
+live results above are author-executed evidence.
+
+All 12 tasks from baseline, post-fix and window checks were closed. PATH Node
+registration was restored; service settings remain full access, parallelism 3,
+managed Codex 0.163.0. Auth size/mtime matched after all live calls. The screenshot
+contains only the isolated renderer and synthetic data. Owner Code windows,
+their bridge, settings and Claude configuration were not modified.
+
+The last instance exited through the unchanged idle policy with `cli_stopped`
+then `service_stopped`, no `host_error`. Discovery was removed and no service-main
+or isolated-profile Code processes remained. The production root, PATH Node
+shim and requested settings were retained. Process ancestry had confirmed one
+service-owned Codex with the ephemeral flag. Auth size/mtime still matched after
+shutdown. Final read-only document/image review reported zero confirmed findings;
+`git diff --check` passed. Changes and screenshot were committed locally with the
+requested co-author trailer; no push or publication was performed.

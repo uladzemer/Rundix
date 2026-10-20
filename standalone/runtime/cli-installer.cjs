@@ -226,7 +226,8 @@ async function install({
       path.dirname(stage) === rootPath &&
       path.basename(stage) === ".install-" + nonce
     )
-      fs.rmSync(stage, { recursive: true, force: true });
+      // Cleanup is best effort: a locked file in the old broken copy must not mask a successful install.
+      try { fs.rmSync(stage, { recursive: true, force: true }); } catch {}
     try {
       if (JSON.parse(fs.readFileSync(lock, "utf8")).nonce === nonce)
         fs.unlinkSync(lock);

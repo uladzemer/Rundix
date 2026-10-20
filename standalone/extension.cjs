@@ -1354,7 +1354,7 @@ function activate(context) {
   async function send(s, text, attached=s.attachments, options={}) {
     // retryable marks failures that happen before anything is sent and clear up by themselves; MCP tasks wait and retry.
     if (authBusy) throw Object.assign(Error(locale.t('Дождитесь переключения аккаунта.')),{retryable:true});
-    if(s.sendingTask)throw Error(locale.t('Дождитесь обработки уточнений перед согласованием.'));
+    if(s.sendingTask)throw Object.assign(Error(locale.t('Дождитесь обработки уточнений перед согласованием.')),{notSent:true,retryable:true});
     let accountLease;
     try{accountLease = store.acquire('account-credentials');}catch(error){throw Object.assign(error,{retryable:true});}
     let directoryLease=null, leasedDirectory=null;

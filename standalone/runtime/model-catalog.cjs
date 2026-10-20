@@ -13,7 +13,7 @@ async function readCatalog(client) {
     models.push(...result.data);
     cursor = result.nextCursor;
     pages++;
-    if (cursor && (!result.data.length || pages >= 50 || typeof cursor !== 'string' || seen.has(cursor) || models.length > 5000))
+    if (cursor && (pages >= 50 || typeof cursor !== 'string' || seen.has(cursor) || models.length > 5000))
       throw Error("Invalid model catalog pagination");
     if (cursor) seen.add(cursor);
   } while (cursor);

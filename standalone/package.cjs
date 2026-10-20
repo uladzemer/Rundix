@@ -1,7 +1,7 @@
 const {spawnSync}=require('node:child_process');
 const {version}=require('./package.json');
 if(!/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version))throw Error('Invalid package version');
-const result=spawnSync('npx',['--yes','@vscode/vsce','package','--allow-missing-repository',
+const result=spawnSync('npx',['--yes','@vscode/vsce@4.0.0','package','--allow-missing-repository',
   '--out',`rundix-${version}.vsix`,...process.argv.slice(2)],{
   cwd:__dirname,stdio:'inherit',shell:process.platform==='win32',
 });

@@ -1,10 +1,12 @@
 const locale=require('../ui/i18n.js');
 // Shared by extension hosts on this machine. Each session has its own atomic record.
 const fs=require('node:fs'),path=require('node:path');const {randomUUID}=require('node:crypto');
-const unreadableGraceMs=60000,recordLockTimeoutMs=2000;
+const unreadableGraceMs=60000,recordLockTimeoutMs=2000,recordLockMaxAgeMs=10000;
 const pause=new Int32Array(new SharedArrayBuffer(4));
 function lockValue(target){try{return JSON.parse(fs.readFileSync(target,'utf8'));}catch(error){if(error.code==='ENOENT'||error instanceof SyntaxError)return null;throw error;}}
-function staleLock(target){
+function staleLock(target,maxAgeMs){
+ // Record locks live for milliseconds, so an old one is stale even if its pid was reused or its owner hung.
+ if(maxAgeMs){try{if(Date.now()-fs.statSync(target).mtimeMs>maxAgeMs)return true;}catch(error){if(error.code==='ENOENT')return false;throw error;}}
  const owner=lockValue(target);
  if(Number.isSafeInteger(owner?.pid)&&owner.pid>0){try{process.kill(owner.pid,0);return false;}catch(error){return error.code==='ESRCH';}}
  try{return Date.now()-fs.statSync(target).mtimeMs>unreadableGraceMs;}catch(error){if(error.code==='ENOENT')return false;throw error;}
@@ -33,27 +35,42 @@ function removeGuardOwner(target,owner){
  if(owner)try{fs.unlinkSync(path.join(target,owner));}catch(error){if(error.code!=='ENOENT')throw error;}
  try{fs.rmdirSync(target);}catch(error){if(!['ENOENT','ENOTEMPTY','EEXIST'].includes(error.code))throw error;}
 }
-function tryLock(target){
- const nonce=randomUUID(),temp=target+'.'+nonce+'.tmp';
+// Best-effort file removal: antivirus or indexers can briefly hold handles on Windows; that must
+// neither mask a lock that was acquired nor leave the caller without its release function.
+function removeQuietly(file){try{fs.unlinkSync(file);}catch{}}
+function publish(temp,target,content){
+ try{fs.linkSync(temp,target);return true;}
+ catch(error){
+  if(error.code==='EEXIST')return false;
+  // Volumes without hard links (FAT/exFAT, some network shares): exclusive create still works;
+  // a reader seeing a partially written file treats it as live until the grace period.
+  if(['EPERM','ENOSYS','ENOTSUP','EXDEV','EINVAL','UNKNOWN','EACCES'].includes(error.code)){
+   try{fs.writeFileSync(target,content,{flag:'wx',mode:0o600});return true;}
+   catch(fallback){if(['EEXIST','EPERM','EACCES','EBUSY'].includes(fallback.code))return false;throw fallback;}
+  }
+  throw error;
+ }
+}
+function tryLock(target,maxAgeMs){
+ const nonce=randomUUID(),temp=target+'.'+nonce+'.tmp',content=JSON.stringify({pid:process.pid,nonce});
  try{
   // Linking a fully written file publishes the owner atomically without replacing a winner.
-  fs.writeFileSync(temp,JSON.stringify({pid:process.pid,nonce}),{flag:'wx',mode:0o600});
+  fs.writeFileSync(temp,content,{flag:'wx',mode:0o600});
   for(let attempt=0;attempt<2;attempt++){
-   try{fs.linkSync(temp,target);return ()=>{if(lockValue(target)?.nonce===nonce)try{fs.unlinkSync(target);}catch(error){if(error.code!=='ENOENT')throw error;}};}
-   catch(error){if(error.code!=='EEXIST')throw error;}
+   if(publish(temp,target,content))return ()=>{if(lockValue(target)?.nonce===nonce)removeQuietly(target);};
    // Serialize stale removal and re-read under the guard: another reaper may
    // already have replaced the dead lease with a live owner.
-   if(!staleLock(target)&&fs.existsSync(target))return null;
+   if(!staleLock(target,maxAgeMs)&&fs.existsSync(target))return null;
    const releaseGuard=reapGuard(target+'.reap');if(!releaseGuard)return null;
-   try{if(!staleLock(target)&&fs.existsSync(target))return null;try{fs.unlinkSync(target);}catch(error){if(error.code!=='ENOENT')throw error;}}
-   finally{releaseGuard();}
+   try{if(!staleLock(target,maxAgeMs)&&fs.existsSync(target))return null;removeQuietly(target);}
+   finally{try{releaseGuard();}catch{}}
   }
   return null;
- }finally{try{fs.unlinkSync(temp);}catch(error){if(error.code!=='ENOENT')throw error;}}
+ }finally{removeQuietly(temp);}
 }
 function withRecordLock(target,operation){
  const deadline=Date.now()+recordLockTimeoutMs;
- for(;;){const release=tryLock(target);if(release){try{return operation();}finally{release();}}if(Date.now()>=deadline)throw Error('Local record is busy; retry saving.');Atomics.wait(pause,0,0,10);}
+ for(;;){const release=tryLock(target,recordLockMaxAgeMs);if(release){try{return operation();}finally{release();}}if(Date.now()>=deadline)throw Error('Local record is busy; retry saving.');Atomics.wait(pause,0,0,10);}
 }
 class SessionStore {
  constructor(directory){this.directory=directory;fs.mkdirSync(directory,{recursive:true,mode:0o700});}

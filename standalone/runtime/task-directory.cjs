@@ -3,10 +3,17 @@ const path = require('node:path');
 const {createHash} = require('node:crypto');
 
 function canonical(directory) {
-  if (typeof directory !== 'string' || !path.isAbsolute(directory)) throw Error('projectDirectory must be absolute.');
+  if (typeof directory !== 'string' || directory.includes('\0') || !path.isAbsolute(directory)) throw Error('projectDirectory must be absolute.');
+  if (process.platform === 'win32' && (/^\\\\\.\\/.test(directory) || /^\\\\\?\\globalroot(?:\\|$)/i.test(directory)))
+    throw Error('Device directories are unsupported.');
   const real = fs.realpathSync.native(directory);
   if (!fs.statSync(real).isDirectory()) throw Error('Project directory is unavailable.');
-  return process.platform === 'win32' ? real.toLowerCase() : real;
+  if (process.platform !== 'win32') return path.normalize(real);
+  // DOS/UNC extended prefixes name the same directory and must hash identically.
+  const plain = real.replace(/^\\\\\?\\UNC\\/i, '\\\\').replace(/^\\\\\?\\(?=[a-z]:\\)/i, '');
+  const normalized = path.win32.normalize(plain);
+  const root = path.win32.parse(normalized).root;
+  return (normalized.length > root.length ? normalized.replace(/\\+$/, '') : normalized).toLowerCase();
 }
 function key(directory) {
   const real = canonical(directory);

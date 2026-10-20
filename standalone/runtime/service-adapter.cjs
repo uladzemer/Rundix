@@ -54,7 +54,7 @@ function createServiceClient(options = {}) {
   }
   async function call(_descriptor, name, args) {
     args ||= {};
-    if (['wait_task','wait_tasks'].includes(name) && args.waitSeconds !== undefined &&
+    if (['wait_task','wait_tasks'].includes(name) && args.waitSeconds != null &&
         (!Number.isInteger(args.waitSeconds) || args.waitSeconds < 1 || args.waitSeconds > 1500))
       throw Object.assign(Error('Invalid waitSeconds'), {code:'invalid_argument'});
     const current = await connect();

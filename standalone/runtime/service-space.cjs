@@ -83,7 +83,12 @@ function gitRoot(worktree, gitMarker) {
       if ((process.platform === 'win32' ? target.toLowerCase() : target) !==
           (process.platform === 'win32' ? expected.toLowerCase() : expected)) throw failure('space_git_invalid');
     }
-    gitdir = directory(path.resolve(gitdir, line(commonFile)));
+    const commonDirectory = directory(path.resolve(gitdir, line(commonFile)));
+    if (!linked) {
+      let expectedParent;try {expectedParent=directory(path.join(commonDirectory,'worktrees'));}catch{throw failure('space_git_invalid');}
+      if(directory(path.dirname(gitdir))!==expectedParent)throw failure('space_git_invalid');
+    }
+    gitdir = commonDirectory;
     if (seen.has(gitdir)) throw failure('space_git_invalid');
     seen.add(gitdir); linked = true;
   }

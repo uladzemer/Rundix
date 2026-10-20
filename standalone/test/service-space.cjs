@@ -32,6 +32,8 @@ try {
   assert.notEqual(a.spaceId, b.spaceId);
   const spoof = mkdir('spoof'); fs.writeFileSync(path.join(spoof, '.git'), 'gitdir: ' + path.join(common, 'worktrees/synthetic'));
   assert.throws(() => resolveSpace(spoof), {code:'space_git_invalid'});
+  const forged=linked('forged',mkdir('forged/fake'),common);
+  assert.throws(()=>resolveSpace(forged),{code:'space_git_invalid'},'A valid back-pointer in attacker metadata cannot join another space');
   const back = path.join(common, 'worktrees/external/gitdir');fs.unlinkSync(back);
   assert.throws(() => resolveSpace(external), {code:'space_git_invalid'});
   fs.writeFileSync(back, path.join(external,'.git'));
@@ -65,7 +67,7 @@ try {
     assert.throws(() => resolveSpace(invalidRepo), {code:'space_git_invalid'});
   }
   const target = mkdir('unusual-metadata'), unusual = linked('unusual', mkdir('unusual-entry'), target);
-  assert.throws(() => resolveSpace(unusual), {code:'space_git_layout_unsupported'});
+  assert.throws(() => resolveSpace(unusual), {code:'space_git_invalid'});
   fs.writeFileSync(path.join(target, 'commondir'), '.\n');
   assert.throws(() => resolveSpace(unusual), {code:'space_git_invalid'});
   const entry = mkdir('cycle-a'), cycleB = mkdir('cycle-b');

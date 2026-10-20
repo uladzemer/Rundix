@@ -8,7 +8,9 @@ async function main(){
  const create=()=>{const value=new McpTasks({store,adapter,scope:()=>space,maxStoredPerSpace:2,keepClosed:0});value.schedule=()=>{};return value;};
  const args=id=>({requestId:id,description:'Synthetic archived task',acceptanceCriteria:'Synthetic check',projectDirectory:root});
  try{
-  tasks=create();const a=tasks.call('submit_task',args('synthetic-a1'));tasks.call('submit_task',args('synthetic-a2'));
+  tasks=create();
+  if(process.platform==='win32')for(const projectDirectory of ['\\\\.\\C:\\','\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\'])assert.throws(()=>tasks.call('submit_task',{...args('synthetic-device'),projectDirectory}),{code:'invalid_directory'});
+  const a=tasks.call('submit_task',args('synthetic-a1'));tasks.call('submit_task',args('synthetic-a2'));
   assert.throws(()=>tasks.call('submit_task',args('synthetic-a3')),{code:'limit'});
   space='synthetic-b';const b=tasks.call('submit_task',args('synthetic-a1'));assert.notEqual(a.taskId,b.taskId,'Another space has independent storage capacity');
   space='synthetic-a';const record=tasks.get(a.taskId);record.state='completed';record.recoveryRequired=false;tasks.save(record);

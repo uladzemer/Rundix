@@ -10,6 +10,9 @@ async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rundix-adapter-synthetic-'));
   let endpoint; const clients = [];
   try {
+    const platformKeys=['ProgramFiles','ProgramFiles(x86)','ProgramW6432','ProgramData','SystemDrive','USERNAME','USERDOMAIN','HOMEDRIVE','HOMEPATH','PSModulePath','ALLUSERSPROFILE','PUBLIC','NUMBER_OF_PROCESSORS','PROCESSOR_ARCHITECTURE','OS','TMPDIR','SHELL','USER','LOGNAME','XDG_CONFIG_HOME','SSL_CERT_FILE','SSL_CERT_DIR','ALL_PROXY'];
+    const system=Object.fromEntries(platformKeys.map(key=>[key,'synthetic']));
+    for(const key of platformKeys)assert.equal(serviceEnvironment(system)[key],'synthetic');
     const clean=serviceEnvironment({PATH:'synthetic-path',CODEX_HOME:'synthetic-home',LC_ALL:'C',HTTPS_PROXY:'synthetic-proxy',GITHUB_TOKEN:'SYNTHETIC',AWS_PROFILE:'synthetic',DATABASE_URL:'synthetic',NODE_OPTIONS:'synthetic',CLAUDE_PROJECT_DIR:'synthetic'});
     assert.deepEqual(clean,{PATH:'synthetic-path',CODEX_HOME:'synthetic-home',LC_ALL:'C',HTTPS_PROXY:'synthetic-proxy',ELECTRON_RUN_AS_NODE:'1'});
     for (const platform of ['win32','darwin']) {
@@ -37,7 +40,8 @@ async function main() {
     assert(!schemas.some(t => t.name === 'reload_window'));
     assert(schemas.find(t => t.name === 'list_tasks').inputSchema.properties.state.enum.includes('waiting_limit'));
     const ar = await a.call(null, 'list_tasks', {}), br = await b.call(null, 'list_tasks', {});
-    for(const waitSeconds of ['30',0,-1,1501,{},null])await assert.rejects(a.call(null,'wait_task',{taskId:'synthetic',waitSeconds}),{code:'invalid_argument'});
+    assert.equal((await a.call(null,'wait_tasks',{taskIds:['synthetic'],waitSeconds:null})).space,ar.space,'Null uses the default wait budget');
+    for(const waitSeconds of ['30',0,-1,1501,{}])await assert.rejects(a.call(null,'wait_task',{taskId:'synthetic',waitSeconds}),{code:'invalid_argument'});
     assert.equal((await a.call(null,'list_tasks',{})).space,ar.space,'Malformed waits retain the shared connection');
     assert.equal(ar.space, a.space); assert.equal(br.space, b.space); assert.notEqual(ar.space, br.space);
     assert.throws(() => createServiceClient({root, cwd, env:{CLAUDE_PROJECT_DIR:path.join(root, 'absent')}}));

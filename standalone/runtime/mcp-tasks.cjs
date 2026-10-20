@@ -230,7 +230,7 @@ class McpTasks {
       if (args.effort !== undefined) string(args.effort, 'effort', 40);
       this.ensureStorage(this.scope?.());
       let projectDirectory;
-      try { projectDirectory = directories.canonical(args.projectDirectory); }
+      try { projectDirectory = this.scope ? require('./service-space.cjs').canonical(args.projectDirectory) : directories.canonical(args.projectDirectory); }
       catch { throw fail('invalid_directory', 'projectDirectory must be an existing absolute directory.'); }
       const persist=connection=>{
       if(this.closed)throw fail('bridge_stopped','MCP executor is closed.');

@@ -14,6 +14,8 @@ function snapshot({records,language,connection,connected,bridgeRunning,pending})
     taskId:task.taskId,title:(task.description || task.taskId).slice(0,160),state:task.state,
     chatId:task.chatId || null,projectDirectory:task.projectDirectory,progress:task.progress,
     report:task.report || null,error:task.error || null,recoveryRequired:recoveryRequired(task),
+    unsentInputCount:task.unsentInputs?.length || 0,
+    unsentInputs:(task.unsentInputs || []).slice(-3).map(row=>({id:row.id,text:row.text.slice(0,2000),truncated:row.text.length>2000})),
     pendingRequests:pending(task).map(request=>({id:request.id,method:request.method})),
   }));
   return {language,connection,connected,bridgeRunning,tasks};

@@ -6,6 +6,7 @@ const directories=require('../runtime/task-directory.cjs');
 const {serve,request}=require('../runtime/mcp-bridge.cjs');
 async function main(){
  await require('./mcp-defects.cjs')();
+ await require('./mcp-draft-recovery.cjs')();
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-mcp-synthetic-'));
  let tasks,bridge,child;
  try{

@@ -442,6 +442,7 @@ const localDrafts = { ...(previous.drafts || {}) };
 const composerDrafts = new WorkbenchComposerDrafts(previous.composerDrafts);
 function persist() {
   if (state.key) localDrafts[state.key] = input.value;
+  composerDrafts.prune(state.key,state.tabs?.map(tab=>tab.key),localDrafts);
   vscode.setState({
     hostKey: state.hostKey,
     key: state.key,
@@ -2272,16 +2273,17 @@ window.addEventListener("message", (event) => {
     const key = msg.key || state.key,
       submitted = msg.text ?? pendingSends.get(key);
     pendingSends.delete(key);
+    if(msg.consumeDraft===false)composerDrafts.edit(key);
     if (key !== state.key) {
-      if (composerDrafts.canConsume(key,submitted,localDrafts[key])) {
+      if (msg.consumeDraft!==false && composerDrafts.canConsume(key,submitted,localDrafts[key])) {
         localDrafts[key] = "";
         composerDrafts.consumed(key);
         persist();
-      }
+      } else if(msg.consumeDraft===false)persist();
       return;
     }
     sending = false;
-    if (composerDrafts.canConsume(key,submitted ?? draft,input.value)) {
+    if (msg.consumeDraft!==false && composerDrafts.canConsume(key,submitted ?? draft,input.value)) {
       input.value = "";
       composerDrafts.consumed(key);
     }

@@ -49,6 +49,8 @@
 
 !runtime/mcp-tasks.cjs
 !runtime/mcp-executor.cjs
+!runtime/composer-draft.cjs
+!runtime/mcp-input-recovery.cjs
 !runtime/mcp-bridge.cjs
 !runtime/mcp-server.cjs
 !runtime/mcp-delivery.cjs

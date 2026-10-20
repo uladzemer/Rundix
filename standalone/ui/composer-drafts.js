@@ -34,5 +34,26 @@ class WorkbenchComposerDrafts {
     const record=this.records[key] || {};
     this.records[key]={...record,owned:false,awaitingClear:true,submitted:undefined};
   }
+  prune(activeKey,openKeys,drafts) {
+    const open=Array.isArray(openKeys)?new Set(openKeys):null;
+    const forget=key=>{
+      const record=this.records[key];
+      // Host snapshots can be reloaded; never discard independently edited text.
+      if(record.owned && drafts[key]===record.host)delete drafts[key];
+      delete this.records[key];
+    };
+    for(const [key,record] of Object.entries(this.records)){
+      if(key===activeKey)continue;
+      if(open && !open.has(key) || record.host==='' && !drafts[key] && !record.submitted && !record.awaitingClear)forget(key);
+    }
+    const keys=Object.keys(this.records).filter(key=>key!==activeKey);
+    if(this.records[activeKey])keys.push(activeKey);
+    let count=0,characters=0;
+    for(const key of keys.reverse()){
+      const record=this.records[key],size=(record.host?.length || 0)+(record.submitted?.text?.length || 0);
+      if(count>=64 || characters+size>1000000)forget(key);
+      else {count++;characters+=size;}
+    }
+  }
 }
 globalThis.WorkbenchComposerDrafts=WorkbenchComposerDrafts;

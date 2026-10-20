@@ -284,6 +284,14 @@ async function queueChecks() {
 }
 
 async function rotatedDraftChecks() {
+  const edited=fixture(),draft=require('../runtime/composer-draft.cjs');
+  edited.start(async()=>{
+    draft.userEdit(edited.s,'Synthetic intermediate edit',{explicit:true});
+    draft.userEdit(edited.s,'Synthetic input',{explicit:true});
+    edited.emit('turn/started');edited.emit('turn/completed');return {turn:{id:'synthetic-edited-turn'}};
+  });
+  await edited.context.send(edited.s,'Synthetic input');
+  assert.equal(edited.s.draft,'Synthetic input','An edit back to the submitted text is not consumed');
   for(const edited of [false,true]){
     const f=fixture();let prepares=0;f.context.providerClient=()=>({});
     f.context.activeConnection.provider={authenticate:async()=>{},prepareTurn:async()=>{

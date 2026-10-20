@@ -51,6 +51,12 @@
     if(task.pendingRequests?.length)detail.append(element('p',t('approval'),'notice'));
     if(task.recoveryRequired && task.state==='error')detail.append(element('p',t('recovery'),'notice'));
     if(task.error)detail.append(element('p',task.error,'task-error'));
+    if(task.unsentInputs?.length){
+      const recovery=element('details',undefined,'unsent-inputs');
+      recovery.append(element('summary',state.language==='en'?'Unsent inputs — recover full text with get_task':'Неотправленные сообщения — полный текст доступен через get_task'));
+      for(const row of task.unsentInputs)recovery.append(element('pre',row.text+(row.truncated?'…':''),'configuration-json'));
+      detail.append(recovery);
+    }
     const taskActions=element('div',undefined,'actions');taskActions.append(button(t('open'),'openChat',{taskId:task.taskId},!task.chatId),button(t('cancel'),'cancel',{taskId:task.taskId},!state.bridgeRunning || (!['queued','running','waiting_approval'].includes(task.state) && !task.recoveryRequired)));detail.append(taskActions);
     if(task.report){
       const report=element('section',undefined,'report');report.append(element('h3',t('report')));

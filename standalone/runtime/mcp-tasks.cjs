@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const {randomUUID, createHash} = require('node:crypto');
 const directories = require('./task-directory.cjs');
+const inputRecovery = require('./mcp-input-recovery.cjs');
 const active = new Set(['queued', 'running', 'waiting_approval']);
 const states = ['queued','running','waiting_approval','completed','error','cancelled'];
 const MAX_WAIT_SECONDS = 1500, MAX_PARALLEL = 5;
@@ -50,7 +51,7 @@ class McpTasks {
   }
   limit() { const value = Number(this.maxParallel()); return Number.isInteger(value) && value >= 1 ? Math.min(value, MAX_PARALLEL) : 1; }
   get(id) { const task = this.tasks.get(id); if (!task) throw fail('unknown_task', 'Unknown taskId'); return task; }
-  view(task, brief = false) {
+  view(task, brief = false, unsentAfter) {
     const report = task.report;
     const reportFields = brief ? {reportSummary:report ? {
       source:report.source, resultPreview:report.result.slice(0,500) + (report.result.length > 500 ? '…' : ''),
@@ -61,6 +62,7 @@ class McpTasks {
       chatId:task.chatId || null, projectDirectory:task.projectDirectory, createdAt:task.createdAt,
       updatedAt:task.updatedAt, revision:task.revision || 0, accessMode:task.accessMode || null, ...reportFields, error:task.error || null,
       queuedContinuations:task.continuations?.length || 0,
+      ...inputRecovery.page(task,unsentAfter),
       recoveryRequired:recoveryRequired(task), pendingRequests:this.adapter.pending(task)}));
   }
   summary(task) {
@@ -146,7 +148,9 @@ class McpTasks {
     if (this.closed) throw fail('bridge_stopped', 'MCP executor is closed.');
     if (name === 'get_task') {
       if (args.brief !== undefined && typeof args.brief !== 'boolean') throw fail('invalid_argument', 'Invalid brief');
-      return this.view(this.get(args.taskId), args.brief);
+      const task=this.get(args.taskId);
+      if(args.unsentAfter!==undefined && (typeof args.unsentAfter!=='string' || !task.unsentInputs?.some(row=>row.id===args.unsentAfter)))throw fail('invalid_argument','Invalid unsentAfter');
+      return this.view(task, args.brief,args.unsentAfter);
     }
     if (name === 'wait_task') return this.wait(args);
     if (name === 'wait_tasks') return this.waitAny(args);
@@ -338,14 +342,20 @@ class McpTasks {
   }
   async start(task) {
     if (this.closed) { directories.release(this.directoryStore,task.projectDirectory,task.taskId); return; }
+    const input=task.nextInput || task.description + '\n\nAcceptance criteria:\n' + task.acceptanceCriteria +
+      '\n\nFinish with a report containing result, changed files, checks performed and remaining issues.';
+    // Once another attempt is intended, this text is no longer proven unsent.
+    // nextInput remains durable; a definite refusal below restores recovery.
+    inputRecovery.delivered(task,input);
     task.state='running'; task.progress='Starting existing Codex executor'; task.recoveryRequired=true; task.awaitingPreparation=false; this.save(task);
     try {
-      await this.adapter.start(task, task.nextInput || task.description + '\n\nAcceptance criteria:\n' + task.acceptanceCriteria +
-        '\n\nFinish with a report containing result, changed files, checks performed and remaining issues.',()=>this.save(task));
+      await this.adapter.start(task,input,()=>this.save(task));
+      inputRecovery.delivered(task,input);
       delete task.nextInput;
       task.chatId=this.adapter.chatId(task); this.save(task);
     } catch (error) {
       if(task.cancelRequested && (task.awaitingPreparation || error?.retryable || error?.notSent)){
+        inputRecovery.remember(task,input);
         task.state='cancelled';task.recoveryRequired=false;task.progress='Cancelled before model execution';
         this.release(task);this.save(task);return;
       }
@@ -355,6 +365,7 @@ class McpTasks {
         task.blockedUntil=Date.now()+5000;directories.release(this.directoryStore,task.projectDirectory,task.taskId);this.save(task);return;
       }
       if(error?.notSent){
+        inputRecovery.remember(task,input);
         task.state='error';task.recoveryRequired=false;task.needsReconcile=false;
         task.progress='Execution refused before sending';task.error='Execution did not start. Check the connection and chat before continuing.';
         this.release(task);this.save(task);return;

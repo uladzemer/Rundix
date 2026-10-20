@@ -1,5 +1,6 @@
 // Host state is supplied explicitly; mutable values are read through deps.
 async function send(deps, s, text, attached=s.attachments, options={}) {
+  const composerDraft=require('./composer-draft.cjs'),draft=composerDraft.snapshot(s);
   // retryable marks failures that happen before anything is sent and clear up by themselves; MCP tasks wait and retry.
   if (deps.authBusy) throw Object.assign(Error(deps.pendingLogin.current ? deps.browserSignInMessage() : deps.locale.t('Дождитесь переключения аккаунта.')),{notSent:true,retryable:true});
   if(s.sendingTask)throw Object.assign(Error(deps.locale.t('Дождитесь обработки уточнений перед согласованием.')),{notSent:true,retryable:true});
@@ -186,14 +187,14 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
     startPending=false;unresolved=false;
     // Consume recoverable input at confirmed delivery, including a retry after
     // companion preparation failed. Later bookkeeping must not leave it unsent.
-    if(current() && s.draft===text)s.draft='';
+    const draftConsumed=!!(current() && options.consumeDraft!==false && draft.text===text && composerDraft.consume(s,draft));
     if(current())s.lastStartedTurnId=result.turn.id;
     observed ||= {id:result.turn.id,status:s.busy?'inProgress':'completed'};
     if(!s.busy)release();
     if (current() && s.busy) s.turnId = result.turn.id;
     if(current() && s.busy && s.stopRequested)await client.request('turn/interrupt',{threadId,turnId:result.turn.id});
     const consumed=new Set(attached.map(file=>file.id));s.attachments=s.attachments.filter(file=>!consumed.has(file.id));
-    return {turnId:result.turn.id};
+    return {turnId:result.turn.id,draftConsumed};
   } catch (error) {
     startPending=false;
     if(!observed && error.deliveryUncertain===false){

@@ -1,6 +1,7 @@
 const { findCli } = require('./runtime/transport.cjs');
 const { SessionStore } = require('./runtime/store.cjs');
 const { createSessionCore } = require('./runtime/session-core.cjs');
+const composerDraft = require('./runtime/composer-draft.cjs');
 const locale = require("./ui/i18n.js");
 // Independent implementation using the documented Codex App Server protocol.
 const vscode = require("vscode");
@@ -299,9 +300,9 @@ function activate(context) {
             releases:threadReleases,client:()=>{if(!core.state.activeConnection || !core.state.server)return null;connections.assertCurrent(core.state.activeConnection);return core.state.server;},
             // Only the user's own settings count: a repository's workspace settings must not grant MCP full access.
             accessMode:()=>vscode.workspace.getConfiguration('rundix').inspect('mcpAccessMode')?.globalValue || 'workspace',
-            async sent(s,text){
+            async sent(s,text,options={}){
               publish(s,true);
-              await view(s).panel?.webview.postMessage({type:'sent',key:s.key,text});
+              await view(s).panel?.webview.postMessage({type:'sent',key:s.key,text,...options});
             },
             retainTurn(s,task){
               if(turnLeases.has(s.id))return;
@@ -667,7 +668,7 @@ function activate(context) {
       typeof msg.currentDraft === "string" &&
       msg.currentDraft.length <= 200000
     ) {
-      s.draft = msg.currentDraft;
+      composerDraft.userEdit(s,msg.currentDraft);
       await save(s);
     }
     if (msg.action === "activateTab") {
@@ -1087,7 +1088,7 @@ function activate(context) {
       if(s.approvingTask)throw Error(locale.t('Дождитесь обработки уточнений перед согласованием.'));
       if(preflight.preparing(s.preflight))s.preflight.skipped=false;
       if (typeof msg.text === 'string' && msg.text.length <= 200000) {
-        s.draft = msg.text;
+        composerDraft.userEdit(s,msg.text);
         await save(s);
       }
       if(typeof msg.text!=='string'||msg.text.length>200000 || (!msg.text.trim()&&!s.attachments.some(file=>file.kind==='image')))throw Error(locale.t('Введите сообщение длиной до 200 000 символов.'));
@@ -1109,12 +1110,11 @@ function activate(context) {
         connections.assertCurrent(sendResult.connection);
         sendResult = await send(s, msg.text);
       }
-      if(s.draft===msg.text)s.draft = "";
       await save(s);
-      await view(s).panel?.webview.postMessage({ type: "sent", key: s.key, text:msg.text });
+      await view(s).panel?.webview.postMessage({ type: "sent", key: s.key, text:msg.text, consumeDraft:sendResult.draftConsumed });
     } else if (msg.action === "draft") {
       if (typeof msg.text === "string" && msg.text.length <= 200000) {
-        s.draft = msg.text;
+        composerDraft.userEdit(s,msg.text,{explicit:true});
         await save(s);
       }
     } else if (msg.action === "stop") {
@@ -1131,7 +1131,7 @@ function activate(context) {
         typeof msg.currentDraft === "string" &&
         msg.currentDraft.length <= 200000
       ) {
-        s.draft = msg.currentDraft;
+        composerDraft.userEdit(s,msg.currentDraft);
         await save(s);
       }
       await vscode.workspace

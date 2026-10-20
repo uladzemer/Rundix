@@ -86,6 +86,35 @@ module.exports=async({browser})=>{
    const nextFailure={...pending,draft:'Synthetic next unsent continuation',error:'Synthetic preparation refusal'};
    await update(nextFailure);assert.equal(await value(),nextFailure.draft,'A subsequent unsent continuation remains visible and recoverable');
    await edit('');await update(nextFailure);assert.equal(await value(),'','A deliberate user clear is also a local edit');
+   const tabs=[{key:pending.key,name:'Synthetic task'},{key:'synthetic-other',name:'Synthetic other'}];
+   await load({...pending,tabs});
+   await update({...pending,key:'synthetic-other',draft:'',tabs});
+   await page.evaluate(({key,text})=>window.dispatchEvent(new MessageEvent('message',{data:{type:'sent',key,text}})),{key:pending.key,text:pending.draft});
+   assert.equal(await page.evaluate(key=>window.saved.drafts[key],pending.key),'','Positive inactive-key sent clears the owning cache');
+   await update({...delivered,tabs});assert.equal(await value(),'','Inactive confirmation survives tab activation');
+   await update({...pending,key:'synthetic-other',draft:'',tabs});
+   assert.equal(await page.evaluate(key=>Object.hasOwn(window.saved.composerDrafts,key),pending.key),false,'Inactive cleared metadata is pruned');
+   await load({...pending,tabs});
+   await update({...pending,key:'synthetic-other',draft:'',tabs:[tabs[1]]});
+   assert.equal(await page.evaluate(key=>Object.hasOwn(window.saved.composerDrafts,key) || Object.hasOwn(window.saved.drafts,key),pending.key),false,'Closed host-owned cache and metadata are dropped together');
+   await update({...delivered,tabs});assert.equal(await value(),'');
+   // Runtime may protect a saved user draft equal to the MCP input. A fresh
+   // webview cannot infer that ownership from text; the acknowledgement carries it.
+   await load(pending);
+   await page.evaluate(text=>window.dispatchEvent(new MessageEvent('message',{data:{type:'sent',key:window.fixture.key,text,consumeDraft:false}})),pending.draft);
+   assert.equal(await value(),pending.draft,'Equal-text user draft is protected by the host acknowledgement');
+   await load({...pending,busy:true},await page.evaluate(()=>window.saved));
+   assert.equal(await value(),pending.draft,'Protected ownership survives webview recreation');
+   const bounds=await page.evaluate(()=>{
+    const drafts={},records={};
+    for(let index=0;index<140;index++){const key='synthetic-'+index;drafts[key]='Synthetic cached input';records[key]={host:drafts[key],owned:true};}
+    const cache=new WorkbenchComposerDrafts(records);cache.prune('synthetic-139',undefined,drafts);
+    const count=Object.keys(cache.records).length;
+    for(const record of Object.values(cache.records))record.host='x'.repeat(200000);
+    cache.prune('synthetic-139',undefined,drafts);
+    return {count,characters:Object.values(cache.records).reduce((sum,row)=>sum+row.host.length,0),active:!!cache.records['synthetic-139']};
+   });
+   assert(bounds.count<=64 && bounds.characters<=1000000 && bounds.active,'Composer ownership metadata has count and size bounds');
    assert.deepEqual(errors,[]);
   }finally{await page.close();}
  }

@@ -131,6 +131,8 @@ fs.mkdirSync(output, { recursive: true });
       "messages.js",
       "activity.js",
       "transcript-scroll.js",
+      "queued-editor.js",
+      "composer-drafts.js",
       "app.js",
     ])
       await page.addScriptTag({

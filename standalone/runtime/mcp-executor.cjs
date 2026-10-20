@@ -2,6 +2,8 @@ const {itemText} = require('./session.cjs');
 const {canonical} = require('./task-directory.cjs');
 const asyncQuestions = require('./async-questions.cjs');
 const delivery = require('./mcp-delivery.cjs');
+const composerDraft = require('./composer-draft.cjs');
+const inputRecovery = require('./mcp-input-recovery.cjs');
 const reportSchema={type:'object',properties:{result:{type:'string'},changedFiles:{type:'array',items:{type:'string'}},checks:{type:'array',items:{type:'string'}},remainingIssues:{type:'array',items:{type:'string'}}},required:['result','changedFiles','checks','remainingIssues'],additionalProperties:false};
 function report(session, task) {
   // A task run may span several turns (for example answers to Codex questions); the report covers all of them.
@@ -119,20 +121,23 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       task.baselineItems=s.items.map(item=>item.id);
       delete task.turnId;task.turnIds=[];
       checkpoint();
-      // A retry or continuation must not replace a draft the user has edited.
-      if(!s.draft)s.draft=input;
+      // Replace an earlier executor-owned refusal, preserving every user edit.
+      composerDraft.prepare(s,input);
       await save(s);
       if(task.cancelRequested){task.awaitingPreparation=true;throw Error('Cancelled before sending.');}
       const options=turnOptions(task);
       const sendTurn=async()=>{
         sending=true;
-        const result=await send(s,input,[],options);
+        const draft=composerDraft.hostOwned(s)?composerDraft.snapshot(s):null;
+        const result=await send(s,input,[],{...options,consumeDraft:!!draft});
         if(result?.turnId){
           task.turnId=result.turnId;task.turnIds=[...(task.turnIds || []),result.turnId];
-          if(s.draft===input)s.draft='';
-          await save(s);
-          await sent(s,input);
-          checkpoint();
+          inputRecovery.delivered(task,input);
+          const consumed=composerDraft.consume(s,draft) || result.draftConsumed===true;
+          try {
+            await save(s);
+            await sent(s,input,{consumeDraft:consumed});
+          } finally { checkpoint(); }
         }
         return result;
       };

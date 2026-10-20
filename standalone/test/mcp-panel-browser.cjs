@@ -72,6 +72,15 @@ if(!chrome)throw Error('Set CHROME_PATH.');
    assert.match(await page.$eval('.notice',node=>node.textContent),/AUTH_REQUIRED/);
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    await page.screenshot({path:path.join(__dirname,`../.verification/mcp-service-tasks-${language}-${theme}-${width}.png`),fullPage:true});
+   await page.evaluate(()=>{window.fixture.taskChatsAvailable=true;window.fixture.tasks[0].readOnly=true;window.update();});
+   await page.type('#clarification','Synthetic legacy draft');
+   assert.equal(await page.$eval('form button',node=>node.disabled),true,'Legacy history cannot continue');
+   assert.deepEqual(await page.$$eval('.task-detail .actions button',nodes=>nodes.map(node=>node.disabled)),[false,true,true],'Only transcript is available for imported history');
+   assert.match(await page.$$eval('.notice',nodes=>nodes.map(node=>node.textContent).join(' ')),language==='ru'?/только чтение/:/read only/);
+   await page.click('.task-detail .actions button');assert.equal(await page.evaluate(()=>window.calls.at(-1).action),'openChat');
+   await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'mcpResult',ok:true,action:'openChat',requestId:window.calls.at(-1).requestId}})));
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+   await page.screenshot({path:path.join(__dirname,`../.verification/mcp-legacy-${language}-${theme}-${width}.png`),fullPage:true});
    assert.deepEqual(errors,[]);await page.close();
   }
   console.log('MCP panel browser: RU/EN, dark/light, narrow/wide, safe text, draft/focus retention and action results passed.');

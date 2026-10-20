@@ -2,8 +2,9 @@
 
 Window-owned MCP remains the default. The experimental service switch installs
 the headless runtime and connects the MCP panel as a window client on demand.
-Do not advertise step 3b as complete. No real CLI account or sign-in
-files are used by its tests.
+Step 3b has synthetic Windows acceptance coverage for window IPC, panel, task
+chats and read-only legacy migration. No real CLI account or sign-in files are
+used by its tests; native cross-platform/provider scenarios remain step 3c.
 
 ## Space identity
 
@@ -652,3 +653,8 @@ mutation conflicts, simultaneous registrations, live legacy/thread leases,
 shutdown ordering, backup, A/B visibility and no imported execution. Independent
 read-only review closed the concurrency and source-membership findings; the
 second round reported no new confirmed findings.
+
+The default `npm test` includes migration crash/recovery and corruption checks.
+Browser acceptance includes imported read-only panel/chat views in RU/EN, both
+themes and narrow/wide sizes. It asserts disabled mutations, accessible history,
+preserved drafts and no horizontal overflow.

@@ -87,6 +87,23 @@ async function main(){
     const changed=createMigration({root:changedRoot,hooks:{afterCopy(){seed(changedSource,'synthetic-added',a);}}});
     await assert.rejects(changed.sync(),{code:'migration_conflict'});assert(fs.existsSync(path.join(changedSource,'mcp','tasks')));assert(!fs.existsSync(path.join(changedSource,'mcp','service-migration.json')));await changed.close();
     const repaired=createMigration({root:changedRoot});await repaired.sync();assert.equal(repaired.visible(sa,[canonical(a)]).length,2);await repaired.close();
+    // A completed receipt must verify both copied history and the retained backup.
+    const changedId=fs.readdirSync(path.join(changedRoot,'legacy')).find(name=>/^[a-f0-9]{64}$/.test(name));
+    const copiedFile=path.join(changedRoot,'legacy',changedId,'task-synthetic-original.json'),copiedBytes=fs.readFileSync(copiedFile);
+    fs.writeFileSync(copiedFile,'{"syntheticCorruption":true}');
+    const corruptCopy=createMigration({root:changedRoot});await assert.rejects(corruptCopy.sync(),{code:'migration_conflict'});await corruptCopy.close();
+    fs.writeFileSync(copiedFile,copiedBytes);
+    const backupFile=path.join(changedSource,'mcp','backup-'+changedId,'tasks','mcp-task-synthetic-original.json'),backupBytes=fs.readFileSync(backupFile);
+    fs.writeFileSync(backupFile,'{"syntheticBackupCorruption":true}');
+    const corruptBackup=createMigration({root:changedRoot});await assert.rejects(corruptBackup.sync(),{code:'migration_conflict'});await corruptBackup.close();
+    fs.writeFileSync(backupFile,backupBytes);
+    const verifiedAgain=createMigration({root:changedRoot});await verifiedAgain.sync();assert.equal(verifiedAgain.visible(sa,[canonical(a)]).length,2);await verifiedAgain.close();
+    // A task must never turn an ordinary manual session into imported MCP history.
+    const manualRoot=make('service-manual'),manualSource=make('legacy-manual');seed(manualSource,'synthetic-manual-reference',a);registerRoot(manualRoot,manualSource);
+    const manualStore=new SessionStore(path.join(manualSource,'sessions-v1')),manualFile=manualStore.file('session','synthetic-session-synthetic-manual-reference');
+    const manualSession=JSON.parse(fs.readFileSync(manualFile,'utf8'));manualSession.mcpTask=false;fs.writeFileSync(manualFile,JSON.stringify(manualSession));
+    const manualImport=createMigration({root:manualRoot});await assert.rejects(manualImport.sync(),{code:'migration_conflict'});await manualImport.close();
+    assert(fs.existsSync(path.join(manualSource,'mcp','tasks')));assert(!fs.existsSync(path.join(manualSource,'mcp','service-migration.json')));
     console.log('PASS legacy migration: real mid-copy process crash, idempotent verify/marker/backup, live bridge/turn gates, lifetime lease, read-only inferred/unknown spaces, A/B isolation and no queued execution.');
   }finally{await migration?.close();clients.forEach(client=>client.close());await service?.shutdown();assert.equal(path.dirname(base),os.tmpdir());assert(path.basename(base).startsWith('rundix-migration-synthetic-'));fs.rmSync(base,{recursive:true,force:true});}
 }

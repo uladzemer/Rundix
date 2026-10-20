@@ -528,3 +528,7 @@ An explicit new continue_task restores the task to active storage subject to its
 space's cap. RequestId dedup survives archival and process restart; damaged indexes
 fail closed. Source removal happens only after the archival record and indexes
 are durable, and active records take precedence after an interrupted move.
+
+Settings snapshots normalize invalid global values to the window-mode defaults
+and clamp parallelism to the supported range. Atomic-replacement read races retry;
+a failed read retains the last valid snapshot (defaults before the first success).

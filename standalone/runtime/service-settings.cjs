@@ -4,8 +4,13 @@ const {parseStrict}=require('./service-json.cjs');
 const {boundedRead}=require('./service-provider-config.cjs');
 function readSettings(root) {
   let value;
-  try { value = parseStrict(boundedRead(path.join(root, 'settings.json'), 65536)); }
-  catch (error) { if (error.code === 'ENOENT') value = {}; else throw Object.assign(Error('Service settings are unavailable.'), {code:'storage_unavailable'}); }
+  try {
+    for(let attempt=0;attempt<3;attempt++){
+      try {value=parseStrict(boundedRead(path.join(root,'settings.json'),65536));break;}
+      catch(error){if(attempt===2)throw error;}
+    }
+  }
+  catch { throw Object.assign(Error('Service settings are unavailable.'), {code:'storage_unavailable'}); }
   const allowed = ['mcpAccessMode', 'mcpMaxParallelTasks', 'mcpThreadConfig', 'cliPath'];
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !allowed.includes(key)) ||
       (value.mcpAccessMode !== undefined && !['manual', 'workspace', 'auto', 'full'].includes(value.mcpAccessMode)) ||
@@ -15,11 +20,28 @@ function readSettings(root) {
     throw Object.assign(Error('Service settings are invalid.'), {code:'storage_unavailable'});
   return value;
 }
-function plainSettings(root) {readSettings(root);return (key,fallback)=>readSettings(root)[key] ?? fallback;}
+function plainSettings(root) {
+  let last={};
+  const refresh=()=>{try{last=readSettings(root);}catch{};return last;};
+  refresh();return (key,fallback)=>refresh()[key] ?? fallback;
+}
+function normalizeSettings(inspect) {
+  const value={};
+  for(const key of KEYS){
+    const raw=inspect(key)?.globalValue;if(raw==null)continue;
+    if(key==='mcpAccessMode' && ['manual','workspace','auto','full'].includes(raw))value[key]=raw;
+    if(key==='mcpThreadConfig' && raw && typeof raw==='object' && !Array.isArray(raw) && Object.keys(raw).length)value[key]=raw;
+    if(key==='cliPath' && typeof raw==='string' && path.isAbsolute(raw) && !raw.includes('\0'))value[key]=raw;
+    if(key==='mcpMaxParallelTasks'){const number=Number(raw);value[key]=Number.isInteger(number) && number>=1?Math.min(number,5):1;}
+  }
+  // An oversized user override must not prevent the remaining safety settings.
+  if(Buffer.byteLength(JSON.stringify(value))>65536)delete value.mcpThreadConfig;
+  return value;
+}
 
 const KEYS=['mcpAccessMode','mcpThreadConfig','mcpMaxParallelTasks','cliPath'];
 async function writeServiceSettings(root, inspect) {
-  const value=Object.fromEntries(KEYS.map(key=>[key,inspect(key)?.globalValue]).filter(([key,v])=>v!==undefined && !(key==='cliPath' && v==='')));
+  const value=normalizeSettings(inspect);
   const {Worker}=require('node:worker_threads');
   return new Promise((resolve,reject)=>{
     const worker=new Worker(__filename,{workerData:{settingsWrite:{root,value}}});
@@ -37,7 +59,7 @@ async function writeValue(root,value) {
   try {await fs.promises.writeFile(temp,bytes,{flag:'wx',mode:0o600});await fs.promises.rename(temp,file);}
   finally {await fs.promises.unlink(temp).catch(()=>{});}
 }
-module.exports={plainSettings,writeServiceSettings,KEYS};
+module.exports={plainSettings,writeServiceSettings,normalizeSettings,KEYS};
 const {isMainThread,workerData,parentPort}=require('node:worker_threads');
 if(!isMainThread && workerData?.settingsWrite) {
   writeValue(workerData.settingsWrite.root,workerData.settingsWrite.value).then(()=>parentPort.postMessage({ok:true}),()=>parentPort.postMessage({ok:false}));

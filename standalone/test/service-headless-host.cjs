@@ -20,6 +20,20 @@ async function main() {
     const liveSettings=plainSettings(root);assert.equal(liveSettings('mcpMaxParallelTasks'),2);
     fs.writeFileSync(path.join(root,'settings.json'),JSON.stringify({mcpMaxParallelTasks:1,mcpAccessMode:'manual'}));
     assert.equal(liveSettings('mcpMaxParallelTasks'),1,'Service rereads user safety settings');
+    const settingsModule=require('../runtime/service-settings.cjs');
+    assert.deepEqual(settingsModule.normalizeSettings(key=>({globalValue:{mcpAccessMode:'invalid',mcpMaxParallelTasks:99,mcpThreadConfig:[],cliPath:42}[key]})),{mcpMaxParallelTasks:5});
+    assert.equal(settingsModule.normalizeSettings(()=>({globalValue:'invalid'})).mcpMaxParallelTasks,1);
+    fs.writeFileSync(path.join(root,'settings.json'),'{');assert.equal(liveSettings('mcpAccessMode'),'manual','Read failure keeps last valid safety snapshot');
+    fs.writeFileSync(path.join(root,'settings.json'),JSON.stringify({mcpMaxParallelTasks:1,mcpAccessMode:'manual'}));
+    const invalidSettingsRoot=path.join(root,'synthetic-invalid-settings');
+    await settingsModule.writeServiceSettings(invalidSettingsRoot,key=>({globalValue:{mcpAccessMode:'invalid',mcpMaxParallelTasks:99,mcpThreadConfig:[],cliPath:42}[key]}));
+    assert.equal(plainSettings(invalidSettingsRoot)('mcpMaxParallelTasks'),5);
+    assert.equal(plainSettings(invalidSettingsRoot)('mcpAccessMode','workspace'),'workspace');
+    fs.writeFileSync(path.join(root,'settings.json'),JSON.stringify({mcpMaxParallelTasks:1,mcpAccessMode:'auto'}));
+    const originalFstat=fs.fstatSync;let raced=false;
+    try{fs.fstatSync=function(fd){const stat=originalFstat(fd);if(!raced){raced=true;return {...stat,ino:stat.ino+1};}return stat;};assert.equal(liveSettings('mcpAccessMode'),'auto','Atomic replacement race retries instead of using stale snapshot');assert(raced);}
+    finally{fs.fstatSync=originalFstat;}
+    fs.writeFileSync(path.join(root,'settings.json'),JSON.stringify({mcpMaxParallelTasks:1,mcpAccessMode:'manual'}));
     const installed = install(root);
     host = await createHeadlessHost({root, generation:'synthetic-service', resolveCli:async () => process.execPath,
       providerOptions:{configPath:installed.configPath, verifyPrivate:() => {}, spawnProcess:launch,
@@ -88,7 +102,7 @@ async function main() {
     for (let attempt = 0; attempt < 100 && fs.existsSync(path.join(serviceRoot, 'bridge.json')); attempt++) await pause(20);
     assert(!fs.existsSync(path.join(serviceRoot, 'bridge.json')), 'Idle empty service exits after disconnect'); service = null;
     const broken = path.join(root, 'invalid'); fs.mkdirSync(broken); fs.writeFileSync(path.join(broken, 'settings.json'), '{');
-    assert.throws(() => plainSettings(broken), {code:'storage_unavailable'});
+    assert.equal(plainSettings(broken)('mcpAccessMode','workspace'),'workspace');
     assert(fs.readdirSync(path.join(root, 'sessions-v1')).some(file => file.startsWith('session-')));
     console.log('PASS headless host: real core/executor, lazy framed provider + ephemeral CLI, report/continue/close, unsupported UI, file KV/settings and bounded safe diagnostics.');
   } finally {

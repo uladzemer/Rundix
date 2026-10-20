@@ -81,12 +81,17 @@ if(!chrome)throw Error('Set CHROME_PATH.');
    await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'mcpResult',ok:true,action:'openChat',requestId:window.calls.at(-1).requestId}})));
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    await page.screenshot({path:path.join(__dirname,`../.verification/mcp-legacy-${language}-${theme}-${width}.png`),fullPage:true});
+   const statusTexts=[];
    for(const legacyState of ['busy','retry_later','needs_repair']){
     await page.evaluate(legacyState=>{window.fixture.legacyStatus={state:legacyState};window.update();},legacyState);
     assert.match(await page.$eval('.legacy-status',node=>node.textContent),language==='ru'?/Импорт старой истории/:/Legacy history import/);
+    const statusText=await page.$eval('.legacy-status',node=>node.textContent);statusTexts.push(statusText);
+    assert.match(statusText,({busy:language==='ru'?/старое окно занято/:/owner busy/,retry_later:language==='ru'?/временная ошибка/:/temporary failure/,needs_repair:language==='ru'?/требуют восстановления/:/needs repair/})[legacyState]);
+    assert.equal(await page.evaluate(()=>document.body.textContent.includes('service_unavailable')),false);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     await page.screenshot({path:path.join(__dirname,`../.verification/mcp-legacy-${legacyState}-${language}-${theme}-${width}.png`),fullPage:true});
    }
+   assert.equal(new Set(statusTexts).size,3,'Each legacy status explains its own recovery state');
    assert.deepEqual(errors,[]);await page.close();
   }
   console.log('MCP panel browser: RU/EN, dark/light, narrow/wide, safe text, draft/focus retention and action results passed.');

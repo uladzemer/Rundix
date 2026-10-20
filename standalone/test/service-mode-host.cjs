@@ -1,5 +1,12 @@
 const vscode = require('vscode'), assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
 const os=require('node:os');
+function hostError(error,paths){
+  let text=String(error?.stack || error);
+  for(const value of [...new Set(paths.filter(Boolean))].sort((a,b)=>b.length-a.length)){
+    for(const form of [JSON.stringify(value).slice(1,-1),value,value.replace(/\\/g,'/')])text=text.replace(new RegExp(form.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi'),'<synthetic-path>');
+  }
+  return text;
+}
 exports.run = async () => {
   const report = {syntheticTransport:true, inferencePerformed:false}, launcher = require('../runtime/service-launcher.cjs');
   const original = launcher.installLauncherAsync; let installs = 0;
@@ -7,6 +14,11 @@ exports.run = async () => {
   const data=require('./service-fixture.cjs').fixture(root,{nodePath:'node'});let service,peer,api,activationContext;
   const entry=require('../extension.cjs'),activate=entry.activate;entry.activate=context=>{activationContext=context;return activate(context);};
   try {
+    const formatted=hostError({stack:'Error: Synthetic real assertion detail\n at '+path.join(root,'synthetic.cjs')+'\n at '+__filename},[root,path.resolve(__dirname,'..')]);
+    assert.match(formatted,/Synthetic real assertion detail/);assert(!formatted.includes(root));assert(!formatted.includes(__dirname));
+    let assertion;try{assert.equal(path.join(root,'synthetic.cjs'),'synthetic expected');}catch(error){assertion=error;}
+    const assertionText=hostError(assertion,[root,path.resolve(__dirname,'..')]);assert.match(assertionText,/AssertionError/);assert.match(assertionText,/synthetic expected/);
+    assert(!assertionText.includes(root));assert(!assertionText.includes(JSON.stringify(root).slice(1,-1)));
     service=await require('../runtime/service-main.cjs').runService({root,hostOptions:data.hostOptions});
     await vscode.workspace.getConfiguration('rundix').update('mcpService', 'service', vscode.ConfigurationTarget.Global);
     await assert.rejects(vscode.workspace.getConfiguration('rundix').update('mcpService', 'window', vscode.ConfigurationTarget.Workspace));
@@ -69,7 +81,7 @@ exports.run = async () => {
     await api.mcp.start();assert.equal(activationContext.globalState.get('mcpServiceStopped'),false);assert.equal(api.mcp.panelSnapshot().bridgeRunning,true);
     await api.mcp.stop();report.stopPersistsAcrossReload=true;
     report.globalOnly = true; report.noWindowExecutor = true; report.serviceConfiguration = true; report.passed = true;
-  } catch (error) {report.error = String(error?.stack || error);report.passed = false;}
+  } catch (error) {report.error = hostError(error,[root,activationContext?.globalStorageUri.fsPath,path.resolve(__dirname,'..'),os.tmpdir(),os.homedir(),process.execPath]);report.passed = false;}
   finally {
     await api?.mcp.stop();peer?.close();await service?.shutdown();await data.close();
     launcher.installLauncherAsync = original;entry.activate=activate;fs.writeFileSync(path.join(__dirname,'../.verification/service-mode-host.json'), JSON.stringify(report,null,2));

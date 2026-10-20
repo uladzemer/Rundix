@@ -39,8 +39,8 @@ exports.run = async () => {
     assert.equal(session.draft, "Update fixture draft");
     result.appliedOnlyWhileIdle = true;
     const states = [];
-    const post = session.panel.webview.postMessage.bind(session.panel.webview);
-    session.panel.webview.postMessage = (message) => {
+    const post = api.view(session).panel.webview.postMessage.bind(api.view(session).panel.webview);
+    api.view(session).panel.webview.postMessage = (message) => {
       if (message.type === "state") states.push(message.data);
       return post(message);
     };

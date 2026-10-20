@@ -50,8 +50,8 @@ exports.run = async () => {
     };
     api = await vscode.extensions.getExtension('local-rundix-tools.rundix').activate();
     session = api.create();
-    originalPost = session.panel.webview.postMessage;
-    session.panel.webview.postMessage = function (message) {
+    originalPost = api.view(session).panel.webview.postMessage;
+    api.view(session).panel.webview.postMessage = function (message) {
       if (message.type === 'state') states.push(message.data);
       return originalPost.call(this, message);
     };
@@ -103,7 +103,7 @@ exports.run = async () => {
     await api.handle(session,{action:'account'});
     const external=api.store.session(session.key);
     api.store.saveSession({...external,items:[{id:'synthetic-history-item',type:'userMessage',text:'Synthetic history'}]});
-    session.host.ready=true;api.select(session,false);
+    api.view(session).host.ready=true;api.select(session,false);
     for(let attempt=0;session.loaded && attempt<100;attempt++)await new Promise(resolve=>setTimeout(resolve,10));
     assert.equal(session.loaded,false);
     await api.handle(session,{action:'accountRefresh'});
@@ -129,8 +129,8 @@ exports.run = async () => {
     report.passed = false;
     report.error = String(error.message).slice(0, 300);
   } finally {
-    if (session?.panel && originalPost) session.panel.webview.postMessage = originalPost;
-    session?.panel?.dispose();
+    if (api?.view(session)?.panel && originalPost) api.view(session).panel.webview.postMessage = originalPost;
+    api?.view(session)?.panel?.dispose();
     vscode.env.openExternal = original.openExternal;
     Object.assign(AppServer.prototype, {start: original.start, request: original.request});
     if (original.home === undefined) delete process.env.CODEX_HOME;

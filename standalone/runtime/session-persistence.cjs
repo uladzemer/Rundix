@@ -32,7 +32,7 @@ async function save(deps, s) {
     )
       s[key] = written[key];
   s.persistedRecord = JSON.parse(JSON.stringify(written));
-  await deps.context.workspaceState.update("session:" + s.key, written);
+  await deps.workspaceState.update("session:" + s.key, written);
 }
 
 async function syncExternal(deps, s) {

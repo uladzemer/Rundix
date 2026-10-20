@@ -15,7 +15,7 @@ async function resumeThread(deps, s, id) {
   await deps.connect();
   if (s.id === id && s.loaded) return;
   const existing = [...deps.sessions.values()].find(
-    (other) => other !== s && other.id === id && other.panel,
+    (other) => other !== s && other.id === id && deps.hasChat(other),
   );
   if (existing) {
     deps.select(existing);

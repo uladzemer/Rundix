@@ -41,7 +41,7 @@ exports.run=async()=>{
  finally{
   if(original)client.request=original;
   if(id&&client)try{await client.request('thread/delete',{threadId:id});}catch{}
-  s?.panel?.dispose();fs.writeFileSync(path.join(__dirname,'../.verification/fast-host.json'),JSON.stringify(report,null,2));
+  api?.view(s)?.panel?.dispose();fs.writeFileSync(path.join(__dirname,'../.verification/fast-host.json'),JSON.stringify(report,null,2));
  }
  if(!report.passed)throw Error(report.error);
 };

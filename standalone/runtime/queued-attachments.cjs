@@ -9,7 +9,7 @@ function fileAttachment(uri) {
     kind: /\.(png|jpe?g|webp|gif)$/i.test(uri.fsPath) ? 'image' : 'file' };
 }
 
-async function stageQueuedAttachments(session, message, { latest, pickFiles, pasteImage }) {
+async function stageQueuedAttachments(session, message, { latest, pickFiles, pasteImage, chatIdentity = () => session.panel }) {
   if (typeof message.editId !== 'string' || !/^[\w-]{1,100}$/.test(message.editId)) throw Error('Invalid queue editor');
   const item = queuedTarget(session, message, latest());
   const selected = selectedAttachments(session, message, item);
@@ -18,12 +18,12 @@ async function stageQueuedAttachments(session, message, { latest, pickFiles, pas
     draft = { editId: message.editId, itemId: item.id, attachments: [] };
     session.queuedAttachmentDraft = draft;
   }
-  const panel = session.panel;
+  const panel = chatIdentity();
   const additions = message.action === 'pasteQueuedImage'
     ? [await pasteImage(message.dataUrl)]
     : (await pickFiles() || []).map(fileAttachment).filter(Boolean);
   // A native picker or file write can finish after the task/panel/editor is gone.
-  if (!panel || session.panel !== panel || session.queuedAttachmentDraft !== draft) throw Error('Queue editor expired');
+  if (!panel || chatIdentity() !== panel || session.queuedAttachmentDraft !== draft) throw Error('Queue editor expired');
   queuedTarget(session, message, latest());
   const attachments = [...selected];
   for (const file of additions) {

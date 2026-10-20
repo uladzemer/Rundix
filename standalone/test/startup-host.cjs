@@ -36,8 +36,8 @@ exports.run=async()=>{
    return {};
   };
   api=await vscode.extensions.getExtension('local-rundix-tools.rundix').activate();s=api.create();
-  originalPost=s.panel.webview.postMessage;
-  s.panel.webview.postMessage=async function(message){published.push(message);return originalPost.call(this,message);};
+  originalPost=api.view(s).panel.webview.postMessage;
+  api.view(s).panel.webview.postMessage=async function(message){published.push(message);return originalPost.call(this,message);};
   await api.handle(s,{action:'send',text:'Synthetic first message'});
   report.coldCounts={...counts};
   assert.equal(counts['account/read'],1,'Cold account reads');assert.equal(counts['account/rateLimits/read'],1,'Cold quota reads');
@@ -214,7 +214,7 @@ exports.run=async()=>{
   report.queueAttachmentsOrderPauseAndManualDispatch=true;
  }catch(error){report.passed=false;report.error=String(error.message).slice(0,300);}
  finally{
-  clearTimeout(timer);if(s?.panel&&originalPost)s.panel.webview.postMessage=originalPost;s?.panel?.dispose();Object.assign(AppServer.prototype,{start:original.start,request:original.request,respond:original.respond});
+  clearTimeout(timer);if(api?.view(s)?.panel&&originalPost)api.view(s).panel.webview.postMessage=originalPost;api?.view(s)?.panel?.dispose();Object.assign(AppServer.prototype,{start:original.start,request:original.request,respond:original.respond});
   if(original.home===undefined)delete process.env.CODEX_HOME;else process.env.CODEX_HOME=original.home;
   fs.writeFileSync(path.join(__dirname,'../.verification/startup-host.json'),JSON.stringify(report,null,2));
  }

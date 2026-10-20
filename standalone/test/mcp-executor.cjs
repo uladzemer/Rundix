@@ -6,7 +6,7 @@ async function hostSendChecks(project,store) {
  const turns=[],turnLeases=new Map();let complete=true,lostReply=false;
  const noop=async()=>{};
  const context={authBusy:false,store,taskDirectory:require('../runtime/task-directory.cjs'),cwd:()=>project,
-  locale:{t:text=>text},vscode:{workspace:{isTrusted:true}},syncExternal:noop,applyPendingMode:noop,connect:noop,
+  locale:{t:text=>text},trusted:()=>true,hasChat:s=>!!s.panel,syncExternal:noop,applyPendingMode:noop,connect:noop,
   accountReadRevision:1,activeConnection:{},connections:{assertCurrent(){}},refreshAccount:async()=>false,account:{},
   limits:{updatedAt:Date.now(),buckets:[{id:'codex',windows:[{remaining:100}]}]},limitsRequest:null,refreshLimits:noop,refreshCatalog:noop,catalogUpdatedAt:Date.now(),
   updateDraftModel(){},resume:noop,

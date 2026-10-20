@@ -66,7 +66,7 @@ exports.run=async()=>{
  finally{
   if(client&&original)client.request=original;
   if(id&&client)try{await client.request('thread/delete',{threadId:id});}catch{}
-  if(s){s.busy=false;s.panel?.dispose();}
+  if(s){s.busy=false;api.view(s).panel?.dispose();}
   fs.mkdirSync(path.join(__dirname,'../.verification'),{recursive:true});fs.writeFileSync(path.join(__dirname,'../.verification/follow-ups-host.json'),JSON.stringify(report,null,2));
  }
  if(!report.passed)throw Error('Follow-up integration check failed');

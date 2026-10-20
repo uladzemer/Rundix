@@ -50,9 +50,9 @@ function fixture() {
       if (diskFailure) throw Error('Synthetic atomic write failure');
       const written = clone(record);records.set(s.key, written);return written;
     } },
-    context: { workspaceState: { update: (...args) => cacheUpdate(...args) } },
+    workspaceState: { update: (...args) => cacheUpdate(...args) },
     taskDirectory: { canonical: value => value, acquire: () => acquire('synthetic-directory') },
-    cwd: () => s.cwd, locale: { t: text => text }, vscode: { workspace: { isTrusted: true } },
+    cwd: () => s.cwd, locale: { t: text => text }, trusted: () => true, hasChat: s => !!s.panel,
     syncExternal: noop, applyPendingMode: noop, connect: noop, refreshAccount: async () => false,
     refreshLimits: noop, refreshCatalog: noop, connections: { assertCurrent() {} },
     updateDraftModel() {}, resume: noop, preflight: { preparing: () => false },

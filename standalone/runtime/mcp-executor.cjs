@@ -31,7 +31,7 @@ function taskTitle(description) {
   const points=Array.from(line), short=points.length>TITLE_POINTS?points.slice(0,TITLE_POINTS-1).join('').trimEnd()+'…':line;
   return short?'MCP · '+short:'MCP task';
 }
-function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,client=()=>null,releases=new Map(),closeTab=async()=>{},closeSavedTab=async()=>false,models=async()=>[],reloadWindow,accessMode=()=>'workspace',retainTurn=()=>{},sent=()=>{}}) {
+function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,client=()=>null,releases=new Map(),closeTab=async()=>{},closeSavedTab=async()=>false,models=async()=>[],reloadWindow,accessMode=()=>'workspace',retainTurn=()=>{},sent=()=>{},hasChat=s=>!!s.panel}) {
   const turnOptions=task=>({includeIde:false,taskId:task.taskId,projectDirectory:task.projectDirectory,requiredConnection:task.connection,outputSchema:reportSchema,
     ...(task.model?{modelSelection:{model:task.model,effort:task.effort,fast:false}}:task.effort?{modelSelection:{effort:task.effort}}:{})});
   // Only questions from the task's current run count; older unanswered quizzes in the chat are history.
@@ -79,7 +79,7 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       const s=sessions.get(task.sessionKey);
       // Tabs restored after a window reload stay unloaded until shown; close those through VS Code's tab list.
       if(!s)return !!await closeSavedTab(task.sessionKey);
-      if(!s.panel)return false;
+      if(!hasChat(s))return false;
       if(s.busy || s.sendingTask || adapter.pending(task).length)throw Error('The task chat is still active.');
       await closeTab(s);
       return true;

@@ -4,23 +4,48 @@ const {canonical}=require('../runtime/task-directory.cjs');
 function hostDepsChecks(){
   // Static wiring contract only: never extract or execute extension function source.
   const host=fs.readFileSync(path.join(__dirname,'../extension.cjs'),'utf8');
-  const block=host.match(/^  const hostDeps = \{([\s\S]*?)^  \};/m);
-  assert.ok(block,'Host dependency object is declared');
-  const getters=new Set([...block[1].matchAll(/\bget\s+(\w+)\s*\(/g)].map(match=>match[1]));
-  const setters=new Set([...block[1].matchAll(/\bset\s+(\w+)\s*\(/g)].map(match=>match[1]));
-  const optional=new Set(['Date','setTimeout','clearTimeout']);
-  for(const name of ['account-lifecycle','mcp-access','question-answer','question-policy','send-queue','server-connection','session-persistence','session-resume']){
-    const source=fs.readFileSync(path.join(__dirname,'../runtime/'+name+'.cjs'),'utf8');
-    for(const match of source.matchAll(/\bdeps\.([\w$]+)/g)){
-      const key=match[1];if(optional.has(key))continue;
-      assert.ok(getters.has(key),name+': missing hostDeps getter '+key);
-      const after=source.substring(match.index+match[0].length);
-      const before=source.substring(0,match.index);
-      if(/^\s*(?:\+\+|--|(?:\*\*|>>>|>>|<<|&&|\|\||\?\?|[+\-*/%&|^])?=(?!=|>))/.test(after) || /(?:\+\+|--)\s*$/.test(before))
-        assert.ok(setters.has(key),name+': missing hostDeps setter '+key);
+  const core=fs.readFileSync(path.join(__dirname,'../runtime/session-core.cjs'),'utf8');
+  assert.ok(!host.includes('hostDeps'), 'Editor no longer owns the runtime dependency bridge');
+  assert.match(host, /const core = createSessionCore\(\{/);
+  // Observe the actual dependency bridge through a delegate. Do not execute
+  // extracted source or accept identifiers merely mentioned elsewhere in it.
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-core-contract-synthetic-'));
+  const access=require('../runtime/mcp-access.cjs'), original=access.mcpThreadConfig;
+  let deps;
+  access.mcpThreadConfig=(bridge,...args)=>{deps=bridge;return original(bridge,...args);};
+  try{
+    const noop=()=>{};
+    const instance=require('../runtime/session-core.cjs').createSessionCore({
+      paths:{storage:root},workspaceState:{get:(_key,fallback)=>fallback,update:async()=>{}},
+      events:{changed:noop,sessionChanged:noop,treeChanged:noop,notify:noop,completed:noop},
+      settings:noop,trusted:()=>true,editorSelection:()=>null,hasChat:()=>false,isActive:()=>false,
+      activeSession:noop,openChat:noop,loadSelected:noop,defaultDirectory:()=>root,
+      logger:noop,resolveCli:noop,checkCliUpdates:noop,cliCheckPending:()=>false,
+      acceptCli:noop,taskSessions:()=>null,applyPendingMode:async()=>{},clearProjectFiles:noop,
+    });
+    instance.mcpThreadConfig({mcpTask:false});
+    for(const name of ['account-lifecycle','mcp-access','question-answer','question-policy','send-queue','server-connection','session-persistence','session-resume']){
+      const source=fs.readFileSync(path.join(__dirname,'../runtime/'+name+'.cjs'),'utf8');
+      assert.doesNotMatch(source,/deps\.(?:vscode|context|lastEditor)\b|\.panel\b/,name+': plain host interface');
+      for(const match of source.matchAll(/\bdeps\.([\w$]+)/g)){
+        const key=match[1];
+        assert.ok(Object.hasOwn(deps,key),name+': missing dependency '+key);
+        if(!Object.hasOwn(instance.state,key))assert.notEqual(deps[key],undefined,name+': unwired dependency '+key);
+        const after=source.substring(match.index+match[0].length),before=source.substring(0,match.index);
+        if(/^\s*(?:\+\+|--|(?:\*\*|>>>|>>|<<|&&|\|\||\?\?|[+\-*/%&|^])?=(?!=|>))/.test(after) || /(?:\+\+|--)\s*$/.test(before)){
+          const descriptor=Object.getOwnPropertyDescriptor(deps,key);
+          assert.equal(typeof descriptor.get,'function',name+': live getter '+key);
+          assert.equal(typeof descriptor.set,'function',name+': live setter '+key);
+          assert.ok(Object.hasOwn(instance.state,key),name+': writes instance state '+key);
+        }
+      }
     }
+    assert.doesNotMatch(core,/require\(['"]vscode['"]\)|\bhost\.(?:vscode|context|panel|uri)\b/i);
+  }finally{
+    access.mcpThreadConfig=original;
+    fs.rmSync(root,{recursive:true,force:true});
   }
-  console.log('Host deps: getters and assignment setters cover all eight runtime modules.');
+  console.log('Core dependency bridge: plain host boundary and mutable state assignments checked.');
 }
 async function main(){
   hostDepsChecks();
@@ -44,7 +69,7 @@ async function main(){
     // Per-thread Codex config applies only to MCP chats and only from user settings.
     {
       let inspected={globalValue:{mcp_servers:{synthetic:{enabled:false}}},workspaceValue:{features:{synthetic:true}}};
-      const fn=s=>require('../runtime/mcp-access.cjs').mcpThreadConfig({vscode:{workspace:{getConfiguration:()=>({inspect:()=>inspected})}}},s);
+      const fn=s=>require('../runtime/mcp-access.cjs').mcpThreadConfig({settings:(key,fallback,scope)=>{assert.equal(scope,'user');return inspected.globalValue;}},s);
       assert.deepEqual(fn({mcpTask:true}),{mcp_servers:{synthetic:{enabled:false}}});
       assert.equal(fn({mcpTask:false}),null,'Ordinary chats get no override');
       inspected={workspaceValue:{features:{synthetic:true}}};assert.equal(fn({mcpTask:true}),null,'Workspace settings are ignored');

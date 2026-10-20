@@ -35,7 +35,7 @@ module.exports = async ({ api, starts, turns }) => {
   const before = starts.length;
   const destination = await api.handle(source, message);
   assert.notEqual(destination.key, source.key);
-  assert.notEqual(destination.host, source.host);
+  assert.notEqual(api.view(destination).host, api.view(source).host);
   assert.equal(starts.length, before + 1);
   assert.equal(source.busy, true);
   assert.equal(source.followUps.length, 0);
@@ -163,7 +163,7 @@ module.exports = async ({ api, starts, turns }) => {
         targetKey = value.followUps.find(
           (item) => item.id === closeTask.id,
         ).transferToSession;
-      if (saves === 2) api.sessions.get(targetKey).panel.dispose();
+      if (saves === 2) api.view(api.sessions.get(targetKey)).panel.dispose();
     }
     return update.call(this, key, value);
   };
@@ -174,7 +174,7 @@ module.exports = async ({ api, starts, turns }) => {
       expectedText: closeTask.text,
       expectedAttachmentIds: closeTask.attachments.map((file) => file.id),
     });
-    assert.equal(closed.panel, null);
+    assert.equal(api.view(closed).panel, null);
     assert.equal(closed.draft, closeTask.text);
     assert.equal(turns.length, requests);
     assert.equal(api.store.session(closed.key).draft, closeTask.text);

@@ -37,7 +37,7 @@ exports.run=async()=>{
   const first=await request(descriptor,'submit_task',args);assert.equal(first.state,'queued');
   await wait(()=>turns===1);
   const s=[...api.sessions.values()].find(s=>s.id==='synthetic-mcp-chat');assert(s);assert(prepared>0);assert(authenticated>0);
-  stage='chat-panel-entry';await api.dispatch(s.host,{action:'mcpPanel',sessionKey:s.key,currentDraft:'Synthetic preserved chat draft'});
+  stage='chat-panel-entry';await api.dispatch(api.view(s).host,{action:'mcpPanel',sessionKey:s.key,currentDraft:'Synthetic preserved chat draft'});
   mcpEditor=api.mcp.openPanel();assert.equal(api.mcp.openPanel(),mcpEditor);assert.equal(s.draft,'Synthetic preserved chat draft');
   assert(mcpEditor.webview.html.includes('mcp-panel.js'));assert(mcpEditor.webview.html.includes("default-src 'none'"));
   stage='inline-configuration';const inlineConfiguration=await api.mcp.panelAction({action:'configuration'});assert.equal(inlineConfiguration.configuration.mcpServers.rundix.args.at(-1),descriptor);

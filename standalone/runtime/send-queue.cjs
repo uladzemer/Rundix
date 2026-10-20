@@ -20,7 +20,7 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
     throw Error(deps.locale.t("Дождитесь ответа или остановите текущую задачу."));
   if (typeof text !== "string" || (!text.trim() && !attached.some(file=>file.kind==='image')) || text.length > 200000)
     throw Error(deps.locale.t("Введите сообщение длиной до 200 000 символов."));
-  if (!deps.vscode.workspace.isTrusted)
+  if (!deps.trusted())
     throw Error(
       deps.locale.t("Сначала разрешите доверие рабочему пространству VS Code."),
     );
@@ -112,8 +112,7 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
     await deps.save(s);
   }
   ensureDirectory();
-  const input = deps.buildInput(text, attached, options.includeIde!==false && s.prefs.ide && deps.lastEditor?.document.uri.scheme==='file'
-    ? {path:deps.lastEditor.document.uri.fsPath,text:deps.lastEditor.document.getText(deps.lastEditor.selection).slice(0,20000)} : null);
+  const input = deps.buildInput(text, attached, options.includeIde!==false && s.prefs.ide ? deps.editorSelection() : null);
   const sessionRelease = deps.store.acquire(s.id), releaseDirectory=directoryLease;
   const client=deps.server, connection=deps.activeConnection, threadId=s.id,
     previousTurnId=s.turnId || s.lastStartedTurnId || [...s.items].reverse().find(item=>item.turnId)?.turnId;

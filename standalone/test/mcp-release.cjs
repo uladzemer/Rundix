@@ -57,7 +57,7 @@ async function reload(root,project) {
   }};
   const context={threadReleases,mcpThreadConfig:()=>null,connect:noop,sessions,server,save:noop,publish(){},select(){throw Error('Unexpected synthetic select');},
     readItem:require('../runtime/session.cjs').readItem,questionRecords:{restore(){}},authBusy:false,store,
-    taskDirectory:require('../runtime/task-directory.cjs'),cwd:()=>project,locale:{t:text=>text},vscode:{workspace:{isTrusted:true}},
+    taskDirectory:require('../runtime/task-directory.cjs'),cwd:()=>project,locale:{t:text=>text},trusted:()=>true,hasChat:s=>!!s.panel,
     syncExternal:noop,applyPendingMode:noop,accountReadRevision:1,activeConnection:{},connections:{assertCurrent(){}},
     refreshAccount:async()=>false,account:{},limits:{updatedAt:Date.now(),buckets:[{id:'codex',windows:[{remaining:100}]}]},limitsRequest:null,refreshLimits:noop,refreshCatalog:noop,catalogUpdatedAt:Date.now(),
     updateDraftModel(){},

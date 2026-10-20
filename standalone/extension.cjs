@@ -1,37 +1,25 @@
-const server_connection = require('./runtime/server-connection.cjs');
-const account_lifecycle = require('./runtime/account-lifecycle.cjs');
-const session_persistence = require('./runtime/session-persistence.cjs');
-const mcp_access = require('./runtime/mcp-access.cjs');
-const session_resume = require('./runtime/session-resume.cjs');
-const send_queue = require('./runtime/send-queue.cjs');
-const question_policy = require('./runtime/question-policy.cjs');
-const question_answer = require('./runtime/question-answer.cjs');
+const { findCli } = require('./runtime/transport.cjs');
+const { SessionStore } = require('./runtime/store.cjs');
+const { createSessionCore } = require('./runtime/session-core.cjs');
 const locale = require("./ui/i18n.js");
 // Independent implementation using the documented Codex App Server protocol.
 const vscode = require("vscode");
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID, randomBytes } = require("node:crypto");
-const { AppServer, findCli } = require("./runtime/transport.cjs");
 const { CliUpdates } = require('./runtime/cli-updates.cjs');
 const { savePastedImage } = require('./runtime/pasted-image.cjs');
 const { messageImages } = require('./runtime/message-images.cjs');
-const { readCatalog } = require('./runtime/model-catalog.cjs');
 const {
-  notification,
   itemText,
   readItem,
   copyText,
 } = require("./runtime/session.cjs");
-const { SessionLibrary } = require("./runtime/library.cjs");
 const { newSessionSettings } = require('./runtime/new-session-settings.cjs');
 const { canEditQueued, queuedEdit, selectedAttachments, assertQueueCurrent, moveQueued } = require('./runtime/queued-edits.cjs');
 const { fileAttachment, stageQueuedAttachments } = require('./runtime/queued-attachments.cjs');
 const { transferQueuedSession, acquireQueuedSession } = require('./runtime/queued-session-transfer.cjs');
-const { SessionStore } = require("./runtime/store.cjs");
-const {PendingLogin} = require('./runtime/pending-login.cjs');
-const { startLogin, identity } = require("./runtime/account.cjs");
-const { Connections } = require('./runtime/connections.cjs');
+const { startLogin } = require("./runtime/account.cjs");
 const taskDirectory = require('./runtime/task-directory.cjs');
 const { McpTasks } = require('./runtime/mcp-tasks.cjs');
 const mcpBridgeTransport = require('./runtime/mcp-bridge.cjs');
@@ -41,7 +29,6 @@ const mcpPanelState=require('./runtime/mcp-panel.cjs');
 const { ProjectFiles } = require("./runtime/files.cjs");
 const modes = require("./ui/modes.js");
 const speed = require('./ui/speed.js');
-const { buildInput } = require("./runtime/input.cjs");
 const { versions } = require("./runtime/diff.cjs");
 const forms = require("./ui/forms.js");
 const asyncQuestions = require('./runtime/async-questions.cjs');
@@ -49,92 +36,9 @@ const questionRecords = require('./runtime/question-records.cjs');
 const preflight = require('./runtime/task-preflight.cjs');
 const { reference } = require("./runtime/references.cjs");
 const { tabTitle } = require("./runtime/titles.cjs");
-const { CompletionNotifications, capture: captureCompletion } = require('./runtime/completion-notifications.cjs');
+const { CompletionNotifications } = require('./runtime/completion-notifications.cjs');
 const { NotificationSettings } = require('./runtime/notification-settings.cjs');
 function activate(context) {
-  const hostDeps = {
-    get AppServer() { return AppServer; },
-    get PendingLogin() { return PendingLogin; },
-    get account() { return account; }, set account(value) { account = value; },
-    get accountReadRevision() { return accountReadRevision; },
-    get acquireQueuedSession() { return acquireQueuedSession; },
-    get activeConnection() { return activeConnection; }, set activeConnection(value) { activeConnection = value; },
-    get applyPendingMode() { return applyPendingMode; },
-    get assertQueueCurrent() { return assertQueueCurrent; },
-    get asyncQuestions() { return asyncQuestions; },
-    get authBusy() { return authBusy; }, set authBusy(value) { authBusy = value; },
-    get authOwner() { return authOwner; }, set authOwner(value) { authOwner = value; },
-    get broadcast() { return broadcast; },
-    get browserSignInMessage() { return browserSignInMessage; },
-    get buildInput() { return buildInput; },
-    get captureCompletion() { return captureCompletion; },
-    get catalog() { return catalog; }, set catalog(value) { catalog = value; },
-    get catalogUpdatedAt() { return catalogUpdatedAt; }, set catalogUpdatedAt(value) { catalogUpdatedAt = value; },
-    get checkCliUpdates() { return checkCliUpdates; },
-    get cliCheckRequest() { return cliCheckRequest; },
-    get cliPrepared() { return cliPrepared; }, set cliPrepared(value) { cliPrepared = value; },
-    get cliUpdates() { return cliUpdates; },
-    get completionNotifications() { return completionNotifications; },
-    get connect() { return connect; },
-    get connecting() { return connecting; }, set connecting(value) { connecting = value; },
-    get connectionStarting() { return connectionStarting; }, set connectionStarting(value) { connectionStarting = value; },
-    get connections() { return connections; },
-    get context() { return context; },
-    get cwd() { return cwd; },
-    get disposed() { return disposed; },
-    get drainFollowUps() { return drainFollowUps; },
-    get fs() { return fs; },
-    get hasPendingQuestions() { return hasPendingQuestions; },
-    get isActive() { return isActive; },
-    get lastEditor() { return lastEditor; },
-    get library() { return library; },
-    get limits() { return limits; }, set limits(value) { limits = value; },
-    get limitsEpoch() { return limitsEpoch; }, set limitsEpoch(value) { limitsEpoch = value; },
-    get limitsRequest() { return limitsRequest; }, set limitsRequest(value) { limitsRequest = value; },
-    get loadSelected() { return loadSelected; },
-    get locale() { return locale; },
-    get loginId() { return loginId; }, set loginId(value) { loginId = value; },
-    get mcpTasks() { return mcpTasks; },
-    get mcpThreadConfig() { return mcpThreadConfig; },
-    get modes() { return modes; },
-    get notification() { return notification; },
-    get output() { return output; },
-    get path() { return path; },
-    get pendingLogin() { return pendingLogin; },
-    get pendingRequests() { return pendingRequests; },
-    get preflight() { return preflight; },
-    get preparationConfig() { return preparationConfig; },
-    get projectFiles() { return projectFiles; },
-    get providerClient() { return providerClient; },
-    get publish() { return publish; },
-    get questionRecords() { return questionRecords; },
-    get queueFollowUp() { return queueFollowUp; },
-    get randomUUID() { return randomUUID; },
-    get readItem() { return readItem; },
-    get refreshAccount() { return refreshAccount; },
-    get refreshCatalog() { return refreshCatalog; },
-    get refreshLimits() { return refreshLimits; },
-    get resetConnection() { return resetConnection; },
-    get resolveCli() { return resolveCli; },
-    get resume() { return resume; },
-    get resumeThread() { return resumeThread; },
-    get save() { return save; },
-    get select() { return select; },
-    get send() { return send; },
-    get server() { return server; }, set server(value) { server = value; },
-    get sessions() { return sessions; },
-    get speed() { return speed; },
-    get steer() { return steer; },
-    get store() { return store; },
-    get syncExternal() { return syncExternal; },
-    get target() { return target; },
-    get taskDirectory() { return taskDirectory; },
-    get threadReleases() { return threadReleases; },
-    get treeEvents() { return treeEvents; },
-    get turnLeases() { return turnLeases; },
-    get updateDraftModel() { return updateDraftModel; },
-    get vscode() { return vscode; },
-  };
 
   const languageChoice = () =>
     vscode.workspace.getConfiguration("rundix").get("language", "auto");
@@ -146,27 +50,15 @@ function activate(context) {
     trusted: () => vscode.workspace.isTrusted });
   const notificationSettings = new NotificationSettings(vscode, completionNotifications);
   context.subscriptions.push(completionNotifications);
-  const sessions = new Map(),
-    hosts = new Map();
-  let lastHost,
-    loginId,
-    server,
-    connecting,
-    catalog = [],
-    account,
-    limits = { buckets: [], loading: false, updatedAt: null, error: false },
-    limitsEpoch = 0,
-    limitsRequest = null,
-    defaultModel,
-    defaultEffort,
-    lastEditor = vscode.window.activeTextEditor;
-  let authBusy = false, authOwner = null;
-  const pendingLogin = account_lifecycle.createPendingLogin(hostDeps);
+  const hosts = new Map();
+  const sessionViews = new WeakMap();
+  const view = s => s && sessionViews.get(s) || {};
+  const hasChat = s => !!view(s)?.panel;
+  let lastHost, lastEditor = vscode.window.activeTextEditor;
   const pastedImageRoot=path.join(context.globalStorageUri.fsPath,'pasted-images');
   const cliUpdates = new CliUpdates({root:path.join(context.globalStorageUri.fsPath,'cli')});
-  let cliOverride = null, cliPrepared = null, cliCheckRequest = null, disposed = false;
+  let cliOverride = null, cliCheckRequest = null;
   let cliInfo = {version:null,phase:'idle',error:false,managed:false};
-  let catalogRequest = null, catalogUpdatedAt = 0, accountReadRevision = 0, accountRequestEpoch = 0;
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
       if(event.affectsConfiguration('rundix.chatWidth') ||
@@ -184,31 +76,47 @@ function activate(context) {
         if (host.panel) host.panel.webview.html = html(host.panel.webview);
     }),
   );
-  const store = new SessionStore(
-    path.join(context.globalStorageUri.fsPath, "sessions-v1"),
-  );
-  const connections = new Connections({store, activateOwner: async owner => {
-    const extension = vscode.extensions.getExtension(owner);
-    if (!extension) throw Error('The selected connection extension is not installed.');
-    await extension.activate();
-  }});
-  let activeConnection = null, connectionStarting = false;
-  const providerClients = new WeakMap();
-  function providerClient(client, connection) {
-    if (!providerClients.has(client)) {
-      const assertOwner = () => {
-        connections.assertCurrent(connection);
-        if (server !== client) throw Error('The connection client has closed.');
-      };
-      providerClients.set(client, {
-        async request(...args) { assertOwner(); const result = await client.request(...args); assertOwner(); return result; },
-        respond(...args) { assertOwner(); return client.respond(...args); },
-      });
-    }
-    return providerClients.get(client);
-  }
-  let accountStatusRequest = null;
-  const turnLeases = new Map();
+  const core = createSessionCore({
+    paths: { storage: context.globalStorageUri.fsPath },
+    settings: (key, fallback, scope) => {
+      const config = vscode.workspace.getConfiguration('rundix');
+      return scope === 'user' ? config.inspect(key)?.globalValue : config.get(key, fallback);
+    },
+    workspaceState: {
+      get: (...args) => context.workspaceState.get(...args),
+      update: (...args) => context.workspaceState.update(...args),
+    },
+    trusted: () => vscode.workspace.isTrusted,
+    logger: message => output.appendLine(message),
+    clock: { now: () => Date.now(), setTimeout, clearTimeout },
+    events: {
+      changed: () => broadcast(), sessionChanged: s => publish(s),
+      treeChanged: () => treeEvents.fire(),
+      notify: message => { void vscode.window.showWarningMessage(message); },
+      completed: completion => completionNotifications.dispatch(completion),
+    },
+    hasChat, isActive: s => isActive(s), activeSession: () => target(),
+    openChat: s => select(s), loadSelected: s => loadSelected(s),
+    defaultDirectory: () => cwd(),
+    editorSelection: () => lastEditor?.document.uri.scheme === 'file'
+      ? { path: lastEditor.document.uri.fsPath, text: lastEditor.document.getText(lastEditor.selection).slice(0, 20000) } : null,
+    activateConnectionOwner: async owner => {
+      const extension = vscode.extensions.getExtension(owner);
+      if (!extension) throw Error('The selected connection extension is not installed.');
+      await extension.activate();
+    },
+    resolveCli: () => resolveCli(), checkCliUpdates: () => checkCliUpdates(),
+    cliCheckPending: () => !!cliCheckRequest,
+    acceptCli: prepared => cliUpdates.accept(prepared.channel, prepared),
+    clearProjectFiles: () => projectFiles.clear(),
+    applyPendingMode: s => applyPendingMode(s),
+    taskSessions: () => mcpTasks && ({
+      tasks: { values: () => mcpTasks.tasks.values() },
+      adapter: { pending: task => mcpTasks.adapter.pending(task) },
+      call: (...args) => mcpTasks.call(...args),
+    }),
+  });
+  const { sessions, store, library, connections, pendingLogin, pendingRequests, threadReleases, turnLeases } = core;
   for (const key of context.workspaceState
     .keys()
     .filter((key) => key.startsWith("session:"))) {
@@ -219,7 +127,6 @@ function activate(context) {
         cwd: old.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
       });
   }
-  const library = new SessionLibrary(context.workspaceState, store);
   for (const [id, meta] of Object.entries(library.meta))
     if (!Object.keys(store.meta(id)).length) store.updateMeta(id, meta);
   let recent = [],
@@ -243,8 +150,6 @@ function activate(context) {
         );
     }),
   );
-  const pendingRequests = new Map();
-  const threadReleases = new Map();
   let mcpTasks=null, mcpBridge=null, mcpLease=null, mcpStarting=null, mcpLauncher=null;
   const mcpViews=new Map();
   let mcpEditor=null, mcpPanelBusy=false;
@@ -261,11 +166,11 @@ function activate(context) {
     if(connections.selection().id==='local')throw Error('Select a companion connection.');
     await connections.resolve();
     await refreshAccountStatus();
-    if(!account || limits.error)throw Error('The selected pool connection is unavailable.');
+    if(!core.state.account || core.state.limits.error)throw Error('The selected pool connection is unavailable.');
   }
   function mcpPanelSnapshot() {
     let connected=false;
-    try{if(activeConnection?.provider && account && !limits.error){connections.assertCurrent(activeConnection);connected=true;}}catch{}
+    try{if(core.state.activeConnection?.provider && core.state.account && !core.state.limits.error){connections.assertCurrent(core.state.activeConnection);connected=true;}}catch{}
     return mcpPanelState.snapshot({records:mcpRecords(),language:locale.language,connection:connections.display(),connected,bridgeRunning:!!mcpBridge,
       pending:task=>mcpTasks?.adapter.pending(task) || []});
   }
@@ -299,7 +204,7 @@ function activate(context) {
       if(message.action==='openChat') {
         const saved=store.session(task.sessionKey), existing=sessions.get(task.sessionKey);
         if(!saved || !task.chatId || saved.id!==task.chatId)throw Error('Task chat metadata is unavailable.');
-        if(existing?.panel)select(existing);else create(saved);
+        if(view(existing)?.panel)select(existing);else create(saved);
       }else {
         if(!mcpTasks || !vscode.workspace.isTrusted)throw Error('Start the MCP bridge in a trusted workspace.');
         if(typeof message.requestId!=='string' || !/^[\w-]{1,128}$/.test(message.requestId))throw Error('Invalid panel requestId.');
@@ -358,9 +263,9 @@ function activate(context) {
         catch{mcpLauncher=path.join(context.extensionUri.fsPath,'runtime','mcp-server.cjs');}
         mcpTasks=new McpTasks({store:new SessionStore(path.join(root,'tasks')),directoryStore:store,
           maxParallel:()=>vscode.workspace.getConfiguration('rundix').inspect('mcpMaxParallelTasks')?.globalValue ?? 3,
-          adapter:mcpExecutor({connections,sessions,store,create,
+          adapter:mcpExecutor({connections,sessions,store,create,hasChat,
             send,
-            resume,handle,pending:pendingRequests,save,alive:()=>!disposed && !!mcpBridge,
+            resume,handle,pending:pendingRequests,save,alive:()=>!core.state.disposed && !!mcpBridge,
             closeTab,
             // Only a restored tab that hosts exactly this chat and is unambiguous by title is closed.
             async closeSavedTab(key){
@@ -381,22 +286,22 @@ function activate(context) {
             },
             async models(){
               // Load the catalog within the bridge's request budget; an empty answer must mean "no models", never "not loaded".
-              if(!catalog.length){
+              if(!core.state.catalog.length){
                 let timer;
                 const load=(async()=>{await connect();await refreshCatalog();})();
                 try{await Promise.race([load,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('timeout')),9000);})]);}
                 catch{throw Object.assign(Error('The model catalog is not available yet. Check the Codex connection in Rundix and retry.'),{code:'connection_unavailable'});}
                 finally{clearTimeout(timer);load.catch(()=>{});}
               }
-              return catalog.map(model=>({model:model.model,displayName:model.displayName || model.model,isDefault:!!model.isDefault,
+              return core.state.catalog.map(model=>({model:model.model,displayName:model.displayName || model.model,isDefault:!!model.isDefault,
                 defaultEffort:model.defaultReasoningEffort || null,efforts:(model.supportedReasoningEfforts || []).map(effort=>effort.reasoningEffort).filter(Boolean)}));
             },
-            releases:threadReleases,client:()=>{if(!activeConnection || !server)return null;connections.assertCurrent(activeConnection);return server;},
+            releases:threadReleases,client:()=>{if(!core.state.activeConnection || !core.state.server)return null;connections.assertCurrent(core.state.activeConnection);return core.state.server;},
             // Only the user's own settings count: a repository's workspace settings must not grant MCP full access.
             accessMode:()=>vscode.workspace.getConfiguration('rundix').inspect('mcpAccessMode')?.globalValue || 'workspace',
             async sent(s,text){
               publish(s,true);
-              await s.panel?.webview.postMessage({type:'sent',key:s.key,text});
+              await view(s).panel?.webview.postMessage({type:'sent',key:s.key,text});
             },
             retainTurn(s,task){
               if(turnLeases.has(s.id))return;
@@ -433,7 +338,6 @@ function activate(context) {
     return descriptor;
   }),vscode.commands.registerCommand('rundix.mcpStop',stopMcp));
   if(context.globalState.get('mcpEnabled',false))void startMcp().catch(()=>{});
-  let nextDraft = 1;
   const virtualDocuments = new Map();
   context.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(
@@ -471,7 +375,7 @@ function activate(context) {
     vscode.workspace.onDidRenameFiles,
   ])
     context.subscriptions.push(event(() => projectFiles.clear()));
-  const isActive = (s) => !!s.panel?.active && s.host?.activeKey === s.key;
+  const isActive = (s) => !!view(s).panel?.active && view(s).host?.activeKey === s.key;
   function broadcast() {
     for (const s of sessions.values()) publish(s);
     treeEvents.fire();
@@ -493,7 +397,7 @@ function activate(context) {
       }));
   }
   function publish(s, immediate = false) {
-    const host = s.host;
+    const host = view(s).host;
     if (!host?.panel) return;
     if (host.timer) {
       if (!immediate) return;
@@ -521,19 +425,19 @@ function activate(context) {
           parentId: s.parentId || null,
           model: s.model,
           effort: s.effort,
-          models: catalog,
+          models: core.state.catalog,
           cli: {...cliInfo, channel:cliChannel(),autoUpdate:vscode.workspace.getConfiguration('rundix').get('cliAutoUpdate',true),custom:!!configuredCliPath()},
-          modelsUpdatedAt: catalogUpdatedAt,
-          account: connections.projectAccount(account),
+          modelsUpdatedAt: core.state.catalogUpdatedAt,
+          account: connections.projectAccount(core.state.account),
           connection: connections.display(),
           mcpBridgeRunning:!!mcpBridge,
-          authBusy,
+          authBusy: core.state.authBusy,
           chatWidth:vscode.workspace.getConfiguration('rundix').get('chatWidth','wide'),
           contextDisplay:vscode.workspace.getConfiguration('rundix').get('contextDisplay','percent'),
           controlMotion:vscode.workspace.getConfiguration('rundix').get('controlMotion','auto'),
           activityMotion:vscode.workspace.getConfiguration('rundix').get('activityMotion','auto'),
-          limits,
-          loginPending: !!loginId,
+          limits: core.state.limits,
+          loginPending: !!core.state.loginId,
           busy: s.busy,
           turnId:s.turnId || null,
           turnStartedAt:s.turnStartedAt || null,
@@ -613,12 +517,12 @@ function activate(context) {
     }
     if(!executable) {
       const preparedChannel=cliChannel();
-      cliPrepared=await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,
+      core.state.cliPrepared=await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,
         title:locale.t('Подготовка Codex CLI'),cancellable:false},progress=>cliUpdates.prepare(preparedChannel,{
           onProgress:message=>progress.report({message}),
         }));
-      cliPrepared.channel=preparedChannel;
-      executable=cliPrepared.executable;cliInfo={...cliInfo,version:cliPrepared.version,managed:true};
+      core.state.cliPrepared.channel=preparedChannel;
+      executable=core.state.cliPrepared.executable;cliInfo={...cliInfo,version:core.state.cliPrepared.version,managed:true};
     }
     if(!cliInfo.version || configured || (!cliInfo.managed && !cliOverride)) {
       try {
@@ -631,21 +535,21 @@ function activate(context) {
   async function checkCliUpdates(force=false) {
     if(cliCheckRequest)return cliCheckRequest;
     const config=vscode.workspace.getConfiguration('rundix');
-    if(disposed || configuredCliPath() || (!force && !config.get('cliAutoUpdate',true)))return;
+    if(core.state.disposed || configuredCliPath() || (!force && !config.get('cliAutoUpdate',true)))return;
     const channel=cliChannel();
     cliCheckRequest=(async()=>{
       cliInfo={...cliInfo,phase:'checking',error:false};broadcast();
       const candidate=await cliUpdates.prepare(channel,{force,onProgress:()=>{cliInfo.phase='downloading';broadcast();}});
-      if(disposed||channel!==cliChannel())return;
+      if(core.state.disposed||channel!==cliChannel())return;
       if(configuredCliPath() || (!force&&!vscode.workspace.getConfiguration('rundix').get('cliAutoUpdate',true))){cliInfo.phase='idle';return;}
       cliInfo.checkedAt=Date.now();
-      if(server?.executable===candidate.executable){cliUpdates.accept(channel,candidate);cliInfo={...cliInfo,version:candidate.version,managed:true,phase:'ready'};await refreshCatalog();return;}
-      if(authBusy||loginId||accountStatusRequest||pendingRequests.size||[...sessions.values()].some(s=>s.busy||s.compacting)) {cliInfo.phase='pending';return;}
+      if(core.state.server?.executable===candidate.executable){cliUpdates.accept(channel,candidate);cliInfo={...cliInfo,version:candidate.version,managed:true,phase:'ready'};await refreshCatalog();return;}
+      if(core.state.authBusy||core.state.loginId||core.state.accountStatusRequest||pendingRequests.size||[...sessions.values()].some(s=>s.busy||s.compacting)) {cliInfo.phase='pending';return;}
       let release;
       try {release=store.acquire('account-credentials');store.assertNoActiveTurns();}
       catch {release?.();cliInfo.phase='pending';return;}
-      const previous={executable:server?.executable,info:{...cliInfo}};
-      authBusy=true;cliInfo.phase='applying';broadcast();
+      const previous={executable:core.state.server?.executable,info:{...cliInfo}};
+      core.state.authBusy=true;cliInfo.phase='applying';broadcast();
       try {
         for(const s of sessions.values())await save(s);
         stopAccountServer();
@@ -659,77 +563,17 @@ function activate(context) {
         stopAccountServer();cliOverride=previous.executable;
         if(previous.executable)try{await connect();}catch{}
         cliInfo={...previous.info,phase:'error',error:true};
-      }finally{authBusy=false;release();}
-    })().catch(()=>{cliInfo={...cliInfo,phase:'error',error:true};}).finally(()=>{cliCheckRequest=null;broadcast();if(!disposed&&channel!==cliChannel())void checkCliUpdates(true);});
+      }finally{core.state.authBusy=false;release();}
+    })().catch(()=>{cliInfo={...cliInfo,phase:'error',error:true};}).finally(()=>{cliCheckRequest=null;broadcast();if(!core.state.disposed&&channel!==cliChannel())void checkCliUpdates(true);});
     return cliCheckRequest;
   }
-  function connect(...args) { return server_connection.connect(hostDeps, ...args); }
-  async function refreshAccount() {
-    const client = server, requestEpoch = ++accountRequestEpoch;
-    const previous = identity(account);
-    const result = await client.request("account/read", { refreshToken: false });
-    if (client !== server || requestEpoch !== accountRequestEpoch) return false;
-    account = result.account
-      ? {
-          type: result.account.type,
-          email: result.account.email,
-          planType: result.account.planType,
-        }
-      : null;
-    const changed = previous !== identity(account);
-    if (changed) {
-      catalog=[];catalogUpdatedAt=0;
-      limitsEpoch++;
-      limitsRequest = null;
-      limits = { buckets: [], loading: false, updatedAt: null, error: false };
-      for (const s of sessions.values()) if (!s.busy) s.loaded = false;
-      void refreshLimits();
-    }
-    broadcast();
-    accountReadRevision++;
-    return changed;
-  }
-  async function withLocalSignIn(operation) {
-    if (pendingLogin.current) throw Error(browserSignInMessage());
-    if (authBusy || connectionStarting || accountStatusRequest || [...sessions.values()].some(session => session.busy || session.compacting || session.sendingTask))
-      throw Error(locale.t('Дождитесь завершения задач перед сменой аккаунта.'));
-    const release = store.acquire('account-credentials');
-    try {
-      store.assertNoActiveTurns();
-      authOwner = release; authBusy = true; broadcast();
-      return await operation(release);
-    } finally {
-      if (pendingLogin.current?.release !== release) {
-        if (authOwner === release) { authOwner = null; authBusy = false; }
-        release();
-      }
-      broadcast();
-    }
-  }
-  function browserSignInMessage(...args) { return account_lifecycle.browserSignInMessage(hostDeps, ...args); }
-  function refreshAccountStatus() {
-    if (authBusy) return Promise.reject(Error('Wait for the connection change to finish.'));
-    if (accountStatusRequest) return accountStatusRequest;
-    accountStatusRequest = (async () => {
-      await connect();
-      await refreshAccount();
-      await Promise.all([refreshLimits(), refreshCatalog()]);
-    })().finally(() => { accountStatusRequest = null; broadcast(); });
-    return accountStatusRequest;
-  }
-  function stopAccountServer() {
-    pendingLogin.finish();
-    server?.removeAllListeners(); server?.dispose(); server = null; connecting = null;
-  }
-  async function resetConnection() {
-    for (const session of sessions.values()) { await save(session); session.loaded = false; }
-    stopAccountServer(); activeConnection = null;
-    account = null; catalog = []; catalogUpdatedAt = 0;
-    accountRequestEpoch++; limitsEpoch++; limitsRequest = null;
-    limits = {buckets:[],loading:false,updatedAt:null,error:false};
-    broadcast();
-    return connect();
-  }
+  function connect(...args) { return core.connect(...args); }
+  const refreshAccount = (...args) => core.refreshAccount(...args);
+  const withLocalSignIn = (...args) => core.withLocalSignIn(...args);
+  function browserSignInMessage(...args) { return core.browserSignInMessage(...args); }
+  const refreshAccountStatus = (...args) => core.refreshAccountStatus(...args);
+  const stopAccountServer = (...args) => core.stopAccountServer(...args);
+  const resetConnection = (...args) => core.resetConnection(...args);
   async function configureConnection(id) {
     return withLocalSignIn(async () => {
       if (id === 'local') connections.select('local');
@@ -748,68 +592,10 @@ function activate(context) {
     const choice = await vscode.window.showQuickPick(connections.choices().map(item => ({label:item.label,id:item.id})), {title:'Rundix · '+locale.t('Подключение'),placeHolder:locale.t('Выберите или настройте подключение')});
     if (choice) await configureConnection(choice.id);
   }
-  async function refreshLimits() {
-    if (limitsRequest) return limitsRequest;
-    if (!account || !["chatgpt", "chatgptAuthTokens"].includes(account.type)) {
-      limits = { buckets: [], loading: false, updatedAt: null, error: false };
-      broadcast();
-      return;
-    }
-    const epoch = limitsEpoch,
-      client = server;
-    limits = { ...limits, loading: true };
-    broadcast();
-    limitsRequest = (async () => {
-      try {
-        const result = await client.request("account/rateLimits/read");
-        if (epoch === limitsEpoch && client === server)
-          limits = {
-            buckets: require("./ui/limits.js").normalize(result),
-            loading: false,
-            updatedAt: Date.now(),
-            error: false,
-          };
-      } catch {
-        if (epoch === limitsEpoch && client === server)
-          limits = { ...limits, loading: false, error: true };
-      } finally {
-        if (epoch === limitsEpoch && client === server) {
-          limitsRequest = null;
-          broadcast();
-        }
-      }
-    })();
-    return limitsRequest;
-  }
-  function updateDraftModel(s) {
-    if(s.id || !catalog.length)return;
-    if(!catalog.some(m=>m.model===s.model))
-      s.model=[library.defaults.model,defaultModel,catalog[0]?.model].find(id=>catalog.some(m=>m.model===id));
-    const model=catalog.find(m=>m.model===s.model);
-    if(model && !model.supportedReasoningEfforts?.some(e=>e.reasoningEffort===s.effort))
-      s.effort=[library.defaults.effort,defaultEffort,model.defaultReasoningEffort].find(e=>model.supportedReasoningEfforts?.some(v=>v.reasoningEffort===e));
-  }
-  async function refreshCatalog() {
-    const client=server, accountId=identity(account), epoch=limitsEpoch;
-    if(catalogRequest?.client===client && catalogRequest.epoch===epoch)return catalogRequest.promise;
-    const request=(async()=>{
-      const [available,config]=await Promise.all([
-        readCatalog(client).catch(error=>{if(account)throw error;return [];}),
-        client.request('config/read',{includeLayers:false}),
-      ]);
-      if(client!==server||identity(account)!==accountId||limitsEpoch!==epoch)return;
-      catalog=available;catalogUpdatedAt=Date.now();
-      defaultModel=config.config?.model || catalog.find(m=>m.isDefault)?.model;
-      defaultEffort=config.config?.model_reasoning_effort;
-      for(const s of sessions.values()){
-        updateDraftModel(s);
-        publish(s);
-      }
-    })();
-    catalogRequest={client,epoch,promise:request};
-    try{return await request;}finally{if(catalogRequest?.promise===request)catalogRequest=null;}
-  }
-  function save(...args) { return session_persistence.save(hostDeps, ...args); }
+  const refreshLimits = (...args) => core.refreshLimits(...args);
+  const updateDraftModel = (...args) => core.updateDraftModel(...args);
+  const refreshCatalog = (...args) => core.refreshCatalog(...args);
+  function save(...args) { return core.save(...args); }
   function html(webview) {
     const nonce = randomBytes(18).toString("base64");
     const uri = (name) =>
@@ -840,7 +626,7 @@ function activate(context) {
       true,
     );
   }
-  function syncExternal(...args) { return session_persistence.syncExternal(hostDeps, ...args); }
+  function syncExternal(...args) { return core.syncExternal(...args); }
   async function loadSelected(s) {
     try {
       await syncExternal(s);
@@ -854,8 +640,8 @@ function activate(context) {
     publish(s);
   }
   function select(s, reveal = true) {
-    if (!s?.panel) return;
-    const host = s.host;
+    if (!view(s)?.panel) return;
+    const host = view(s).host;
     host.activeKey = s.key;
     if (reveal) host.panel.reveal();
     activated(host);
@@ -872,7 +658,7 @@ function activate(context) {
         ? host.activeKey
         : msg.sessionKey || host.activeKey,
     );
-    if (!s || s.host !== host || !s.panel) {
+    if (!s || view(s).host !== host || !view(s).panel) {
       const active = sessions.get(host.activeKey);
       if (active) publish(active);
       return;
@@ -886,23 +672,23 @@ function activate(context) {
     }
     if (msg.action === "activateTab") {
       const next = sessions.get(msg.tabKey);
-      if (next?.host === host && next.panel) select(next);
+      if (view(next)?.host === host && view(next).panel) select(next);
       return;
     }
     if (msg.action === "closeTab") {
       const tab = sessions.get(msg.tabKey);
-      if (tab?.host === host && tab.panel) await closeTab(tab);
+      if (view(tab)?.host === host && view(tab).panel) await closeTab(tab);
       return;
     }
     if (msg.action === "renameTab") {
       const tab = sessions.get(msg.tabKey);
-      if (tab?.host === host && tab.panel)
+      if (view(tab)?.host === host && view(tab).panel)
         await handle(tab, { action: "rename", name: msg.name });
       return;
     }
     if (msg.action === "forkTab" || msg.action === "moveTab") {
       const tab = sessions.get(msg.tabKey);
-      if (tab?.host === host && tab.panel)
+      if (view(tab)?.host === host && view(tab).panel)
         return handle(tab, {
           action: msg.action === "forkTab" ? "fork" : "continueWindow",
         });
@@ -960,7 +746,7 @@ function activate(context) {
       const session = sessions.get(msg.sessionKey);
       // publish() normally batches state for 40 ms. Send its final snapshot
       // before releasing the optimistic position, or the thumb would bounce back.
-      if (session?.host === host) publish(session, true);
+      if (view(session)?.host === host) publish(session, true);
       try {
         await panel.webview.postMessage({ type: 'toggleResult', requestId: msg.toggleRequestId, key: msg.sessionKey, ok });
       } catch {
@@ -1006,7 +792,7 @@ function activate(context) {
       for (const key of [...host.keys]) {
         const s = sessions.get(key);
         if (!s) continue;
-        s.panel = null;
+        view(s).panel = null;
         delete s.queuedAttachmentDraft;
         void save(s);
         void library.close(s, column);
@@ -1041,49 +827,23 @@ function activate(context) {
         context.workspaceState.get("session:" + key) ||
         {},
       existing = sessions.get(key);
-    if (existing?.panel && !panel) return select(existing);
+    if (view(existing)?.panel && !panel) return select(existing);
     // Capture before creating/revealing a panel changes the active host.
     const inherited = restored ? {} : newSessionSettings(target(), cwd());
     const host = forcedHost || createHost(panel, column);
-    const s = existing || {
-      key,
-      id: null,
-      name: locale.t("Новая сессия {0}", nextDraft++),
-      items: [],
-      attachments: [],
-      followUps: [],
-      busy: false,
-      cwd: cwd(),
-      model: library.defaults.model,
-      effort: library.defaults.effort,
-      ...inherited,
-      ...saved,
-      prefs: {
-        focus: false,
-        showThinking: true,
-        ide: false,
-        plan: false,
-        access: "workspace",
-        ...inherited.prefs,
-        ...saved.prefs,
-      },
-    };
-    s.persistedRecord = saved;
-    updateDraftModel(s);
-    s.host = host;
-    s.panel = host.panel;
-    sessions.set(key, s);
+    const s = core.createSession({ key, saved, inherited });
+    sessionViews.set(s, { host, panel: host.panel });
     if (!host.keys.includes(key)) host.keys.push(key);
     void save(s);
     return select(s, !panel && reveal);
   }
   async function closeTab(s) {
-    const host = s.host,
+    const host = view(s).host,
       index = host.keys.indexOf(s.key);
     if (index < 0) return;
     await save(s);
     await library.close(s, host.panel?.viewColumn);
-    s.panel = null;
+    view(s).panel = null;
     delete s.queuedAttachmentDraft;
     host.keys.splice(index, 1);
     if (!s.busy) sessions.delete(s.key);
@@ -1102,18 +862,9 @@ function activate(context) {
     await saveHost(host);
     treeEvents.fire();
   }
-  // Per-thread Codex config for MCP task chats only, from the user's own settings (for example disabling helpers that pin the task folder).
-  function mcpThreadConfig(...args) { return mcp_access.mcpThreadConfig(hostDeps, ...args); }
-  function resume(...args) { return session_resume.resume(hostDeps, ...args); }
-  function resumeThread(...args) { return session_resume.resumeThread(hostDeps, ...args); }
-  function send(...args) { return send_queue.send(hostDeps, ...args); }
-  async function preparationConfig(s){
-    const client=server;
-    const result=await client.request('config/read',{includeLayers:false,cwd:s.cwd||cwd()});
-    if(client!==server)throw Error(locale.t('Соединение изменилось. Повторите подготовку задачи.'));
-    return preflight.restrictedConfig(result.config);
-  }
-  function hasPendingQuestions(...args) { return question_policy.hasPendingQuestions(hostDeps, ...args); }
+  function resume(...args) { return core.resume(...args); }
+  function send(...args) { return core.send(...args); }
+  function hasPendingQuestions(...args) { return core.hasPendingQuestions(...args); }
   async function setMode(s, id) {
     const selected = modes.modes.find((m) => m.id === id);
     if (!selected) throw Error(locale.t("Неизвестный режим работы."));
@@ -1124,9 +875,9 @@ function activate(context) {
     s.prefs.pendingMode=null;
     await applyMode(s,id);
   }
-  function queueFollowUp(...args) { return send_queue.queueFollowUp(hostDeps, ...args); }
-  function steer(...args) { return send_queue.steer(hostDeps, ...args); }
-  function drainFollowUps(...args) { return send_queue.drainFollowUps(hostDeps, ...args); }
+  function queueFollowUp(...args) { return core.queueFollowUp(...args); }
+  function steer(...args) { return core.steer(...args); }
+  function drainFollowUps(...args) { return core.drainFollowUps(...args); }
   async function applyPendingMode(s){
     if(s.modeChange)return s.modeChange;
     if(s.busy || !s.prefs.pendingMode)return;
@@ -1151,7 +902,7 @@ function activate(context) {
         id,
         s.cwd,
       );
-      await server.request("thread/settings/update", {
+      await core.state.server.request("thread/settings/update", {
         threadId: s.id,
         approvalPolicy,
         approvalsReviewer,
@@ -1251,12 +1002,12 @@ function activate(context) {
             void drainFollowUps(source).catch(error=>{source.error=error.message;publish(source);});
         },
         start:async(destination,modelSelection)=>{
-          if(!destination.panel)return;
+          if(!view(destination).panel)return;
           try {
             const result=await send(destination,destination.draft,destination.attachments,{modelSelection});
             if(result?.waitUntil)throw Error(locale.t('Очередь ожидает сброса лимитов. Повторите отправку позже.'));
             destination.draft='';await save(destination);publish(destination);
-            await destination.panel?.webview.postMessage({type:'sent',key:destination.key});
+            await view(destination).panel?.webview.postMessage({type:'sent',key:destination.key});
           } catch(error) {destination.error=error.message;publish(destination);}
         },
       });
@@ -1265,13 +1016,13 @@ function activate(context) {
     } else if (['pickQueuedFiles', 'pasteQueuedImage'].includes(msg.action)) {
       if (typeof msg.requestId !== 'string' || !/^[\w-]{1,100}$/.test(msg.requestId)) throw Error('Invalid queue attachment request');
       try {
-        const files = await stageQueuedAttachments(s, msg, { latest: () => store.session(s.key),
+        const files = await stageQueuedAttachments(s, msg, { chatIdentity: () => hasChat(s) ? view(s).panel : null, latest: () => store.session(s.key),
           pickFiles: () => vscode.window.showOpenDialog({ canSelectMany: true, openLabel: locale.t('Добавить в контекст') }),
           pasteImage: data => savePastedImage(pastedImageRoot, data) });
-        await s.panel?.webview.postMessage({ type: 'queuedAttachmentsResult', key: s.key, editId: msg.editId,
+        await view(s).panel?.webview.postMessage({ type: 'queuedAttachmentsResult', key: s.key, editId: msg.editId,
           requestId: msg.requestId, ok: true, attachments: files.map(file => ({id:file.id,name:file.name,kind:file.kind})) });
       } catch (error) {
-        await s.panel?.webview.postMessage({ type: 'queuedAttachmentsResult', key: s.key, editId: msg.editId, requestId: msg.requestId, ok: false });
+        await view(s).panel?.webview.postMessage({ type: 'queuedAttachmentsResult', key: s.key, editId: msg.editId, requestId: msg.requestId, ok: false });
         throw error;
       }
     } else if (msg.action === 'editQueued') {
@@ -1284,10 +1035,10 @@ function activate(context) {
         });
         if (s.queuedAttachmentDraft?.editId === msg.editId) delete s.queuedAttachmentDraft;
       } catch (error) {
-        await s.panel?.webview.postMessage({type:'queuedEditResult',key:s.key,requestId:msg.requestId,ok:false});
+        await view(s).panel?.webview.postMessage({type:'queuedEditResult',key:s.key,requestId:msg.requestId,ok:false});
         throw error;
       }
-      await s.panel?.webview.postMessage({type:'queuedEditResult',key:s.key,requestId:msg.requestId,ok:true});
+      await view(s).panel?.webview.postMessage({type:'queuedEditResult',key:s.key,requestId:msg.requestId,ok:true});
     } else if (msg.action === 'removeQueued') {
       if(s.followUpSending)throw Error(locale.t('Дождитесь отправки сообщения из очереди.'));
       const releaseQueue=acquireQueuedSession(s,key=>store.acquire(key));
@@ -1331,7 +1082,7 @@ function activate(context) {
         }
       } finally {releaseQueue();}
     } else if(msg.action==='answerAsync') {
-      return question_answer.answerAsync(hostDeps, s, msg);
+      return core.answerAsync(s, msg);
     } else if (msg.action === "send" || msg.action === 'enqueue') {
       if(s.approvingTask)throw Error(locale.t('Дождитесь обработки уточнений перед согласованием.'));
       if(preflight.preparing(s.preflight))s.preflight.skipped=false;
@@ -1343,7 +1094,7 @@ function activate(context) {
       // Follow-ups wait by default; steering is an explicit action on a pending message.
       if(s.busy || s.followUpSending || s.followUps?.length || msg.action==='enqueue'){
         await queueFollowUp(s,msg.text,[...s.attachments]);
-        await s.panel?.webview.postMessage({type:'sent',key:s.key});
+        await view(s).panel?.webview.postMessage({type:'sent',key:s.key});
         if(!s.busy)await drainFollowUps(s);
         return;
       }
@@ -1352,7 +1103,7 @@ function activate(context) {
         connections.assertCurrent(sendResult.connection);
         const waitingConnection = sendResult.connection;
         const proceed = await waitingConnection.provider.waitForReset(sendResult.waitUntil, () => {
-          try { connections.assertCurrent(waitingConnection); return !!s.panel; } catch { return false; }
+          try { connections.assertCurrent(waitingConnection); return hasChat(s); } catch { return false; }
         });
         if (!proceed) throw Error('Waiting cancelled. Your draft is preserved.');
         connections.assertCurrent(sendResult.connection);
@@ -1360,7 +1111,7 @@ function activate(context) {
       }
       s.draft = "";
       await save(s);
-      await s.panel?.webview.postMessage({ type: "sent", key: s.key });
+      await view(s).panel?.webview.postMessage({ type: "sent", key: s.key });
     } else if (msg.action === "draft") {
       if (typeof msg.text === "string" && msg.text.length <= 200000) {
         s.draft = msg.text;
@@ -1369,7 +1120,7 @@ function activate(context) {
     } else if (msg.action === "stop") {
       s.stopRequested=true;
       if (s.id && s.turnId)
-        await server.request("turn/interrupt", {
+        await core.state.server.request("turn/interrupt", {
           threadId: s.id,
           turnId: s.turnId,
         });
@@ -1405,7 +1156,7 @@ function activate(context) {
         : null;
       if (msg.itemId && !item)
         throw Error(locale.t("Ход для создания ветки не найден."));
-      const result = await server.request("thread/fork", {
+      const result = await core.state.server.request("thread/fork", {
         threadId: s.id,
         ...(item ? { lastTurnId: item.turnId } : {}),
         cwd: s.cwd || cwd(),
@@ -1415,7 +1166,7 @@ function activate(context) {
         sandbox: "workspace-write",
       });
       const name = s.name + locale.t(" — ветка");
-      await server.request("thread/name/set", {
+      await core.state.server.request("thread/name/set", {
         threadId: result.thread.id,
         name,
       });
@@ -1444,9 +1195,9 @@ function activate(context) {
       return fork;
     } else if (msg.action === "continueWindow") {
       await save(s);
-      const previous = s.host;
+      const previous = view(s).host;
       previous.keys = previous.keys.filter((key) => key !== s.key);
-      s.panel = null;
+      view(s).panel = null;
       if (previous.keys.length) {
         if (previous.activeKey === s.key)
           select(sessions.get(previous.keys[0]));
@@ -1469,7 +1220,7 @@ function activate(context) {
         throw Error(locale.t("Имя должно содержать от 1 до 200 символов."));
       if (s.id) {
         await connect();
-        await server.request("thread/name/set", { threadId: s.id, name });
+        await core.state.server.request("thread/name/set", { threadId: s.id, name });
       }
       s.name = name;
       s.customName = true;
@@ -1477,7 +1228,7 @@ function activate(context) {
       publish(s);
     } else if (msg.action === "history") {
       const result = await loadHistory(msg);
-      await s.panel?.webview.postMessage({
+      await view(s).panel?.webview.postMessage({
         type: "history",
         key: s.key,
         data: result.rows,
@@ -1489,7 +1240,7 @@ function activate(context) {
       if (typeof msg.key === "string") openEntry({ key: msg.key, id: msg.id });
       else if (typeof msg.id === "string") openEntry({ id: msg.id });
     } else if (msg.action === "older" && s.cursor) {
-      const page = await server.request("thread/items/list", {
+      const page = await core.state.server.request("thread/items/list", {
         threadId: s.id,
         limit: 200,
         sortDirection: "desc",
@@ -1503,7 +1254,7 @@ function activate(context) {
       publish(s);
     } else if (msg.action === "settings" || msg.action === "defaults") {
       await connect();
-      const model = catalog.find(
+      const model = core.state.catalog.find(
         (model) => model.model === (msg.model || s.model),
       );
       if (!model)
@@ -1527,7 +1278,7 @@ function activate(context) {
       }
       if (s.id && !s.busy && !s.followUpSending) {
         if (!s.loaded) await resume(s, s.id);
-        await server.request("thread/settings/update", {
+        await core.state.server.request("thread/settings/update", {
           threadId: s.id,
           model: model.model,
           effort,
@@ -1549,11 +1300,11 @@ function activate(context) {
       if(typeof msg.enabled!=='boolean')return;
       if(s.busy || s.compacting)throw Error(locale.t('Меняйте скорость после завершения текущей задачи.'));
       await connect();
-      const tier=speed.fastTier(catalog.find(model=>model.model===s.model));
+      const tier=speed.fastTier(core.state.catalog.find(model=>model.model===s.model));
       if(msg.enabled && !tier)throw Error(locale.t('Fast недоступен для этой модели или аккаунта.'));
       if(s.id){
         if(!s.loaded)await resume(s,s.id);
-        await server.request('thread/settings/update',{threadId:s.id,serviceTier:msg.enabled?tier:null});
+        await core.state.server.request('thread/settings/update',{threadId:s.id,serviceTier:msg.enabled?tier:null});
       }
       s.prefs.fast=msg.enabled;await save(s);publish(s);
     } else if (msg.action === "mode") {
@@ -1561,7 +1312,7 @@ function activate(context) {
     } else if (msg.action === "ultra") {
       if (typeof msg.enabled !== "boolean") return;
       await connect();
-      const model = catalog.find((m) => m.model === s.model),
+      const model = core.state.catalog.find((m) => m.model === s.model),
         options = model?.supportedReasoningEfforts || [];
       if (!options.some((o) => o.reasoningEffort === "ultra"))
         throw Error(locale.t("Эта модель не поддерживает Ultra."));
@@ -1610,7 +1361,7 @@ function activate(context) {
         const attachment=await savePastedImage(pastedImageRoot,msg.dataUrl);
         s.attachments.push(attachment);await save(s);publish(s);
       } finally {
-        void s.host?.panel?.webview.postMessage({type:'pasteImageResult',requestId:msg.requestId});
+        void view(s).host?.panel?.webview.postMessage({type:'pasteImageResult',requestId:msg.requestId});
       }
     } else if (msg.action === "attach") {
       const files = await vscode.window.showOpenDialog({
@@ -1621,7 +1372,7 @@ function activate(context) {
       await save(s);
       publish(s);
     } else if (msg.action === "compact") {
-      if (authBusy) throw Error(locale.t('Дождитесь переключения аккаунта.'));
+      if (core.state.authBusy) throw Error(locale.t('Дождитесь переключения аккаунта.'));
       if (!s.id || s.busy)
         throw Error(
           locale.t("Сжатие доступно для свободной сохранённой сессии."),
@@ -1638,7 +1389,7 @@ function activate(context) {
       s.usageStale = true;
       publish(s);
       try {
-        await server.request("thread/compact/start", { threadId: s.id });
+        await core.state.server.request("thread/compact/start", { threadId: s.id });
       } catch (error) {
         release();
         turnLeases.delete(s.id);
@@ -1704,7 +1455,7 @@ function activate(context) {
         .find((item) => item.id === msg.itemId);
       if (!bookmark) throw Error(locale.t("Закладка не найдена."));
       if (msg.action === "bookmarkRead")
-        await s.panel?.webview.postMessage({
+        await view(s).panel?.webview.postMessage({
           type: "bookmarkDetails",
           key: s.key,
           bookmark,
@@ -1720,7 +1471,7 @@ function activate(context) {
           s.cursor &&
           pages++ < 40
         ) {
-          const page = await server.request("thread/items/list", {
+          const page = await core.state.server.request("thread/items/list", {
             threadId: s.id,
             limit: 200,
             sortDirection: "desc",
@@ -1739,7 +1490,7 @@ function activate(context) {
             ),
           );
         publish(s);
-        await s.panel?.webview.postMessage({
+        await view(s).panel?.webview.postMessage({
           type: "revealItem",
           key: s.key,
           itemId: bookmark.id,
@@ -1747,7 +1498,7 @@ function activate(context) {
       }
     } else if (msg.action === "skills") {
       await connect();
-      const result = await server.request("skills/list", {
+      const result = await core.state.server.request("skills/list", {
         cwds: s.cwd || cwd() ? [s.cwd || cwd()] : [],
         forceReload: !!msg.forceReload,
       });
@@ -1767,7 +1518,7 @@ function activate(context) {
             skill.description,
         };
       });
-      await s.panel?.webview.postMessage({
+      await view(s).panel?.webview.postMessage({
         type: "skills",
         key: s.key,
         generation: msg.generation,
@@ -1805,7 +1556,7 @@ function activate(context) {
         s.fileCandidates.set(id, file.path);
         return { id, name: file.relative };
       });
-      await s.panel?.webview.postMessage({
+      await view(s).panel?.webview.postMessage({
         type: "projectFiles",
         key: s.key,
         generation: msg.generation,
@@ -1823,7 +1574,7 @@ function activate(context) {
       await vscode.env.clipboard.writeText(
         copyText(s.items, msg.itemId, msg.codeIndex),
       );
-      await s.panel?.webview.postMessage({
+      await view(s).panel?.webview.postMessage({
         type: "copied",
         key: s.key,
         itemId: msg.itemId,
@@ -1924,7 +1675,7 @@ function activate(context) {
           throw Error(locale.t("Это решение недоступно для данного запроса."));
         result = { decision: msg.decision };
       }
-      server.respond(request.id, result);
+      core.state.server.respond(request.id, result);
       pendingRequests.delete(String(msg.id));
       if(request.method==='item/tool/requestUserInput'){
         questionRecords.remember(s,{id:'b:'+(request.params.itemId || request.id),origin:'blocking',parentItemId:request.params.itemId || null,
@@ -1975,13 +1726,13 @@ function activate(context) {
         await connect();
         await refreshAccount();
         for (const session of sessions.values()) await save(session);
-        const record = pendingLogin.begin(server, release);
+        const record = pendingLogin.begin(core.state.server, release);
         try {
           await startLogin(record.client, {
             onStarted: id => {
               if (pendingLogin.current !== record) throw Error('Browser sign-in expired. Please try again.');
               if (!id) throw Error('CLI did not return a login identifier.');
-              record.id = loginId = id;
+              record.id = core.state.loginId = id;
               const completion = record.completions?.find(message => message.params.loginId === id);
               if (completion) record.client.emit('notification', completion);
             },
@@ -1994,11 +1745,11 @@ function activate(context) {
         broadcast();
       });
     } else if (msg.action === "retry") {
-      if(authBusy)throw Error(locale.t('Дождитесь переключения аккаунта.'));
+      if(core.state.authBusy)throw Error(locale.t('Дождитесь переключения аккаунта.'));
       if ([...sessions.values()].some(session => session.busy || session.compacting))
         throw Error(locale.t('Дождитесь завершения задач перед переподключением.'));
-      connecting = null;
-      server?.dispose();
+      core.state.connecting = null;
+      core.state.server?.dispose();
       await connect();
       if (s.id) {
         s.loaded = false;
@@ -2023,7 +1774,7 @@ function activate(context) {
   }
   function openEntry(entry) {
     const existing = [...sessions.values()].find(
-      (s) => s.panel && (entry.key ? s.key === entry.key : s.id === entry.id),
+      (s) => view(s).panel && (entry.key ? s.key === entry.key : s.id === entry.id),
     );
     if (existing) return select(existing);
     const saved =
@@ -2045,7 +1796,7 @@ function activate(context) {
   }
   function openLast() {
     const active = target();
-    return active?.panel
+    return view(active)?.panel
       ? select(active)
       : library.last
         ? openEntry(library.last)
@@ -2065,7 +1816,7 @@ function activate(context) {
           if (
             [...sessions.values()].some(
               (s) =>
-                s.panel &&
+                view(s).panel &&
                 (s.key === entry.key || (entry.id && s.id === entry.id)),
             )
           )
@@ -2080,7 +1831,7 @@ function activate(context) {
   }
   function localRows() {
     return [...sessions.values()]
-      .filter((s) => s.panel)
+      .filter((s) => view(s).panel)
       .map((s) => ({
         key: s.key,
         id: s.id,
@@ -2131,7 +1882,7 @@ function activate(context) {
         .get("historyScope", "workspace");
     const query =
       typeof options.query === "string" ? options.query.slice(0, 200) : "";
-    const result = await server.request("thread/list", {
+    const result = await core.state.server.request("thread/list", {
       limit: 100,
       ...(scope === "workspace" && cwd() ? { cwd: cwd() } : {}),
       archived: false,
@@ -2230,7 +1981,7 @@ function activate(context) {
     new: () => create(),
     close: () => {
       const s = target();
-      if (s?.panel) return closeTab(s);
+      if (view(s)?.panel) return closeTab(s);
     },
     openLast,
     reopen: reopenClosed,
@@ -2250,12 +2001,12 @@ function activate(context) {
     openSession: (row) => openEntry(row),
     switch: () => {
       const s = target() || create();
-      void s.panel.webview.postMessage({ type: "open", action: "history" });
+      void view(s).panel.webview.postMessage({ type: "open", action: "history" });
     },
     rename: async (item) => {
       const s = target(item);
       if (s) {
-        const open = s.panel ? s : openEntry(s);
+        const open = view(s).panel ? s : openEntry(s);
         const name=await vscode.window.showInputBox({title:locale.t('Переименовать вкладку'),value:open.name,ignoreFocusOut:true,
           validateInput:value=>value.trim() && value.trim().length<=200?null:locale.t('Имя должно содержать от 1 до 200 символов.')});
         if(name!==undefined)await handle(open,{action:'rename',name});
@@ -2264,8 +2015,8 @@ function activate(context) {
     group: (item) => {
       const s = target(item);
       if (s) {
-        const open = s.panel ? select(s) : openEntry(s);
-        void open.panel.webview.postMessage({ type: "open", action: "group" });
+        const open = view(s).panel ? select(s) : openEntry(s);
+        void view(open).panel.webview.postMessage({ type: "open", action: "group" });
       }
     },
     unread: async (item) => {
@@ -2337,7 +2088,7 @@ function activate(context) {
       host,
     );
     for (const key of keys) {
-      if (key === activeKey || sessions.get(key)?.panel) continue;
+      if (key === activeKey || view(sessions.get(key))?.panel) continue;
       const session =
         store.session(key) || context.workspaceState.get("session:" + key);
       if (session)
@@ -2368,18 +2119,18 @@ function activate(context) {
   );
   context.subscriptions.push({
     dispose() {
-      disposed=true;clearInterval(maintenanceTimer);
-      server?.dispose(); pendingLogin.finish();
+      core.state.disposed=true;clearInterval(maintenanceTimer);
+      core.state.server?.dispose(); pendingLogin.finish();
       mcpTasks?.dispose();mcpBridge?.dispose();mcpLease?.();
     },
   });
   let lastCliCheck=0;
   const maintenanceTimer=setInterval(()=>{
-    if(disposed||!server?.child)return;
+    if(core.state.disposed||!core.state.server?.child)return;
     if(Date.now()-lastCliCheck>=3600000 || cliInfo.phase==='pending') {
       lastCliCheck=Date.now();void checkCliUpdates();
     }
-    if(Date.now()-catalogUpdatedAt>=300000)void refreshCatalog().catch(()=>{});
+    if(Date.now()-core.state.catalogUpdatedAt>=300000)void refreshCatalog().catch(()=>{});
   },60000);
   return {
     connections: {
@@ -2400,7 +2151,8 @@ function activate(context) {
     connect,
     sessions,
     hosts,
-    server: () => server,
+    view,
+    server: () => core.state.server,
     handle,
     library,
     store,

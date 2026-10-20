@@ -50,8 +50,8 @@ exports.run = async () => {
     restored.cwd = path.join(restored.cwd, 'different-project');
     await api.handle(restored, { action: 'preferences', focus: false });
     api.select(restored);
-    for (let attempt = 0; attempt < 100 && !restored.panel.active; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
-    assert.equal(restored.panel.active, true);
+    for (let attempt = 0; attempt < 100 && !api.view(restored).panel.active; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(api.view(restored).panel.active, true);
     const isolated = api.create();
     assert.equal(isolated.prefs.access, 'workspace');
     await require('./queued-session-transfer-host-checks.cjs')({api,starts,turns});
@@ -63,7 +63,7 @@ exports.run = async () => {
     report.passed = false; report.error = error.message;
     report.testLine = error.stack?.match(/new-session-host\.cjs:(\d+)/)?.[1];
   } finally {
-    for (const session of api?.sessions.values() || []) session.panel?.dispose();
+    for (const session of api?.sessions.values() || []) api.view(session).panel?.dispose();
     AppServer.prototype.start = original.start; AppServer.prototype.request = original.request;
     if (original.home === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = original.home;

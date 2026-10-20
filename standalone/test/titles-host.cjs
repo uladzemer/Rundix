@@ -7,15 +7,15 @@ exports.run=async()=>{
   const session=api.create();
   const name='Очень длинное название сессии для проверки компактной ширины родной вкладки VS Code';
   await api.handle(session,{action:'rename',name});await new Promise(resolve=>setTimeout(resolve,120));
-  assert.equal(session.panel.title,require('../runtime/titles.cjs').tabTitle(name));
+  assert.equal(api.view(session).panel.title,require('../runtime/titles.cjs').tabTitle(name));
   assert.equal(session.name,name);assert.equal(api.store.session(session.key).name,name);
   result.compactNativeTitle=true;result.fullNamePersisted=true;
   await api.handle(session,{action:'rename',name:'Короткое имя'});await new Promise(resolve=>setTimeout(resolve,120));
-  assert.equal(session.panel.title,'Короткое имя');result.shortNamesPreserved=true;
+  assert.equal(api.view(session).panel.title,'Короткое имя');result.shortNamesPreserved=true;
   let prompted=false;
   vscode.window.showInputBox=async options=>{prompted=true;assert.equal(options.value,'Короткое имя');assert.ok(options.validateInput(''));return 'Имя из меню вкладки';};
   await vscode.commands.executeCommand('rundix.rename',{key:session.key});await new Promise(resolve=>setTimeout(resolve,120));
-  assert.equal(prompted,true);assert.equal(session.name,'Имя из меню вкладки');assert.equal(session.panel.title,session.name);result.nativeRenameCommand=true;
+  assert.equal(prompted,true);assert.equal(session.name,'Имя из меню вкладки');assert.equal(api.view(session).panel.title,session.name);result.nativeRenameCommand=true;
   prompted=false;
   vscode.window.showInputBox=async options=>{prompted=true;assert.equal(options.value,session.name);return 'Native tab menu';};
   await vscode.commands.executeCommand('rundix.rename',undefined,{groupId:0,editorIndex:0});

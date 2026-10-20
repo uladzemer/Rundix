@@ -54,7 +54,7 @@ exports.run = async () => {
     AppServer.prototype.start = original.start;AppServer.prototype.request = original.request;
     CompletionNotifications.prototype.deliver = original.deliver;
     if (original.home === undefined) delete process.env.CODEX_HOME;else process.env.CODEX_HOME = original.home;
-    if (session) session.panel?.dispose();api?.server()?.dispose();
+    if (session) api.view(session).panel?.dispose();api?.server()?.dispose();
     fs.writeFileSync(path.join(__dirname, '../.verification/notifications-host.json'), JSON.stringify(report, null, 2));
   }
 };

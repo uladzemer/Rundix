@@ -7,7 +7,7 @@ const { AppServer } = require('../runtime/transport.cjs');
 exports.run = async () => {
   const report = { syntheticTransport: true, inferencePerformed: false };
   const previous = { start: AppServer.prototype.start, request: AppServer.prototype.request, home: process.env.CODEX_HOME };
-  let session, timeout;
+  let api, session, timeout;
   try {
     process.env.CODEX_HOME = path.join(__dirname, '../.verification/toggle-empty-home');
     fs.mkdirSync(process.env.CODEX_HOME, { recursive: true });
@@ -22,18 +22,18 @@ exports.run = async () => {
       if (method === 'config/read') return { config: { model: 'fixture', model_reasoning_effort: 'medium' } };
       throw Error('Unexpected synthetic RPC');
     };
-    const api = await vscode.extensions.getExtension('local-rundix-tools.rundix').activate();
+    api = await vscode.extensions.getExtension('local-rundix-tools.rundix').activate();
     session = api.create();
     session.busy = true; // Preparation must be refused without starting any CLI work.
     const result = new Promise((resolve, reject) => {
       timeout = setTimeout(() => reject(Error('Toggle host probe timed out')), 20000);
-      session.panel.webview.onDidReceiveMessage(message => {
+      api.view(session).panel.webview.onDidReceiveMessage(message => {
         if (message.action === 'toggleProbe') resolve(message.report);
       });
     });
-    const html = session.panel.webview.html;
+    const html = api.view(session).panel.webview.html;
     const nonce = html.match(/nonce="([^"]+)"/)[1];
-    session.panel.webview.html = html.replace('</body>', `<script nonce="${nonce}">
+    api.view(session).panel.webview.html = html.replace('</body>', `<script nonce="${nonce}">
       (async () => {
         const seen = [];
         window.addEventListener('message', event => {
@@ -81,7 +81,7 @@ exports.run = async () => {
     report.error = error.message;
   } finally {
     clearTimeout(timeout);
-    session?.panel?.dispose();
+    api?.view(session)?.panel?.dispose();
     AppServer.prototype.start = previous.start;
     AppServer.prototype.request = previous.request;
     if (previous.home === undefined) delete process.env.CODEX_HOME;

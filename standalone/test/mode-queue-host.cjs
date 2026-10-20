@@ -27,7 +27,7 @@ exports.run=async()=>{
  }catch(error){report.passed=false;report.failure=error.code || 'mode verification error';report.detail=String(error.message).slice(0,300);}
  finally{
   if(id&&api)try{await api.server().request('thread/delete',{threadId:id});}catch{}
-  s?.panel?.dispose();fs.mkdirSync(path.join(__dirname,'../.verification'),{recursive:true});fs.writeFileSync(path.join(__dirname,'../.verification/mode-queue-host.json'),JSON.stringify(report,null,2));
+  api?.view(s)?.panel?.dispose();fs.mkdirSync(path.join(__dirname,'../.verification'),{recursive:true});fs.writeFileSync(path.join(__dirname,'../.verification/mode-queue-host.json'),JSON.stringify(report,null,2));
  }
  if(!report.passed)throw Error('Deferred mode verification failed');
 };

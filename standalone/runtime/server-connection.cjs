@@ -7,12 +7,12 @@ async function connect(deps) {
   deps.connectionStarting = true;
   deps.connecting = (async () => {
     deps.activeConnection = await deps.connections.resolve();
-    if (deps.cwd()) deps.fs.mkdirSync(deps.context.globalStorageUri.fsPath, { recursive: true });
+    if (deps.cwd()) deps.fs.mkdirSync(deps.storagePath, { recursive: true });
     deps.server = new deps.AppServer({
       executable: deps.path.resolve(await deps.resolveCli()),
       // The shared server outlives turns. Its Windows cwd must not pin a worktree.
       // Chat/project directories are supplied by thread/start and turn/start.
-      cwd: deps.cwd() ? deps.context.globalStorageUri.fsPath : undefined,
+      cwd: deps.cwd() ? deps.storagePath : undefined,
       configArgs:['-c','features.default_mode_request_user_input=true'],
     });
     const notificationServer=deps.server;
@@ -76,7 +76,7 @@ async function connect(deps) {
               message.params.success
             ) {
               const active = deps.target();
-              if (active?.panel) void deps.loadSelected(active);
+              if (active && deps.hasChat(active)) void deps.loadSelected(active);
             }
           })
           .catch((error) => {
@@ -130,10 +130,10 @@ async function connect(deps) {
       deps.broadcast();
       if (
         ![...deps.sessions.values()].some(
-          (s) => s.id === request.params?.threadId && s.panel,
+          (s) => s.id === request.params?.threadId && deps.hasChat(s),
         )
       )
-        void deps.vscode.window.showWarningMessage(
+        void deps.notify(
           deps.locale.t(
             "Codex ожидает ответа в другой сессии. Откройте её в Rundix.",
           ),
@@ -180,7 +180,7 @@ function notifySessions(deps, message) {
               void deps.library.update(s, { unread: true }).then(deps.broadcast);
           }
           deps.publish(s);
-          if (!s.panel && !s.busy) deps.sessions.delete(s.key);
+          if (!deps.hasChat(s) && !s.busy) deps.sessions.delete(s.key);
         }
       }
 }

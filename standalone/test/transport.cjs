@@ -11,7 +11,7 @@ async function hostCwdChecks(){
   for(const workspace of [project,undefined]){
    const context={connecting:null,activeConnection:null,connectionStarting:false,server:null,
     connections:{resolve:async()=>({id:'synthetic-local'}),assertCurrent(){}},resolveCli:async()=>path.join('synthetic-cli','codex.exe'),
-    fs,path,cwd:()=>workspace,context:{globalStorageUri:{fsPath:storage}},cliPrepared:null,cliCheckRequest:{},
+    fs,path,cwd:()=>workspace,storagePath:storage,cliPrepared:null,cliCheckRequest:{},
     refreshAccount:async()=>{},refreshCatalog:async()=>{},
     AppServer:class extends AppServer{constructor(options){super({...options,spawnProcess:(executable,_args,options)=>{
      assert.ok(executable===path.resolve('synthetic-cli','codex.exe'),'Relative configured CLI paths resolve before changing the child cwd');

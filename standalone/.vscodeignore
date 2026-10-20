@@ -64,3 +64,4 @@
 !runtime/send-queue.cjs
 !runtime/question-policy.cjs
 !runtime/question-answer.cjs
+!runtime/session-core.cjs

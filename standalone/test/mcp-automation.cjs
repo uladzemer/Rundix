@@ -44,7 +44,7 @@ async function main(){
     assert.deepEqual(report(reportSession,task).changedFiles,['synthetic-a.js','synthetic-b.js']);
 
     // Titles never split a surrogate pair.
-    const title=taskTitle('x'.repeat(58)+'😀'+'y'.repeat(10));
+    const title=taskTitle('x'.repeat(22)+'😀'+'y'.repeat(10));
     assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(title),'No lone high surrogate');assert.match(title,/😀…$/);
 
     // Cancelling while a start fails before sending ends as cancelled with the directory released.
@@ -67,6 +67,26 @@ async function main(){
     await tasks.tick();await tasks.idle();
     assert.deepEqual(starts,[first],'Limit 2 with one live recovered turn leaves one slot');
     assert.equal(tasks.get(second).state,'queued');
+    // Finished task chats can be closed through MCP; models are listed for choosing model and effort.
+    {
+      const closed=[],chats=new Map();
+      const closing=executor({connections:{selection:()=>connection},sessions:chats,store:{session:()=>null},create:()=>{throw Error('Unexpected create');},
+        send:async()=>{},resume:async()=>{},handle:async()=>{},pending:new Map(),save:async()=>{},alive:()=>true,
+        closeTab:async s=>{closed.push(s.key);s.panel=null;},models:async()=>[{model:'synthetic-model',efforts:['low','medium']}]});
+      const chat={key:'synthetic-close',id:'synthetic-close-chat',panel:{},busy:false,items:[]};chats.set(chat.key,chat);
+      const store=new SessionStore(path.join(root,'records-close'));
+      const closer=new McpTasks({store,adapter:{...closing,connection:()=>connection,assertConnection(){},start:async()=>{},status:async()=>({done:false}),cancel:async()=>{}}});open.push(closer);
+      const dir=path.join(root,'synthetic-close-dir');fs.mkdirSync(dir);
+      const id=closer.call('submit_task',{requestId:'synthetic-close',description:'Synthetic',acceptanceCriteria:'Synthetic',projectDirectory:dir}).taskId;
+      Object.assign(closer.get(id),{sessionKey:chat.key,state:'running'});
+      await assert.rejects(()=>Promise.resolve().then(()=>closer.call('close_task',{taskId:id})),e=>e.code==='task_active');
+      closer.get(id).state='completed';
+      assert.deepEqual(await closer.call('close_task',{taskId:id}),{taskId:id,state:'completed',chatClosed:true});
+      assert.deepEqual(closed,[chat.key]);
+      assert.equal((await closer.call('close_task',{taskId:id})).chatClosed,false,'Closing again is harmless');
+      chat.panel={};chat.busy=true;await assert.rejects(closer.call('close_task',{taskId:id}),e=>e.code==='task_active');
+      assert.deepEqual(await closer.call('list_models'),{models:[{model:'synthetic-model',efforts:['low','medium']}]});
+    }
     console.log('MCP automation: run-scoped questions, closed chats stay closed, retried replies, multi-turn reports, safe titles, cancel during retryable start and recovered-turn slots passed.');
   }finally{for(const item of open)item.dispose();fs.rmSync(root,{recursive:true,force:true});}
 }

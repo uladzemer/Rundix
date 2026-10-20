@@ -21,13 +21,15 @@ function report(session, task) {
 }
 // MCP chats may start in these modes; plan mode needs an interactive discussion and is never used.
 const taskModes={manual:'read',workspace:'workspace',auto:'workspace',full:'full'};
+// Short like other editor tabs; the full description stays in the chat.
+const TITLE_POINTS=24;
 function taskTitle(description) {
   const line=String(description || '').split(/\r?\n/).map(text=>text.trim()).find(Boolean) || '';
   // Cut by code points so an emoji is never split into a lone surrogate.
-  const points=Array.from(line), short=points.length>60?points.slice(0,59).join('').trimEnd()+'…':line;
+  const points=Array.from(line), short=points.length>TITLE_POINTS?points.slice(0,TITLE_POINTS-1).join('').trimEnd()+'…':line;
   return short?'MCP · '+short:'MCP task';
 }
-function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,client=()=>null,releases=new Map(),accessMode=()=>'workspace',retainTurn=()=>{},sent=()=>{}}) {
+function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,client=()=>null,releases=new Map(),closeTab=async()=>{},models=async()=>[],accessMode=()=>'workspace',retainTurn=()=>{},sent=()=>{}}) {
   const turnOptions=task=>({includeIde:false,taskId:task.taskId,projectDirectory:task.projectDirectory,requiredConnection:task.connection,outputSchema:reportSchema,
     ...(task.model?{modelSelection:{model:task.model,effort:task.effort,fast:false}}:task.effort?{modelSelection:{effort:task.effort}}:{})});
   // Only questions from the task's current run count; older unanswered quizzes in the chat are history.
@@ -57,6 +59,15 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       if(task && (task.connection.id!==selected.id || task.connection.owner!==selected.owner || task.connection.revision!==selected.revision))throw Error('The task belongs to a different connection selection. Restore that connection before continuing.');
     },
     chatId:task=>sessions.get(task.sessionKey)?.id || task.chatId,
+    models,
+    // Closes the editor tab of a finished task; the saved chat stays and a continuation reopens it.
+    async closeChat(task) {
+      const s=sessions.get(task.sessionKey);
+      if(!s || !s.panel)return false;
+      if(s.busy || s.sendingTask || adapter.pending(task).length)throw Error('The task chat is still active.');
+      await closeTab(s);
+      return true;
+    },
     release(task) {
       adapter.assertConnection(task);
       const id=adapter.chatId(task);

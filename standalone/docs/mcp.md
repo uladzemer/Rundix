@@ -38,7 +38,7 @@ The panel displays up to 100 recent tasks, state, directory and report. **Open c
 
 ## Access mode and chat titles
 
-Each task opens a visible Rundix chat titled `MCP · <first line of the description>`. Its access mode comes from the user setting **Rundix: Mcp Access Mode** (`rundix.mcpAccessMode`): `workspace` (default, asks for extended actions), `manual`, `auto` (Codex automatic review) or `full`. With `full`, Codex may change files and use the network outside the project without approval requests, so `pendingRequests` normally stays empty. The mode is applied once, when the task's chat is created; continuations keep whatever mode the chat has, including changes you make in the chat. The value is read only from your user settings: workspace settings of a repository cannot grant MCP access. Plan mode is not offered because MCP tasks run unattended.
+Each task opens a visible Rundix chat titled `MCP · <start of the first line of the description>` (at most 24 characters, like other editor tabs). Its access mode comes from the user setting **Rundix: Mcp Access Mode** (`rundix.mcpAccessMode`): `workspace` (default, asks for extended actions), `manual`, `auto` (Codex automatic review) or `full`. With `full`, Codex may change files and use the network outside the project without approval requests, so `pendingRequests` normally stays empty. The mode is applied once, when the task's chat is created; continuations keep whatever mode the chat has, including changes you make in the chat. The value is read only from your user settings: workspace settings of a repository cannot grant MCP access. Plan mode is not offered because MCP tasks run unattended.
 
 `rundix.mcpThreadConfig` (user settings only) is sent as the per-thread Codex `config` of MCP task chats on `thread/start` and `thread/resume`; ordinary chats are unaffected. Codex starts the MCP servers and plugins from `~/.codex/config.toml` for every thread with the thread's folder as their working directory, and some of them (for example the computer-use `node_repl` server and the browser/computer-use plugins) keep running after the task, so on Windows the task's worktree cannot be removed until VS Code reloads. Disabling the ones unattended tasks do not need avoids that, for example:
 
@@ -59,6 +59,8 @@ Every mutation requires a caller-generated, globally unique `requestId` (for exa
 | `continue_task` | `requestId`, `taskId`, `clarification` (queued during an active turn); or `approval` for a pending request | Same task and same chat; a queued/new turn or approval response |
 | `cancel_task` | `requestId`, `taskId` | Cancellation requested; wait until confirmed |
 | `list_tasks` | optional `limit` (1–100, default 25), `state`, `projectDirectory`, `cursor` | `{tasks, nextCursor}`: compact summaries without reports, newest created first |
+| `close_task` | `taskId` of a finished task | Closes its editor tab (`chatClosed`); the chat is kept and a continuation reopens it |
+| `list_models` | none | Models of the selected connection with supported efforts and defaults, for choosing `model`/`effort` |
 
 `revision` increases whenever the stored task changes. `wait_task` returns immediately for a settled task; pass `afterRevision` from an earlier snapshot to wait for a newer settled state. A queued task blocked by a busy directory or connection stays `queued` with the reason in `progress`, so `wait_task` returns `timedOut:true` until it can run; tasks for other directories keep running.
 

@@ -57,7 +57,7 @@ async function main(){
   let buffer='',seq=0;const replies=new Map();child.stdout.setEncoding('utf8');child.stdout.on('data',chunk=>{buffer+=chunk;let i;while((i=buffer.indexOf('\n'))>=0){const m=JSON.parse(buffer.slice(0,i));buffer=buffer.slice(i+1);replies.get(m.id)?.(m);}});
   const rpc=(method,params)=>new Promise((resolve,reject)=>{const id=++seq,timer=setTimeout(()=>reject(Error('Synthetic MCP timeout')),5000);replies.set(id,m=>{clearTimeout(timer);replies.delete(id);resolve(m);});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
   assert.equal((await rpc('initialize',{protocolVersion:'2025-11-25'})).result.protocolVersion,'2025-11-25');
-  assert.equal((await rpc('tools/list')).result.tools.length,7);
+  assert.equal((await rpc('tools/list')).result.tools.length,9);
   const response=await rpc('tools/call',{name:'get_task',arguments:{taskId:'synthetic'}});assert.equal(JSON.parse(response.result.content[0].text).name,'get_task');
   assert.equal((await rpc('tools/call',{name:'submit_task',arguments:{}})).result.isError,true);
   console.log('MCP synthetic persistence, replay, queue, approvals, cancellation, directory and authenticated stdio checks passed.');

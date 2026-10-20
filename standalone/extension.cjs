@@ -265,6 +265,12 @@ function activate(context) {
         mcpTasks=new McpTasks({store:new SessionStore(path.join(root,'tasks')),directoryStore:store,
           maxParallel:()=>vscode.workspace.getConfiguration('rundix').inspect('mcpMaxParallelTasks')?.globalValue ?? 3,
           adapter:mcpExecutor({connections,sessions,store,create,send,resume,handle,pending:pendingRequests,save,alive:()=>!disposed && !!mcpBridge,
+            closeTab,
+            async models(){
+              if(!catalog.length)await refreshCatalog().catch(()=>{});
+              return catalog.map(model=>({model:model.model,displayName:model.displayName || model.model,isDefault:!!model.isDefault,
+                defaultEffort:model.defaultReasoningEffort || null,efforts:(model.supportedReasoningEfforts || []).map(effort=>effort.reasoningEffort).filter(Boolean)}));
+            },
             releases:threadReleases,client:()=>{if(!activeConnection || !server)return null;connections.assertCurrent(activeConnection);return server;},
             // Only the user's own settings count: a repository's workspace settings must not grant MCP full access.
             accessMode:()=>vscode.workspace.getConfiguration('rundix').inspect('mcpAccessMode')?.globalValue || 'workspace',

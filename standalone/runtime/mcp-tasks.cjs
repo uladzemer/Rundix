@@ -134,6 +134,13 @@ class McpTasks {
     }
     if (name === 'wait_task') return this.wait(args);
     if (name === 'wait_tasks') return this.waitAny(args);
+    if (name === 'list_models') return Promise.resolve(this.adapter.models?.() ?? []).then(models=>({models}));
+    if (name === 'close_task') {
+      const task = this.get(args.taskId);
+      if (!['completed','cancelled','error'].includes(task.state) || recoveryRequired(task)) throw fail('task_active', 'Only finished tasks can have their chat closed.');
+      return Promise.resolve(this.adapter.closeChat?.(task)).then(closed=>({taskId:task.taskId, state:task.state, chatClosed:!!closed}),
+        error=>{ throw fail('task_active', String(error?.message || 'The task chat could not be closed.').slice(0,200)); });
+    }
     if (name === 'list_tasks') return this.list(args);
     if (name === 'submit_task') return this.operation(args.requestId, name, args, op => {
       connected(this.adapter);

@@ -3,7 +3,7 @@
   "displayName": "Rundix",
   "icon": "resources/extension-icon.png",
   "publisher": "local-rundix-tools",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "%extension.description%",
   "categories": [
     "Other"

@@ -45,6 +45,7 @@
 !resources/icons/NOTICE.md
 !resources/icons/sources.json
 !runtime/connections.cjs
+!runtime/connection-menu.cjs
 !runtime/connection-history.cjs
 
 !runtime/mcp-tasks.cjs

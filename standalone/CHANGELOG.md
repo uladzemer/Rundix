@@ -2,6 +2,10 @@
 
 Install and update Rundix through [Microsoft Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix).
 
+## 0.4.4 — 2026-10-21
+
+- Optional connections can supply a bounded menu of choices directly in the account dialog. Opening or refreshing it reloads the provider's presentation; hidden or failed reads remove previous choices. Switching is guarded by the idle credential lease and rejects stale actions.
+
 ## 0.4.3 — 2026-10-21
 
 - Background service: after a task chat was recreated during an account switch, the finished turn kept the project directory reserved, so the next Continue waited forever ("a turn is still running in this project directory"). The turn now follows the recreated chat and releases the directory.

@@ -59,7 +59,7 @@ function showImagePreview(src){
   if(!imageViewer.open)imageViewer.showModal();
 }
 function accountSignature() {
-  return JSON.stringify([state.account, state.connection, state.limits, state.loginPending, state.authBusy]);
+  return JSON.stringify([state.account, state.connection, state.limits, state.loginPending, state.authBusy, state.busy, state.compacting]);
 }
 let fileResults = [],
   fileListView = null,
@@ -1179,6 +1179,15 @@ function open(kind, refresh = true, changeItems = null) {
     card.append(details);
     target.append(card, el('p', WorkbenchI18n.t(state.connection?.external ? 'Авторизация управляется расширением подключения.' : 'Используется текущий вход официального Codex CLI на этом компьютере.')));
     if (state.connection?.configurable) row(target, WorkbenchI18n.t('Настройки подключения'), state.connection.label, () => send('connectionSettings'), {disabled:state.busy || state.authBusy});
+    const connectionMenu=state.connection?.menu;
+    if (connectionMenu?.loading) target.append(el('p',WorkbenchI18n.t('Загрузка…')));
+    if (connectionMenu?.error) target.append(el('p',WorkbenchI18n.t('Не удалось обновить меню подключения. Нажмите «Обновить статус».')));
+    if (connectionMenu?.items?.length) {
+      target.append(el('small',connectionMenu.title));
+      for (const item of connectionMenu.items) row(target,item.label,item.detail,
+        ()=>send('connectionMenuAction',{id:item.id,revision:connectionMenu.revision}),
+        {checked:item.checked,disabled:item.disabled || state.busy || state.authBusy || state.compacting});
+    }
     if (!state.connection?.external && state.loginPending) {
       target.append(el('p', WorkbenchI18n.t('Завершите вход в открытом браузере.')));
       row(target, WorkbenchI18n.t('Отменить вход'), '', () => send('accountCancel'));

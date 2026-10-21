@@ -2,6 +2,8 @@
   "Локальный Codex CLI": "Local Codex CLI",
   "Настройки подключения недоступны": "Connection settings unavailable",
   "Модуль подключения недоступен": "Connection extension unavailable",
+  "Загрузка…": "Loading…",
+  "Не удалось обновить меню подключения. Нажмите «Обновить статус».": "Could not refresh the connection menu. Click Refresh status.",
   "Подключение": "Connection",
   "Подключить рабочий пул": "Connect working account pool",
   "Управление MCP для Claude Code": "MCP controls for Claude Code",

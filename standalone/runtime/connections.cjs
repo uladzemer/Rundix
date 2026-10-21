@@ -11,6 +11,7 @@ class Connections {
     this.activateOwner = activateOwner;
     this.activationTimeout = activationTimeout;
     this.providers = new Map();
+    this.menu = new (require('./connection-menu.cjs').ConnectionMenu)(this);
   }
   selection() {
     const file = this.store.file('connection', 'active');
@@ -27,6 +28,8 @@ class Connections {
         typeof provider.label !== 'string' || !provider.label.trim() || provider.label.length > 100 ||
         typeof provider.authenticate !== 'function' || typeof provider.configure !== 'function' ||
         (provider.accountLabel !== undefined && (typeof provider.accountLabel !== 'string' || provider.accountLabel.length > 100)) ||
+        ((provider.readMenu !== undefined || provider.runMenuAction !== undefined) &&
+          (typeof provider.readMenu !== 'function' || typeof provider.runMenuAction !== 'function')) ||
         (provider.requestMethods !== undefined && (!Array.isArray(provider.requestMethods) || provider.requestMethods.length > 8 ||
           provider.requestMethods.some(method => typeof method !== 'string' || method.length > 128) || typeof provider.handleRequest !== 'function')))
       throw Error('Invalid connection provider.');
@@ -57,6 +60,7 @@ class Connections {
   select(id) {
     if (id !== 'local' && !this.providers.has(id)) throw Error('Connection provider is not registered.');
     const owner = this.providers.get(id)?.owner;
+    this.menu.clear();
     return this.store.write('connection', 'active', {id, ...(owner ? {owner} : {}), revision: randomUUID()});
   }
   display() {
@@ -64,7 +68,7 @@ class Connections {
     try { selected = this.selection(); }
     catch { return {id:'unavailable',label:locale.t('Настройки подключения недоступны'),external:true,configurable:true}; }
     const provider = this.providers.get(selected.id)?.provider;
-    return {id: selected.id, label: selected.id === 'local' ? locale.t('Локальный Codex CLI') : provider?.label || locale.t('Модуль подключения недоступен'), external: selected.id !== 'local', configurable: this.providers.size > 0 || selected.id !== 'local'};
+    return {id: selected.id, label: selected.id === 'local' ? locale.t('Локальный Codex CLI') : provider?.label || locale.t('Модуль подключения недоступен'), external: selected.id !== 'local', configurable: this.providers.size > 0 || selected.id !== 'local', menu:this.menu.snapshot()};
   }
   projectAccount(account) {
     let selected;

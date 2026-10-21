@@ -20,6 +20,12 @@ The provider supplies:
 
 `api.connections.configure(providerId)` opens/configures a registered provider. `api.connections.useLocal()` explicitly selects local CLI sign-in. The account menu exposes generic connection settings whenever an additional provider is registered or selected.
 
+## Optional connection menu (Rundix 0.4.4+)
+
+`api.connections.menuVersion === 1` advertises a generic provider menu in the account dialog. Providers may implement both `readMenu()` and `runMenuAction(id)`. A read returns `null` to show nothing, or `{title, items:[{id,label,detail?,checked?,disabled?}]}`. The base accepts at most 32 items, bounds text lengths and projects only these presentation fields. Providers own visibility, privacy and the underlying service logic; they must return no hidden identifiers or credentials in presentation fields.
+
+Opening the account menu or refreshing status reads fresh presentation with a bounded wait. Failure removes previous rows and shows a generic retry message. Results and one-use action revisions are scoped to the selected provider instance and connection revision. Actions run under the existing idle credential lease; the provider must recheck its current policy and bound its own network operations. Returning `activate` reconnects the CLI, while `cancel` preserves it. Existing providers without menu methods retain the settings-only interface.
+
 ## Legacy conversation metadata
 
 `api.connections.importHistory(ownerExtensionId, {sessions, metadata})` accepts a bounded snapshot from a registered owner. It copies session records, drafts, queued tasks and metadata into Rundix's store under an idle lease. Existing keys, duplicate thread IDs and damaged targets are preserved, not overwritten. The result includes imported/unchanged/conflict counts. It does not read the source extension's files or credentials and does not import every VS Code setting or native tab arrangement.

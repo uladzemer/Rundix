@@ -726,6 +726,7 @@ function activate(context) {
         connections.select(outcome === 'local' ? 'local' : id);
       }
       await resetConnection();
+      await connections.menu.refresh();
     });
   }
   async function chooseConnection() {
@@ -1784,9 +1785,17 @@ function activate(context) {
       await vscode.env.openExternal(vscode.Uri.parse(url.href));
     } else if (msg.action === 'connectionSettings') {
       await chooseConnection();
+    } else if (msg.action === 'connectionMenuAction') {
+      await withLocalSignIn(async () => {
+        const outcome=await connections.menu.run(msg.revision,msg.id);
+        if (outcome === 'activate') await resetConnection();
+        await connections.menu.refresh();
+      });
     } else if (msg.action === 'accountRefresh') {
-      await refreshAccountStatus();
-      publish(s);
+      const readingMenu=connections.menu.refresh(broadcast);
+      broadcast();
+      try { await readingMenu; broadcast(); await refreshAccountStatus(); }
+      finally { broadcast(); }
     } else if (msg.action === "accountCancel") {
       await pendingLogin.cancel();
     } else if (msg.action === "account") {
@@ -2208,6 +2217,7 @@ function activate(context) {
   return {
     connections: {
       version: 1,
+      menuVersion: 1,
       registerProvider(owner, provider) { const subscription = connections.register(owner, provider); broadcast(); return subscription; },
       configure: configureConnection,
       useLocal: () => configureConnection('local'),

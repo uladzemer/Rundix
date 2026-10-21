@@ -15,6 +15,7 @@ test('menu publishes only bounded presentation fields and actions reject stale/f
   await assert.rejects(f.menu.run(menu.revision,'one'));
   await f.menu.refresh();await assert.rejects(f.menu.run('forged','one'));
   assert.throws(()=>project({title:'Bad',items:[{id:'one',label:'One'},{id:'one',label:'Duplicate'}]}));
+  assert.throws(()=>project({title:'Bad',items:[{id:'one',label:'One',quota:[{label:'5ч',remaining:50,resetAt:-1}]}]}));
 });
 test('hidden, failed and timed out reads discard previous presentation',async()=>{
   const f=fixture(value);await f.menu.refresh();

@@ -62,7 +62,7 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
   }
   const exhausted = require('../ui/limits.js').exhaustion(deps.limits);
   if(options.requiredConnection && (deps.activeConnection?.id!==options.requiredConnection.id || deps.activeConnection?.revision!==options.requiredConnection.revision || !deps.activeConnection?.provider))throw Error('MCP task connection changed.');
-  if(exhausted){
+  if(exhausted && !deps.server.handlesTurnAdmission){
     const date=exhausted.resetAt?new Intl.DateTimeFormat(undefined,{dateStyle:'short',timeStyle:'short'}).format(exhausted.resetAt):null;
     throw Error(date?deps.locale.t('Лимиты аккаунта закончились. Дождитесь сброса: {0}. Запрос сохранён.',date):deps.locale.t('Лимиты аккаунта закончились. Дождитесь сброса лимитов. Запрос сохранён.'));
   }

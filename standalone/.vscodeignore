@@ -82,6 +82,7 @@
 !runtime/service-provider.cjs
 !runtime/service-headless-host.cjs
 !runtime/service-readiness.cjs
+!runtime/task-recovery.cjs
 !runtime/service-main.cjs
 !runtime/service-task-rpc.cjs
 !runtime/service-limit-poller.cjs

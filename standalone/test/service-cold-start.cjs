@@ -48,7 +48,7 @@ async function boundedFailure(code,{recover=false,expire=false,hang=false}={}){
     const project=path.join(root,'synthetic-project');fs.mkdirSync(project);
     const submitted=await tasks.call('submit_task',{requestId:'synthetic-budget',description:'Synthetic task',acceptanceCriteria:'Synthetic success',projectDirectory:project});
     const task=tasks.tasks.get(submitted.taskId);
-    if(expire || hang)task.createdAt=Date.now()-BUDGET_MS+(hang?80:-1);
+    if(expire || hang)task.serviceReadiness={startedAt:Date.now()-BUDGET_MS+(hang?80:-1),attempts:0};
     for(let i=0;i<MAX_ATTEMPTS;i++){
       task.blockedUntil=0;await tasks.tick();await tasks.idle();
       if(task.state==='error')break;
@@ -93,7 +93,7 @@ async function cancelAfterDeadline(){
     };
     const project=path.join(root,'synthetic-project');fs.mkdirSync(project);
     const submitted=await tasks.call('submit_task',{requestId:'synthetic-cancel-budget',description:'Synthetic held task',acceptanceCriteria:'Synthetic cancellation',projectDirectory:project});
-    const task=tasks.tasks.get(submitted.taskId);task.createdAt=Date.now()-BUDGET_MS+150;
+    const task=tasks.tasks.get(submitted.taskId);task.serviceReadiness={startedAt:Date.now()-BUDGET_MS+150,attempts:0};
     await tasks.tick();
     const deadline=Date.now()+5000;
     while(!dispatched && Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,5));

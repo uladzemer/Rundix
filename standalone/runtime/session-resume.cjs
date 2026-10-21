@@ -45,7 +45,12 @@ async function resumeThread(deps, s, id) {
     });
     if (s.busy)
       s.turnId = turns.data?.find((turn) => turn.status === "inProgress")?.id;
-    else s.lastTurnStatus=turns.data?.[0]?.status;
+    else {
+      s.turnId=null;
+      s.lastTurnStatus=turns.data?.[0]?.status;
+      s.lastReadTurnId=turns.data?.[0]?.id;
+      s.error=turns.data?.[0]?.error?.message || null;
+    }
   }
   const page = await deps.server.request("thread/items/list", {
     threadId: id,

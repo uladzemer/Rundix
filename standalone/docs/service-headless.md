@@ -1,5 +1,8 @@
 # Headless service implementation status (step 3b)
 
+Service task recovery changes in 0.4.2 and their synthetic validation are recorded
+in [service-reliability.md](service-reliability.md).
+
 Window-owned MCP remains the default. The experimental service switch installs
 the headless runtime and connects the MCP panel as a window client on demand.
 Step 3b has synthetic Windows acceptance coverage for window IPC, panel, task

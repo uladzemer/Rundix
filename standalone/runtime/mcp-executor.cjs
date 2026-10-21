@@ -197,7 +197,7 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       const hasAsync=asyncPending(s,task).length>0;
       const awaitingAsync=hasAsync && !task.cancelRequested && !s.error && (s.busy || s.lastTurnStatus==='completed');
       task.awaitingAsync=awaitingAsync && !s.busy;
-      return {chatId:s.id,done:!s.busy && !awaitingAsync,cancelled:s.lastTurnStatus==='interrupted' || !!task.cancelledAsyncItems?.length && !!task.cancelRequested && !s.busy,failed:!!s.error || s.lastTurnStatus!=='completed',pending:adapter.pending(task).length>0,
+      return {chatId:s.id,finishedTurnId:!s.busy?s.lastReadTurnId || task.turnId:null,done:!s.busy && !awaitingAsync,cancelled:s.lastTurnStatus==='interrupted' || !!task.cancelledAsyncItems?.length && !!task.cancelRequested && !s.busy,failed:!!s.error || s.lastTurnStatus!=='completed',pending:adapter.pending(task).length>0,
         progress:awaitingAsync?'Waiting for agent client answers':s.busy?'Codex turn active':'Turn finished',report:!s.busy && !awaitingAsync?report(s,task):null};
     },
     async answer(task,approval) {

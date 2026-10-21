@@ -27,7 +27,9 @@ async function ready(operation){
   finally{clearTimeout(timer);}
 }
 async function attempt(task,checkpoint,operation){
-  const budget=task.serviceReadiness ||= {startedAt:task.readinessAfterWait ? Date.now() : task.readinessOrigin ?? task.createdAt,attempts:0};
+  // Time in the directory/parallel queue is not a connection attempt. Starting
+  // this clock at submission rejects healthy tasks after another long turn.
+  const budget=task.serviceReadiness ||= {startedAt:Date.now(),attempts:0};
   delete task.readinessAfterWait;
   if(!Number.isFinite(budget.startedAt) || !Number.isInteger(budget.attempts) || budget.attempts<0 ||
     budget.attempts>=MAX_ATTEMPTS || Date.now()-budget.startedAt>=BUDGET_MS)throw exhausted();

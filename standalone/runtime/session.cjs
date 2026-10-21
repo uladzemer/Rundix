@@ -107,6 +107,8 @@ function notification(session, message) {
     session.turnStartedAt = Date.now();
     session.busy = true;
   } else if (message.method === "turn/completed") {
+    const expected=session.turnId || session.lastStartedTurnId;
+    if(expected && p.turn?.id && p.turn.id!==expected)return false;
     session.busy = false;
     session.compacting = false;
     session.turnId = null;

@@ -35,6 +35,7 @@ class ServiceProvider extends EventEmitter {
   #configurationPending = null;
   #providerGeneration = randomUUID(); #cli = null;
   #dispatchAuthorization = null;
+  #limitBinding = null;
   #launching = false;
   #recovery=null; #retryTimer=null; #attempts=0; #healthySince=null; #childExit=null; #exited=new Set(); #cliRestarting=null;
   constructor({serviceGeneration, ...options} = {}) {
@@ -283,6 +284,7 @@ class ServiceProvider extends EventEmitter {
       if (method === 'cli/reconnect') {
         if (!parent.idle || params.idleGrantId !== parent.idle.leaseId || this.#idle !== parent.idle || this.#turns.size || !parent.transaction) throw rpcError('METHOD_NOT_SUPPORTED');
         parent.transaction.close(); this.#cli.dispose(); await this.#cli.start();
+        this.emit('cliGenerationChanged');
         if (!current()) throw rpcError('STALE_FENCE');
         this.#revoke(this.#account); this.#account = null;
         this.#revoke(parent.idle); parent.idle = this.#grant('idle', this.#cli.binding); this.#idle = parent.idle;
@@ -324,6 +326,7 @@ class ServiceProvider extends EventEmitter {
   async prepareTurn(task, {mode = 'admit', timeoutMs} = {}) {
     if (!['admit', 'probe'].includes(mode) || !task || !['taskId', 'spaceId', 'attemptId'].every(key => typeof task[key] === 'string' && task[key])) throw actionRequired('PROVIDER_PROTOCOL_INVALID');
     if (this.#preparing || this.#idle || this.#configurationPending) return unavailable('BUSY_ACTIVE', true);
+    if(this.#limitBinding && this.#turns.size && equal(this.#limitBinding,identity(this.#cli?.binding)))return unavailable('BUSY_ACTIVE',true);
     if(this.#lost || this.#recovery || this.#cliRestarting)throw Object.assign(actionRequired('PROVIDER_UNAVAILABLE'),{retryable:true});
     if (!this.#account || !this.#cli?.authenticated) throw actionRequired('AUTH_REQUIRED');
     this.#preparing = true;
@@ -345,6 +348,7 @@ class ServiceProvider extends EventEmitter {
       if (result.kind === 'ready') {
         if (result.accountRevision !== this.#account?.binding.accountRevision || result.authGrantId !== this.#account?.leaseId ||
             typeof result.limitsSnapshotId !== 'string' || !result.limitsSnapshotId || !Number.isFinite(result.validUntil) || result.validUntil <= Date.now()) throw actionRequired('PROVIDER_PROTOCOL_INVALID');
+        this.#limitBinding=null;
         if (mode === 'probe') {
           if (!revision(result.checkRevision)) throw actionRequired('PROVIDER_PROTOCOL_INVALID');
           return {kind:'ready', limitsSnapshotId:result.limitsSnapshotId, checkRevision:result.checkRevision};
@@ -370,6 +374,12 @@ class ServiceProvider extends EventEmitter {
       if (idle && this.#idle === idle) { this.#revoke(idle); this.#idle = null; }
       this.#restoreAccount(); this.#preparing = false;
     }
+  }
+  noteUsageLimit({turnLeaseId,turnId,limitReached=true}) {
+    const grant=this.#turns.get(turnLeaseId);
+    if(!grant || (grant.turnId || grant.observedTurnId)!==turnId)throw rpcError('STALE_FENCE');
+    grant.limitReached=limitReached;
+    if(limitReached)this.#limitBinding=identity(grant.binding);
   }
   async dispatchTurn(grant, params) {
     const owned = this.#turns.get(grant?.leaseId);
@@ -402,11 +412,12 @@ class ServiceProvider extends EventEmitter {
       throw error;
     }
   }
-  terminal({turnLeaseId, taskId, runId, turnId, trigger = 'terminal'}) {
+  terminal({turnLeaseId, taskId, runId, turnId, trigger = 'terminal', limitReached = false, reconciled = false}) {
     const grant = this.#turns.get(turnLeaseId);
-    const matchesTurn = grant && (trigger==='confirmedCliExit' ? this.#exited.has(grant.binding.appServerGeneration) && turnId===(grant.turnId || grant.observedTurnId || null) : grant.turnId === turnId || !grant.turnId && grant.observedTurnId === turnId && grant.observedCompleted === turnId);
+    const observedTerminal=grant && (grant.observedCompleted===turnId || reconciled && equal(identity(grant.binding),identity(this.#cli?.binding)));
+    const matchesTurn = grant && (trigger==='confirmedCliExit' ? this.#exited.has(grant.binding.appServerGeneration) && turnId===(grant.turnId || grant.observedTurnId || null) : grant.turnId === turnId || !grant.turnId && grant.observedTurnId === turnId && observedTerminal);
     if (!grant || grant.taskId !== taskId || grant.runId !== runId || !matchesTurn || !['terminal', 'confirmedCliExit'].includes(trigger)) throw rpcError('STALE_FENCE');
-    this.#event('turnTerminal', {taskId, spaceId:grant.spaceId, runId, turnId, turnLeaseId, trigger});
+    this.#event('turnTerminal', {taskId, spaceId:grant.spaceId, runId, turnId, turnLeaseId, trigger, ...(limitReached || grant.limitReached ? {limitReached:true} : {})}, {...this.authority,binding:grant.binding});
     this.#turns.delete(turnLeaseId); this.#revoke(grant); this.emit('idle');
   }
   releaseReserved(grant) {

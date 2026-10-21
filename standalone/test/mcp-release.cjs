@@ -31,6 +31,7 @@ async function transitions(root,project) {
     task.state='running';adapter.status=async()=>{throw Error('Synthetic unavailable status');};
     const before=released.length;await tasks.tick();assert.equal(task.state,'error');assert.equal(task.recoveryRequired,true);assert.equal(released.length,before,'Ambiguous execution must stay loaded for recovery');
     adapter.status=async()=>({done:true});task.state='queued';task.cancelRequested=true;
+    task.statusRead.nextAt=0; // The next bounded recovery observation is now due.
     await tasks.tick();assert.equal(task.state,'cancelled');assert.equal(released.length,before+1,'Confirmed recovery cancellation releases too');
     task.state='queued';task.cancelRequested=false;task.recoveryRequired=false;
     tasks.call('cancel_task',{taskId:task.taskId,requestId:'synthetic-cancel-queued'});

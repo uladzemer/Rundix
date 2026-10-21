@@ -49,7 +49,9 @@ module.exports=async function checks(){
       assert.equal(scheduler.get(one.taskId).state,'error');assert.equal(scheduler.get(one.taskId).recoveryRequired,true);
       assert.equal(scheduler.get(two.taskId).state,'queued');assert.equal(started,1);
       assert(probes>0,'Recovery probes run even with zero free capacity');
-      readFails=false;await scheduler.tick();assert.equal(started,1);assert.equal(scheduler.get(one.taskId).state,'running');
+      readFails=false;await scheduler.tick();assert.equal(scheduler.get(one.taskId).state,'error','Backoff also applies while other tasks are queued');
+      scheduler.get(one.taskId).statusRead.nextAt=0;
+      await scheduler.tick();assert.equal(started,1);assert.equal(scheduler.get(one.taskId).state,'running');
       live=false;await scheduler.tick();await scheduler.idle();assert.equal(started,2,'Confirmed inactive turn releases its parallel slot');
       scheduler.dispose();
     }

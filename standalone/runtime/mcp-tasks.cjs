@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const {randomUUID, createHash} = require('node:crypto');
 const directories = require('./task-directory.cjs');
 const inputRecovery = require('./mcp-input-recovery.cjs');
+const recovery = require('./task-recovery.cjs');
 const active = new Set(['queued', 'running', 'waiting_approval', 'waiting_limit']);
 const states = ['queued','running','waiting_approval','waiting_limit','completed','error','cancelled'];
 const MAX_WAIT_SECONDS = 1500, MAX_PARALLEL = 5;
@@ -278,6 +279,8 @@ class McpTasks {
         }
         string(args.clarification, 'clarification');
         connected(this.adapter, task);
+        recovery.retryRead(task);
+        task.readRetryEpoch=(task.readRetryEpoch || 0)+1;
         if(this.archive)delete task.closedAt;
         if(active.has(task.state)) {
           task.continuations ||= [];
@@ -287,6 +290,7 @@ class McpTasks {
           if(this.adapter.readinessBudget){delete task.serviceReadiness;task.readinessOrigin=Date.now();}}
         task.progress='Continuation queued';
       } else {
+        recovery.retryRead(task);
         // The active attempt is handled by start()/reconciliation; only queued
         // inputs are safe recovery here, never an in-flight nextInput.
         if(task.state==='queued' && !task.recoveryRequired && !this.starting.has(task.taskId) && task.nextInput)
@@ -295,6 +299,7 @@ class McpTasks {
         // Record no-op cancellations too, so a replayed request can never cancel a later turn.
         if (!active.has(task.state) && !task.recoveryRequired) { task.operations.push(op); this.save(task); return this.view(task); }
         task.cancelRequested=true;
+        if(task.limitContinuation?.state==='pending') {delete task.nextInput;delete task.limitContinuation;}
         if(this.scope){task.error=null;delete task.blockedReason;delete task.blockedUntil;}
         task.continuations=[];
         if (['queued','waiting_limit'].includes(task.state) && !task.recoveryRequired) {
@@ -333,8 +338,10 @@ class McpTasks {
     catch { return this.block(task, 'Waiting for the selected companion connection; inspect the Rundix MCP panel'); }
     // Recovery only observes the old chat; it never resubmits its old input.
     if (task.recoveryRequired) {
+      if (!recovery.canRead(task)) return 'blocked';
       let status;
-      try { status = await this.adapter.status(task); } catch { return this.block(task, 'Previous chat status unavailable; restore the connection'); }
+      try { status = await this.adapter.status(task); recovery.retryRead(task); }
+      catch { this.statusFailed(task); return 'blocked'; }
       if (this.closed) return 'stopped';
       if (!status.done) {
         if(status.pending && !task.unknownAnswer){task.state='waiting_approval';task.progress=status.progress || 'Waiting for approval';this.save(task);return 'stopped';}
@@ -352,6 +359,17 @@ class McpTasks {
     catch (error) { return this.block(task, /reserved/.test(error.message) ? 'Waiting: project directory is used by another MCP task or chat' : 'Waiting: project directory is unavailable'); }
     return 'ready';
   }
+  statusFailed(task) {
+    recovery.readFailed(task);
+    this.update(task, () => {
+      task.state='error';task.recoveryRequired=true;task.needsReconcile=true;
+      task.error=task.statusRead.paused
+        ? 'Chat status unavailable. Restore the connection and explicitly continue after inspecting the chat.'
+        : 'Chat status temporarily unavailable; retrying.';
+    });
+    // Retry bookkeeping alone must not churn visible revisions.
+    this.store.write('mcp-task',task.taskId,task);
+  }
   async tick() {
     if (this.closed || this.executing) return;
     this.executing=true;
@@ -359,18 +377,28 @@ class McpTasks {
       for (const task of this.tasks.values()) {
         // A task still being started is owned by its start() call until that returns.
         if ((['running','waiting_approval'].includes(task.state) || task.state==='error' && task.recoveryRequired) && !this.starting.has(task.taskId)) {
+          if (!recovery.canRead(task)) continue;
           let status;
           const observedRevision=task.revision;
           try { status = await this.adapter.status(task); }
-          catch { if (this.closed) return; if(this.scope && task.revision!==observedRevision)continue;task.state='error';task.recoveryRequired=true;task.needsReconcile=true;task.error='Chat status unavailable. Restore the connection and explicitly continue after inspecting the chat.';this.save(task);continue; }
+          catch { if (this.closed) return; if(this.scope && task.revision!==observedRevision)continue;this.statusFailed(task);continue; }
           if (this.closed) return;
           if(this.scope && task.revision!==observedRevision)continue;
+          recovery.retryRead(task);
           this.update(task, ()=>{
             if(task.state==='error' && task.recoveryRequired && !status.answerUnknown)task.error=status.error || null;
             task.pendingIds=this.adapter.pending(task).map(r=>String(r.id));
             if (status.chatId) task.chatId=status.chatId;
             if(status.answerUnknown){task.state='error';task.recoveryRequired=true;task.progress=status.progress;}
             else if (status.done) {
+              if (this.adapter.limitRecovery && status.exhaustedTurnId && !task.cancelRequested && recovery.continueAfterLimit(task,status.exhaustedTurnId)) {
+                task.state='waiting_limit';task.recoveryRequired=false;task.needsReconcile=false;
+                task.waitId=randomUUID();task.waitingLimit={resetAt:null,reason:'exhausted'};
+                task.nextCheckAt=Date.now();task.retryNotBefore=0;
+                task.error=null;task.progress='Turn ended by usage limit; waiting for provider';
+                delete task.serviceReadiness;task.readinessAfterWait=true;
+                return;
+              }
               task.state=status.cancelled?'cancelled':status.failed?'error':'completed';
               task.progress='Turn finished'; task.report=status.report; task.recoveryRequired=false;
               if(task.state==='completed' && task.continuations?.length){task.nextInput=task.continuations.shift();task.state='queued';task.progress='Continuation queued';
@@ -404,7 +432,7 @@ class McpTasks {
       // Only blocked queued tasks remain: retry once a second instead of re-probing every 50 ms.
       const tasks=[...this.tasks.values()];
       if (tasks.some(t=>['running','waiting_approval'].includes(t.state))) this.schedule();
-      else if (tasks.some(t=>t.state==='queued' || t.state==='error' && t.recoveryRequired)) this.schedule(1000);
+      else if (tasks.some(t=>(t.state==='queued' || t.state==='error' && t.recoveryRequired) && !t.statusRead?.paused)) this.schedule(1000);
     }
   }
   idle() { return Promise.all([...this.launches]); }
@@ -427,7 +455,11 @@ class McpTasks {
       delete task.nextInput;
       task.chatId=this.adapter.chatId(task); this.save(task);
     } catch (error) {
+      task.chatId=this.adapter.chatId(task) || task.chatId;
       if(this.scope && error?.confirmedCliExit) {
+        if(task.state==='waiting_limit' && task.limitContinuation?.state==='pending' && !task.cancelRequested) {
+          this.save(task);return;
+        }
         task.state='error';task.recoveryRequired=false;task.needsReconcile=false;
         task.error='Execution stopped after confirmed CLI exit. Continue explicitly after checking the chat.';
         this.release(task);this.save(task);return;

@@ -14,7 +14,7 @@ function fixture(root, {installed = install(root), observeCli = () => {}, cliEnv
       spawnProcess:(_exe, argv, childOptions) => {
         if (!argv.includes('cli_auth_credentials_store="ephemeral"')) throw Error('Missing ephemeral config');
         observeCli({ephemeral:true});
-        return launch(process.execPath, [path.join(__dirname, 'fake-headless-cli.cjs')], {...childOptions, env:{...childOptions.env, ...cliEnv}});
+        return launch(process.execPath, [path.join(__dirname, 'fake-headless-cli.cjs')], {...childOptions, env:{...childOptions.env, RUNDIX_SYNTHETIC_ROLLOUTS:path.join(root,'synthetic-rollouts'), ...cliEnv}});
       }})}};
   return {installed, hostOptions, children, async close() {
     for (const value of children) value.child.kill(); await Promise.allSettled(children.map(value => value.closed));

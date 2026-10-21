@@ -8,7 +8,8 @@ function project(value) {
     if (!item || !text(item.id,128) || !item.id || ids.has(item.id) || !text(item.label,256) || !item.label ||
       (item.detail !== undefined && !text(item.detail,256))) throw Error('Invalid connection menu.');
     ids.add(item.id);
-    return {id:item.id,label:item.label,detail:item.detail || '',checked:item.checked === true,disabled:item.disabled === true};
+    if (item.quota !== undefined && (!Array.isArray(item.quota) || item.quota.length > 4 || item.quota.some(quota => !quota || !text(quota.label,32) || !Number.isFinite(quota.remaining) || quota.remaining < 0 || quota.remaining > 100 || (quota.resetAt !== undefined && !Number.isFinite(quota.resetAt))))) throw Error('Invalid connection menu.');
+    return {id:item.id,label:item.label,detail:item.detail || '',quota:item.quota?.map(quota=>({label:quota.label,remaining:quota.remaining,resetAt:quota.resetAt ?? null})),checked:item.checked === true,disabled:item.disabled === true};
   })};
 }
 function bounded(read, timeout) {

@@ -1195,9 +1195,23 @@ function open(kind, refresh = true, changeItems = null) {
     if (connectionMenu?.error) target.append(el('p',WorkbenchI18n.t('Не удалось обновить меню подключения. Нажмите «Обновить статус».')));
     if (connectionMenu?.items?.length) {
       target.append(el('small',connectionMenu.title));
-      for (const item of connectionMenu.items) row(target,item.label,item.detail,
+      for (const item of connectionMenu.items) {
+        const button=row(target,item.label,item.detail,
         ()=>send('connectionMenuAction',{id:item.id,revision:connectionMenu.revision}),
         {checked:item.checked,disabled:item.disabled || state.busy || state.authBusy || state.compacting});
+        if(item.quota?.length){
+          const quota=el('span',undefined,'connection-quota');
+          for(const window of item.quota){
+            const remaining=el('strong',`${window.label} ${Math.round(window.remaining)}%`,'connection-quota-value');
+            remaining.classList.add(window.remaining<=10?'critical':window.remaining<=25?'warning':'healthy');
+            const reset=window.resetAt ? new Date(window.resetAt*1000).toLocaleDateString(WorkbenchI18n.language,{month:'short',day:'numeric'})+' '+new Date(window.resetAt*1000).toLocaleTimeString(WorkbenchI18n.language,{hour:'2-digit',minute:'2-digit'}) : '—';
+            const line=el('span',undefined,'connection-quota-line');
+            line.append(el('small',window.label),remaining,el('time','↻ '+reset));
+            quota.append(line);
+          }
+          button.querySelector('.menu-row-text')?.append(quota);
+        }
+      }
     }
     if (!state.connection?.external && state.loginPending) {
       target.append(el('p', WorkbenchI18n.t('Завершите вход в открытом браузере.')));

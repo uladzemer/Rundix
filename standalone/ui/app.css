@@ -1180,8 +1180,16 @@ input::placeholder {
   font-size: var(--text-small);
   line-height: 1.25;
   margin-top: 0;
-  white-space: pre-line;
+  white-space: normal;
 }
+.connection-quota { display:flex; flex-direction:column; gap:1px; margin-top:2px; }
+.connection-quota-line { display:grid; grid-template-columns:42px 62px minmax(0,1fr); gap:5px; align-items:baseline; font-size:var(--text-small); }
+.connection-quota-line > small { color:var(--muted); }
+.connection-quota-line > time { color:var(--muted); font-size:var(--text-small); white-space:nowrap; }
+.connection-quota-value { font-size:var(--text-small); font-weight:600; }
+.connection-quota-value.healthy { color:var(--vscode-testing-iconPassed,#73c991); }
+.connection-quota-value.warning { color:var(--vscode-editorWarning-foreground,#cca700); }
+.connection-quota-value.critical { color:var(--vscode-errorForeground,#f14c4c); }
 .menu-row[aria-pressed="true"],
 .menu-row[aria-pressed="true"]:hover:not(:disabled) {
   background: var(--vscode-list-inactiveSelectionBackground, color-mix(in srgb, currentColor 12%, transparent));

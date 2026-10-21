@@ -20,7 +20,8 @@ function boundedLogger(root) {
   const file = index => path.join(directory, 'service-' + index + '.log');
   const codes = new Set(['host_error', 'cli_stopped', 'service_started', 'service_stopped', 'idle_exit_failed', 'provider_unavailable','archive_record_corrupt','archive_record_unavailable','archive_index_corrupt','archive_index_unavailable',
     'provider_auth_started','provider_auth_ready','provider_auth_failed','cli_read_binding_changed','cli_read_failed',
-    'provider_admission_ready','provider_admission_failed','provider_admission_auth_required','provider_account_refresh_deferred']);
+    'provider_admission_ready','provider_admission_failed','provider_admission_auth_required','provider_account_refresh_deferred',
+    'task_directory_busy','task_directory_reserved','task_directory_unavailable']);
   const methods=new Set(['thread/read','thread/resume','thread/turns/list','thread/items/list','thread/unsubscribe',
     'account/read','account/rateLimits/read','model/list','config/read','thread/start','thread/name/set','turn/interrupt']);
   const providerCodes=new Set([...require('./service-provider-contract.cjs').UNAVAILABLE_CODES,
@@ -212,6 +213,8 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
         }
         if(row.exited)throw Object.assign(error,{confirmedCliExit:true,deliveryUncertain:false});
         if (error.deliveryUncertain === false) {
+          // A definite refusal sent nothing: the same continuation may be retried.
+          task.deliveryPhase='preparing';
           if(task.limitContinuation?.state==='dispatching'){task.limitContinuation.state='pending';task.autoLimit.consecutive=Math.max(0,task.autoLimit.consecutive-1);}
           runs.delete(params.threadId);
         }

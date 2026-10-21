@@ -17,7 +17,9 @@ function unavailable(reason = 'action_required') {
     {code:'connection_unavailable', reason, deliveryUncertain:false});
 }
 function rejected(error) {
-  return Object.assign(Error('CLI request failed.'), {code:'rejected', deliveryUncertain:error?.deliveryUncertain !== false});
+  // CLI text stays private; only the typed fact that a thread has no rollout survives.
+  return Object.assign(Error('CLI request failed.'), {code:'rejected', deliveryUncertain:error?.deliveryUncertain !== false,
+    ...(/no rollout/i.test(error?.message || '') ? {missingRollout:true} : {})});
 }
 const {serviceEnvironment:environment} = require('./service-environment.cjs');
 function safeRevision(value) { return Number.isSafeInteger(value) && value >= 0; }

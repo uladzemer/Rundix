@@ -1,6 +1,7 @@
 // Service-only observation: metadata and one turn, never full rollout hydration.
 const {usageLimit}=require('./task-recovery.cjs');
 const {readItem}=require('./session.cjs');
+const {lostEmptyThread}=require('./session-resume.cjs');
 const STATUS_TIMEOUT_MS=30000, MISSING_EVENTS_MS=120000;
 function createTaskStatus({core,provider,now=Date.now,status,finishRun,runs}) {
   return async task=>{
@@ -18,7 +19,15 @@ function createTaskStatus({core,provider,now=Date.now,status,finishRun,runs}) {
       const current=()=>core.state.server===server && provider.cli?.binding?.appServerGeneration===owner;
       let thread;
       if(changed || !session.loaded) {
-        const result=await server.request('thread/resume',await core.resumeOptions(session,session.id),STATUS_TIMEOUT_MS);
+        let result;
+        try { result=await server.request('thread/resume',await core.resumeOptions(session,session.id),STATUS_TIMEOUT_MS); }
+        catch(error) {
+          // No turn ever reached this thread: the input is unsent and a send starts a fresh one.
+          // Even an ambiguous 'dispatching' start is safe: an accepted turn would have written a rollout.
+          if(!lostEmptyThread(session,error) || task.deliveryPhase==='confirmed')throw error;
+          session.id=null;task.chatId=null;task.deliveryPhase='preparing';task.needsReconcile=false;await core.save(session);
+          return {done:true,failed:true,cancelled:!!task.cancelRequested,chatId:null,progress:'Unsent input queued'};
+        }
         thread=result.thread;
       } else {
         const result=await server.request('thread/read',{threadId:session.id,includeTurns:false},STATUS_TIMEOUT_MS);
@@ -38,14 +47,18 @@ function createTaskStatus({core,provider,now=Date.now,status,finishRun,runs}) {
       session.loaded=true;session.cliGeneration=owner;session.busy=busy;
       session.turnId=busy?last?.id:null;session.lastReadTurnId=last?.id;
       if(last?.id)session.lastStartedTurnId=last.id;
-      session.lastTurnStatus=!busy && last?.status==='inProgress'?'interrupted':last?.status;
+      // An idle thread whose last turn is still 'inProgress' lost that turn to a
+      // CLI/service restart. That is not a cancel: keep it recoverable.
+      session.lastTurnStatus=!busy && last?.status==='inProgress'?'restartInterrupted':last?.status;
       session.error=busy?null:last?.error?.message || null;
-      if(last && usageLimit(last.error))task.exhaustedTurnId=last.id;
+      // A limit the client already answered with its own input never re-arms a continuation.
+      if(last && usageLimit(last.error) && last.id!==task.handledExhaustedTurnId)task.exhaustedTurnId=last.id;
       else if(!busy && last?.status==='completed')delete task.exhaustedTurnId;
       task.lastStatusReadAt=now();task.needsReconcile=false;
       await core.save(session);
     }
     const value=await status(task),row=runs.get(value.chatId);
+    if(value.done && session?.lastTurnStatus==='restartInterrupted' && !task.cancelRequested)value.interruptedByRestart=true;
     if(value.done && row && value.finishedTurnId)finishRun(row,value.finishedTurnId,true);
     if(value.done && task.exhaustedTurnId && (!task.turnId || task.turnId===task.exhaustedTurnId))
       return {...value,exhaustedTurnId:task.exhaustedTurnId};

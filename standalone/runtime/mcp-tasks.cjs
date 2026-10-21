@@ -32,7 +32,7 @@ class McpTasks {
   constructor({store, adapter, directoryStore = store, maxParallel = () => 1, spaceOf = task => task.space, taskFilter = () => true, scope, signal, changed, maxStoredPerSpace=1000, keepClosed=100, archiveLog, now=Date.now}) {
     // Optional task.space is absent for legacy/current-window tasks. No routing yet.
     this.spaceOf = spaceOf; this.taskFilter = taskFilter; this.scope = scope; this.signal = signal;
-    this.changed = changed;this.now=now;
+    this.changed = changed;this.now=now;this.log=archiveLog || (()=>{});
     this.serviceRecovery=adapter.limitRecovery===true;this.observations=new Map();this.observedAt=new Map();
     this.store = store; this.directoryStore=directoryStore; this.adapter = adapter; this.maxParallel = maxParallel; this.tasks = new Map(); this.waiters = new Set(); this.starting = new Set(); this.launches = new Set(); this.operations = new Map(); this.executing = false; this.closed = false;
     if(scope){this.archive=new (require('./service-task-archive.cjs').TaskArchive)(store,{log:archiveLog});this.maxStoredPerSpace=maxStoredPerSpace;this.keepClosed=keepClosed;}
@@ -292,8 +292,8 @@ class McpTasks {
           task.continuations ||= [];
           if(task.continuations.length>=20)throw fail('limit', 'Too many queued continuations.');
           task.continuations.push(args.clarification);
-        } else {if(this.serviceRecovery){if(task.nextInput && task.queuedRecoveryInput)inputRecovery.remember(task,task.nextInput);task.queuedRecoveryInput=true;}task.nextInput=args.clarification; task.state='queued'; task.error=null; task.cancelRequested=false; delete task.waitId;task.waitingLimit=null;
-          if(this.adapter.readinessBudget){delete task.serviceReadiness;task.readinessOrigin=Date.now();}}
+        } else {if(this.serviceRecovery){if(task.nextInput && task.queuedRecoveryInput)inputRecovery.remember(task,task.nextInput);task.queuedRecoveryInput=true;recovery.manualInput(task);}task.nextInput=args.clarification; task.state='queued'; task.error=null; task.cancelRequested=false; delete task.waitId;task.waitingLimit=null;
+          if(this.adapter.readinessBudget)delete task.serviceReadiness;}
         task.progress='Continuation queued';
       } else {
         if(this.serviceRecovery){recovery.retryRead(task);task.readRetryEpoch=(task.readRetryEpoch || 0)+1;}
@@ -362,7 +362,12 @@ class McpTasks {
       this.release(task); this.save(task); return 'handled';
     }
     try { directories.reserve(this.directoryStore,task.projectDirectory,task.taskId); }
-    catch (error) { return this.block(task, /reserved/.test(error.message) ? 'Waiting: project directory is used by another MCP task or chat' : 'Waiting: project directory is unavailable'); }
+    catch (error) {
+      const code=error.code==='DIRECTORY_BUSY'?'directory_busy':/reserved/.test(error.message)?'directory_reserved':'directory_unavailable';
+      const reason=code==='directory_busy' ? 'Waiting: a turn is still running in this project directory' : code==='directory_reserved' ? 'Waiting: project directory is used by another MCP task or chat' : 'Waiting: project directory is unavailable';
+      if(task.progress!==reason)this.log({code:'task_'+code}); // once per change, not per 1-second retry
+      return this.block(task, reason);
+    }
     return 'ready';
   }
   statusFailed(task) {
@@ -415,11 +420,18 @@ class McpTasks {
           return;
         }
         if(this.serviceRecovery && !status.notSent && task.queuedRecoveryInput && task.nextInput && !task.cancelRequested){task.state='queued';task.recoveryRequired=false;task.error=null;task.progress='Continuation queued';return;}
+        if(this.serviceRecovery && status.interruptedByRestart){
+          // Not a cancel: queued continuations stay; Continue resumes the same chat.
+          task.state='error';task.recoveryRequired=false;task.needsReconcile=false;task.report=status.report;
+          task.progress='Interrupted by restart — Continue to resume';
+          task.error='The turn was interrupted when Codex restarted. Continue to resume the same chat.';
+          this.release(task);return;
+        }
         if(this.serviceRecovery && !status.exhaustedTurnId && !status.failed && !status.cancelled)recovery.successfulTurn(task);
         task.state=status.cancelled?'cancelled':status.failed?'error':'completed';
         task.progress='Turn finished'; task.report=status.report; task.recoveryRequired=false;
         if(task.state==='completed' && task.continuations?.length){task.nextInput=task.continuations.shift();if(this.serviceRecovery)task.queuedRecoveryInput=true;task.state='queued';task.progress='Continuation queued';
-          if(this.adapter.readinessBudget){delete task.serviceReadiness;task.readinessOrigin=Date.now();}}
+          if(this.adapter.readinessBudget)delete task.serviceReadiness;}
         else this.release(task);
       } else { task.state=status.pending?'waiting_approval':'running'; task.progress=status.progress || task.progress; }
     });
@@ -429,8 +441,11 @@ class McpTasks {
     if (this.closed || this.executing) return;
     this.executing=true;
     try {
-      const observed=[...this.tasks.values()].filter(task=>(['running','waiting_approval'].includes(task.state) || task.state==='error' && task.recoveryRequired || this.serviceRecovery && task.state==='queued' && task.recoveryRequired) && !this.starting.has(task.taskId));
+      const observable=task=>(['running','waiting_approval'].includes(task.state) || task.state==='error' && task.recoveryRequired || this.serviceRecovery && task.state==='queued' && task.recoveryRequired) && !this.starting.has(task.taskId);
+      const observed=[...this.tasks.values()].filter(observable);
       for(const task of observed.sort((a,b)=>(this.observedAt.get(a.taskId)||0)-(this.observedAt.get(b.taskId)||0))){
+        // An earlier await may have changed this task (continue_task queues it): re-check like 0.4.1.
+        if(!observable(task))continue;
         if(this.serviceRecovery){
           if(this.observations.has(task.taskId) || !recovery.canRead(task,this.now()) || this.observations.size>=3)continue;
           this.observedAt.set(task.taskId,Date.now());
@@ -487,7 +502,7 @@ class McpTasks {
       delete task.nextInput;
       task.chatId=this.adapter.chatId(task); this.save(task);
     } catch (error) {
-      task.chatId=this.adapter.chatId(task) || task.chatId;
+      if(this.serviceRecovery)task.chatId=this.adapter.chatId(task) || task.chatId;
       if(this.scope && error?.confirmedCliExit) {
         if(task.state==='waiting_limit' && task.limitContinuation?.state==='pending' && !task.cancelRequested) {
           this.save(task);return;

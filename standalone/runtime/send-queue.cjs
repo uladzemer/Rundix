@@ -134,15 +134,20 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
   };
   const observeTurn=message=>{
     const p=message.params;
-    if(!current() || p?.threadId!==threadId || !p.turn?.id || p.turn.id===previousTurnId ||
+    // The listener belongs to this client, so its own turn always settles the leases,
+    // even after the chat or connection moved on; only the chat state needs current().
+    if(p?.threadId!==threadId || !p.turn?.id || p.turn.id===previousTurnId ||
       !['turn/started','turn/completed'].includes(message.method))return;
     if(observed && observed.id!==p.turn.id)return;
     observed={id:p.turn.id,status:message.method==='turn/started'?'inProgress':p.turn.status};
-    s.lastStartedTurnId=p.turn.id;
     stopReconciliation();
     unresolved=false;
-    s.busy=message.method==='turn/started';s.turnId=s.busy?p.turn.id:null;
-    if(!s.busy){s.lastTurnStatus=p.turn.status;release();}
+    if(current()){
+      s.lastStartedTurnId=p.turn.id;
+      s.busy=message.method==='turn/started';s.turnId=s.busy?p.turn.id:null;
+      if(!s.busy)s.lastTurnStatus=p.turn.status;
+    }
+    if(message.method==='turn/completed')release();
   };
   // The Codex process is gone, so no turn of this request can still run: free the chat.
   // The pending request still rejects as deliveryUncertain, so queued input is never replayed.
@@ -244,6 +249,11 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
           reconciliationDeadline=(deps.setTimeout || setTimeout)(expire,Math.max(0,30000-((deps.Date || Date).now()-reconciliationStarted)));
           reconciliationDeadline.unref?.();
         }
+      }else if(!observed){
+        // The chat moved on: only this request's leases remain; a late turn event
+        // still settles them, otherwise they expire instead of blocking the project.
+        reconciliationDeadline=(deps.setTimeout || setTimeout)(()=>{if(!observed && !released){unresolved=false;release();}},30000);
+        reconciliationDeadline.unref?.();
       }
     }
     throw error;

@@ -19,7 +19,13 @@ function continueAfterLimit(task, turnId) {
   return true;
 }
 function continuationNotBefore(task) { return task.autoLimit?.lastSentAt == null ? 0 : task.autoLimit.lastSentAt+MIN_CONTINUATION_MS; }
-function continuationBlocked(task) { return task.limitContinuation?.state==='pending' && (task.autoLimit?.consecutive || 0)>=MAX_CONTINUATIONS; }
+// The cap stops only the fixed automatic continuation; a client's own input always waits and is sent.
+function continuationBlocked(task) { return task.nextInput===CONTINUE && task.limitContinuation?.state==='pending' && (task.autoLimit?.consecutive || 0)>=MAX_CONTINUATIONS; }
+// The exhausted turn is handled by the client's input; it must not re-arm a continuation.
+function manualInput(task) {
+  if (task.exhaustedTurnId) task.handledExhaustedTurnId = task.exhaustedTurnId;
+  delete task.limitContinuation; delete task.autoLimit; delete task.exhaustedTurnId;
+}
 function successfulTurn(task) { delete task.autoLimit; }
 function enterLimitWait(task,now=Date.now()) {
   task.state='waiting_limit';task.recoveryRequired=false;task.needsReconcile=false;
@@ -29,4 +35,4 @@ function enterLimitWait(task,now=Date.now()) {
   delete task.serviceReadiness;task.readinessAfterWait=true;
 }
 module.exports = {CONTINUE, MAX_READ_FAILURES, SLOW_RETRY_MS, MIN_CONTINUATION_MS, MAX_CONTINUATIONS,
-  usageLimit, readFailed, canRead, slowRecovery, retryRead, continueAfterLimit, continuationNotBefore, continuationBlocked, successfulTurn, enterLimitWait};
+  usageLimit, readFailed, canRead, slowRecovery, retryRead, continueAfterLimit, continuationNotBefore, continuationBlocked, manualInput, successfulTurn, enterLimitWait};

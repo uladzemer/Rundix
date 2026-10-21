@@ -4,6 +4,12 @@ async function resume(deps, s, id) {
   s.loading = deps.resumeThread(s, id);
   try {
     return await s.loading;
+  } catch (error) {
+    // Service only: every caller (MCP start, send, status) then starts a fresh thread
+    // for the unsent input instead of retrying an impossible resume forever.
+    if (!deps.serviceMode || s.id !== id || !lostEmptyThread(s, error)) throw error;
+    s.id = null; s.loaded = false;
+    await deps.save(s);
   } finally {
     s.loading = null;
   }
@@ -70,4 +76,10 @@ async function resumeThread(deps, s, id) {
   await deps.save(s);
   deps.publish(s);
 }
-module.exports = { resume, resumeThread, resumeOptions };
+// Codex writes a rollout only with the first turn: a thread that never ran is
+// lost when its app-server exits, and holds nothing worth recovering.
+function lostEmptyThread(s, error) {
+  return (error?.missingRollout === true || /no rollout/i.test(error?.message || '')) && !s.lastStartedTurnId && !s.lastTurnStatus && !(s.items || []).length;
+}
+
+module.exports = { resume, resumeThread, resumeOptions, lostEmptyThread };

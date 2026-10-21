@@ -116,7 +116,11 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       try {
       const s=session(task);
       if(canonical(s.cwd)!==task.projectDirectory)throw Error('Chat project directory changed.');
-      if(s.id && !s.loaded)await resume(s,s.id);
+      if(s.id && !s.loaded){
+        await resume(s,s.id);
+        // A service resume drops a never-run thread without a rollout; send() starts a fresh one.
+        if(!s.id)task.chatId=null;
+      }
       if(canonical(s.cwd)!==task.projectDirectory)throw Error('Chat project directory changed.');
       task.baselineItems=s.items.map(item=>item.id);
       delete task.turnId;task.turnIds=[];
@@ -172,7 +176,7 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       }
       const s=session(task);
       if(task.needsReconcile && s.id)s.loaded=false;
-      if(s.id && !s.loaded)await resume(s,s.id);
+      if(s.id && !s.loaded){await resume(s,s.id);if(!s.id)task.chatId=null;}
       if(canonical(s.cwd)!==task.projectDirectory)throw Error('Chat project directory changed.');
       task.needsReconcile=false;
       if(s.busy)retainTurn(s,task);
@@ -232,7 +236,7 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
       adapter.assertConnection(task);
       const s=session(task);
       if(task.needsReconcile && s.id)s.loaded=false;
-      if(s.id && !s.loaded)await resume(s,s.id);
+      if(s.id && !s.loaded){await resume(s,s.id);if(!s.id)task.chatId=null;}
       task.needsReconcile=false;
       if(s.busy)retainTurn(s,task);
       await handle(s,{action:'stop'});

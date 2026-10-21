@@ -25,8 +25,13 @@ function assertAvailable(store, id, taskId) {
   if(fs.existsSync(store.file('task-directory',id)) && (!owner || typeof owner.taskId!=='string'))throw Error('Project directory reservation is unreadable.');
   if (owner && owner.taskId !== taskId) throw Error('Project directory is reserved by another MCP task.');
 }
+function lock(store, id) {
+  // A held lock is a turn in flight on this project, not an unavailable directory.
+  try { return store.acquire('directory-' + id); }
+  catch (error) { if (error?.syscall) throw error; throw Object.assign(Error('Project directory is busy.'), {code:'DIRECTORY_BUSY'}); }
+}
 function reserve(store, directory, taskId) {
-  const id = key(directory), release = store.acquire('directory-' + id);
+  const id = key(directory), release = lock(store, id);
   try {
     assertAvailable(store, id, taskId);
     store.write('task-directory', id, {taskId});

@@ -31,7 +31,7 @@ async function queuedInput(){
       await step(tasks);assert.equal(row.state,'queued','A failed recovery read must leave queued input queued');
       fail=false;row.blockedUntil=0;if(row.statusRead)row.statusRead.nextAt=0;
       for(let n=0;n<4;n++)await step(tasks);
-      assert(sent.includes('Synthetic queued input') || row.unsentInputs?.some(input=>input.text==='Synthetic queued input'));
+      assert(sent.includes('Synthetic queued input'),'Queued input is sent once status is readable again');
       row.state='running';row.recoveryRequired=true;row.continuations=['Synthetic FIFO input'];
       await step(tasks);if(service)assert(row.unsentInputs.some(input=>input.text==='Synthetic FIFO input'),'Failed service terminal paths retain FIFO input');
     }finally{tasks.dispose();}
@@ -119,8 +119,14 @@ async function repeatedLimit(){
     await poller.tick();assert.equal(row.state,'error');assert.match(row.error,/action_required/);assert.equal(sends.length,3);
     const chatId=row.chatId;assert(sends.every(send=>send.threadId===chatId));assert(sends.slice(1).every(send=>send.input[0].text===recovery.CONTINUE));
     for(let n=0;n<10;n++)await poller.tick();assert.equal(sends.length,3,'Ready snapshots cannot trigger an unbounded model loop');
+    // The cap stops only the fixed continuation: the client's own input is still sent.
+    await host.mcp.tasks.call('continue_task',{taskId:row.taskId,requestId:'synthetic-manual-after-cap',clarification:'Synthetic manual after cap'});
+    await until(host,()=>sends.length===4);assert.equal(sends[3].input[0].text,'Synthetic manual after cap');assert.equal(sends[3].threadId,chatId);
+    await until(host,()=>row.state==='waiting_limit');assert.equal(row.limitContinuation.state,'pending');
     fs.writeFileSync(policy,JSON.stringify({limit:false}));
     await host.mcp.tasks.call('continue_task',{taskId:row.taskId,requestId:'synthetic-success',clarification:'Synthetic explicit recovery'});
+    assert.equal(row.continuations.at(-1),'Synthetic explicit recovery','Client input waits FIFO behind the pending continuation');
+    await poller.tick();
     await until(host,()=>row.state==='completed');assert.equal(row.autoLimit,undefined,'An intervening successful turn resets the consecutive budget');
   }finally{poller?.dispose();await host?.dispose({force:true});await data.close();}
 }
@@ -249,6 +255,95 @@ async function freshThreadGenerationChange(){
   }finally{await host?.dispose({force:true});await data.close();}
 }
 
-(async()=>{try{await queuedInput();await windowsAndSlowRecovery();await lightweightStatus();await repeatedLimit();await historyRecovery();await preparingRestart();await generationAndPredispatchExit(false);await generationAndPredispatchExit(true);await freshThreadGenerationChange();
+// A CLI/service restart leaves the last turn 'inProgress' on an idle thread: it is
+// a recoverable interruption in the same chat, never a cancel or a lost task.
+async function restartInterruption(){
+  const {createTaskStatus}=require('../runtime/service-task-status.cjs');
+  const s={id:'synthetic-interrupted',key:'synthetic-interrupted',loaded:false,items:[],prefs:{}};
+  const server={request:async method=>method==='thread/resume'?{thread:{status:{type:'idle'}}}:method==='thread/turns/list'?{data:[{id:'synthetic-cut',status:'inProgress'}]}:{data:[]}};
+  const core={sessions:new Map([[s.key,s]]),store:{session:()=>s},state:{server},connect:async()=>{},save:async()=>{},resumeOptions:async()=>({})};
+  const row=task('synthetic-interrupted',project('interrupted'));row.state='running';row.chatId=s.id;row.deliveryPhase='confirmed';
+  const status=createTaskStatus({core,provider:{cli:{binding:{appServerGeneration:'synthetic-new'}}},now:Date.now,runs:new Map(),finishRun(){},
+    status:async()=>({done:!s.busy,failed:true,chatId:s.id})});
+  const value=await status(row);assert.equal(value.interruptedByRestart,true);assert.equal(s.lastTurnStatus,'restartInterrupted');
+  {
+    const limited={id:'synthetic-limited',key:'synthetic-limited',loaded:false,items:[],prefs:{}};
+    const limitServer={request:async method=>method==='thread/resume'?{thread:{status:{type:'idle'}}}:method==='thread/turns/list'?{data:[{id:'synthetic-limit-turn',status:'failed',error:{codexErrorInfo:'usageLimitExceeded'}}]}:{data:[]}};
+    const limitRow=task('synthetic-limited',project('limited'));Object.assign(limitRow,{state:'queued',chatId:limited.id,deliveryPhase:'confirmed'});
+    recovery.manualInput(Object.assign(limitRow,{exhaustedTurnId:'synthetic-limit-turn'}));
+    const limitStatus=createTaskStatus({core:{...core,sessions:new Map([[limited.key,limited]]),state:{server:limitServer}},provider:{cli:{binding:{appServerGeneration:'synthetic-new'}}},now:Date.now,runs:new Map(),finishRun(){},
+      status:async()=>({done:true,failed:true,chatId:limited.id})});
+    assert.equal((await limitStatus(limitRow)).exhaustedTurnId,undefined,'A limit answered by client input never re-arms the fixed continuation');
+  }
+  let sent=[];
+  const tasks=harness('restart-interruption',true,{status,start:async(_task,input)=>{sent.push(input);}});
+  try{
+    tasks.tasks.set(row.taskId,row);tasks.save(row);await tasks.observe(row);
+    assert.equal(row.state,'error');assert.equal(row.recoveryRequired,false);assert.match(row.error,/Continue to resume/);
+    tasks.call('continue_task',{taskId:row.taskId,requestId:'synthetic-resume-interrupted',clarification:'Synthetic resume'});
+    await step(tasks);assert.deepEqual(sent,['Synthetic resume'],'Continue resumes the same task chat');
+  }finally{tasks.dispose();}
+}
+
+// After a service restart a never-turned thread has no rollout: its unsent input is
+// requeued for a fresh thread instead of retrying an impossible resume forever.
+async function lostEmptyThread(){
+  const {createTaskStatus}=require('../runtime/service-task-status.cjs');
+  for(const ran of [false,true]){
+    const s={id:'synthetic-empty',key:'synthetic-empty-'+ran,loaded:false,items:[],prefs:{},...(ran?{lastStartedTurnId:'synthetic-ran'}:{})};
+    const server={request:async method=>{if(method==='thread/resume')throw Object.assign(Error('Synthetic no rollout found for thread'),{code:-32600});return {data:[]};}};
+    const core={sessions:new Map([[s.key,s]]),store:{session:()=>s},state:{server},connect:async()=>{},save:async()=>{},resumeOptions:async()=>({})};
+    const row=task(s.key,project('empty-'+ran));Object.assign(row,{state:'running',chatId:s.id,deliveryPhase:'dispatching',nextInput:'Synthetic first input',queuedRecoveryInput:true});
+    const status=createTaskStatus({core,provider:{cli:{binding:{appServerGeneration:'synthetic-new'}}},now:Date.now,runs:new Map(),finishRun(){},status:async()=>{throw Error('Must not read');}});
+    if(ran){await assert.rejects(status(row),/no rollout/);assert.equal(s.id,'synthetic-empty','A thread that ran is never replaced');continue;}
+    {
+      const cancelled={...s,key:'synthetic-empty-cancel'},cancelRow={...row,cancelRequested:true};
+      const statusCancel=createTaskStatus({core:{...core,sessions:new Map([[cancelRow.sessionKey,cancelled]])},provider:{cli:{binding:{appServerGeneration:'synthetic-new'}}},now:Date.now,runs:new Map(),finishRun(){},status:async()=>{throw Error('Must not read');}});
+      assert.equal((await statusCancel(cancelRow)).cancelled,true,'A cancel of a lost empty thread ends cancelled');
+    }
+    const tasks=harness('lost-empty',true,{status});
+    try{
+      tasks.tasks.set(row.taskId,row);tasks.save(row);await tasks.observe(row);
+      assert.equal(row.state,'queued');assert.equal(row.nextInput,'Synthetic first input');assert.equal(row.deliveryPhase,'preparing');
+      assert.equal(s.id,null);assert.equal(row.chatId,null,'The next send starts a fresh thread');
+    }finally{tasks.dispose();}
+  }
+}
+
+// End to end: the first turn was refused after thread/start, then the service
+// restarted. The MCP start path must replace the empty thread, not refuse forever.
+async function emptyThreadServiceRestart(){
+  const directory=project('empty-thread-restart'),data=fixture(directory);
+  let host,refuse=true,sends=[];
+  const makeCli=data.hostOptions.providerOptions.createCli;
+  data.hostOptions.providerOptions.createCli=options=>{
+    const cli=makeCli(options),request=cli.request.bind(cli);
+    cli.request=async(method,params,...args)=>{
+      if(method==='turn/start'){
+        if(refuse)throw Object.assign(Error('Synthetic refused first turn'),{deliveryUncertain:false});
+        sends.push(params);
+      }
+      return request(method,params,...args);
+    };return cli;
+  };
+  const options={root:directory,taskOptions:{scope:()=> 'synthetic-space'},...data.hostOptions};
+  try{
+    host=await createHeadlessHost({...options,generation:'synthetic-empty-before'});
+    const submitted=await host.mcp.tasks.call('submit_task',{requestId:'synthetic-empty-restart',description:'Synthetic empty',acceptanceCriteria:'Synthetic check',projectDirectory:directory});
+    let row=host.mcp.tasks.get(submitted.taskId);
+    await until(host,()=>!!host.core.sessions.get(row.sessionKey)?.id && !host.mcp.tasks.starting.size && row.state!=='running');
+    const emptyThread=host.core.sessions.get(row.sessionKey).id;
+    await host.dispose({force:true});host=null;await data.close();refuse=false;
+    host=await createHeadlessHost({...options,generation:'synthetic-empty-after'});
+    row=host.mcp.tasks.get(submitted.taskId);
+    if(row.state==='error')await host.mcp.tasks.call('continue_task',{taskId:row.taskId,requestId:'synthetic-empty-continue',clarification:'Synthetic empty retry'});
+    else {row.blockedUntil=0;row.state='queued';host.mcp.tasks.save(row);}
+    await until(host,()=>row.state==='completed' || row.state==='error' && !host.mcp.tasks.starting.size && sends.length>0);
+    assert.equal(row.state,'completed','An empty thread lost to a service restart is replaced on the MCP start path');
+    assert.equal(sends.length,1);assert.notEqual(sends[0].threadId,emptyThread);assert.equal(row.chatId,sends[0].threadId);
+  }finally{await host?.dispose({force:true});await data.close();}
+}
+
+(async()=>{try{await emptyThreadServiceRestart();await restartInterruption();await lostEmptyThread();await queuedInput();await windowsAndSlowRecovery();await lightweightStatus();await repeatedLimit();await historyRecovery();await preparingRestart();await generationAndPredispatchExit(false);await generationAndPredispatchExit(true);await freshThreadGenerationChange();
  console.log('PASS review regressions: unchanged window recovery, lossless preparing restart, slow retries/free slots, lightweight status, bounded limits, concurrent history, generation config and CLI exit before dispatch.');
 }finally{assert.equal(path.dirname(root),os.tmpdir());assert(path.basename(root).startsWith('rundix-review-regression-synthetic-'));fs.rmSync(root,{recursive:true,force:true});}})().catch(error=>{console.error(error);process.exitCode=1;});

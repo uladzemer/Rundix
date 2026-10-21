@@ -311,7 +311,47 @@ async function rotatedDraftChecks() {
   }
 }
 
+async function movedOnChecks() {
+  // The chat's connection changed while the start reply was lost: leases still settle.
+  let f = fixture();
+  f.start(async () => { f.context.activeConnection = {}; throw uncertain(); });
+  await assert.rejects(f.context.send(f.s, 'Synthetic input'));
+  assert(f.leases.has('synthetic-directory'), 'An uncertain start keeps the project until it settles');
+  await f.advance(30000);
+  assert(!f.leases.has('synthetic-directory') && !f.leases.has(f.s.id) && !f.context.turnLeases.has(f.s.id), 'Leases of a moved-on chat expire');
+  f = fixture();
+  f.start(async () => { f.emit('turn/started'); f.context.activeConnection = {}; throw uncertain(); });
+  await assert.rejects(f.context.send(f.s, 'Synthetic input'));
+  assert(f.leases.has('synthetic-directory'), 'A running turn keeps the project');
+  f.emit('turn/completed', 'synthetic-turn', 'failed');
+  assert(!f.leases.has('synthetic-directory') && !f.leases.has(f.s.id), 'Its own completion releases the leases after the chat moved on');
+
+  // A thread that never ran has no rollout after an app-server restart: it is replaced.
+  const { resume } = require('../runtime/session-resume.cjs');
+  for (const serviceMode of [false, true]) {
+    const s = { id: 'synthetic-thread', items: [] };
+    const deps = { serviceMode, save: async () => {}, resumeThread: async () => { throw Error('Synthetic no rollout found for thread'); } };
+    if (serviceMode) { await resume(deps, s, s.id); assert.equal(s.id, null, 'Service drops an empty thread without a rollout'); }
+    else { await assert.rejects(resume(deps, s, s.id), /no rollout/); assert.equal(s.id, 'synthetic-thread', 'Window resume behavior is unchanged'); }
+  }
+  for (const ran of [false, true]) {
+    f = fixture();f.s.loaded = false;if (ran) f.s.lastStartedTurnId = 'synthetic-old-turn';
+    const lost = { serviceMode: true, save: async () => {}, resumeThread: async () => { throw Object.assign(Error('Synthetic no rollout found for thread'), { code: -32600 }); } };
+    f.context.resume = (s, id) => resume(lost, s, id);
+    f.context.library = { migrate: async () => {} };f.context.mcpThreadConfig = () => null;
+    const request = f.server.request;
+    f.server.request = async (method, params, timeout) => {
+      if (method === 'thread/start') { f.calls.push({ method, params }); return { thread: { id: 'synthetic-replacement', cwd: params.cwd }, model: 'synthetic-model' }; }
+      if (method === 'thread/name/set') return {};
+      return request(method, params, timeout);
+    };
+    f.start(async () => { f.emit('turn/started', 'synthetic-turn', 'inProgress', 'synthetic-replacement'); f.emit('turn/completed', 'synthetic-turn', 'completed', 'synthetic-replacement'); return { turn: { id: 'synthetic-turn' } }; });
+    if (ran) { await assert.rejects(f.context.send(f.s, 'Synthetic input'), /no rollout/); assert.equal(f.s.id, 'synthetic-thread', 'A thread with turns is never silently replaced'); }
+    else { await f.context.send(f.s, 'Synthetic input'); assert.equal(f.s.id, 'synthetic-replacement'); assert.equal(f.calls.filter(call => call.method === 'turn/start').length, 1); }
+  }
+}
+
 (async () => {
-  await rotatedDraftChecks();await transportChecks();await sendChecks();await queueChecks();
+  await rotatedDraftChecks();await transportChecks();await sendChecks();await queueChecks();await movedOnChecks();
   console.log('Send/queue: uncertain start reconciliation and leases, no follow-up replay, transactional enqueue passed.');
 })().catch(error => { console.error(error);process.exitCode = 1; });

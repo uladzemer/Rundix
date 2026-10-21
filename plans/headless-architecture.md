@@ -1,0 +1,98 @@
+# Headless Rundix — архитектура (итог пункта 0)
+
+> Исторический проектный документ от 20 октября 2026 года. Состояние реализации и результаты текущих проверок следует сверять с исходниками, CHANGELOG и документацией в standalone/docs; предложения ниже не означают уже работающие возможности.
+
+Исследование 2026-10-20: четыре read-only задачи Codex через Rundix MCP (Claude Code 2.1.296, Codex CLI 0.159.2 / upstream 0.163, Rundix HEAD 8228cb5, Extended HEAD 7b3b69e). Отмечено: **факт** (проверено опытом/кодом/доками) или **предложение**.
+
+## 1. Как stdio MCP-сервер узнаёт свой проект
+
+Факты (опыт на CLI 2.1.296, changelog):
+- Claude запускает отдельный stdio-процесс на каждую сессию; две параллельные сессии в одной папке → два процесса. Сабагенты используют соединение родителя.
+- cwd сервера = папка запуска Claude (не git-корень, не место `.mcp.json`; поле `cwd` в конфиге игнорируется).
+- Переменные: `CLAUDE_PROJECT_DIR` (с 2.1.139, = папка запуска), `CLAUDE_CODE_SESSION_ID`, `CLAUDECODE` (с 2.1.154); `env` из конфига сливается с окружением.
+- Поддерживается MCP `roots` (`roots/list`, `listChanged`): основной каталог + `--add-dir`.
+- Риски (issues, не воспроизведены): `EnterWorktree` не переподключает MCP (#98822); `/clear` и resume ненадёжны для project-scope серверов (#90494, #81688); поведение VS Code-расширения в multi-root не проверено.
+
+Сейчас адаптер `mcp-server.cjs` шлёт в bridge только `name`+`arguments` — проект не передаётся.
+
+Предложение — порядок определения пространства (space):
+1. `CLAUDE_PROJECT_DIR` → канонический путь → git-корень (worktree внутри `.claude/worktrees/` принадлежит основному репо) = space.
+2. Проверка через `roots/list`; при противоречии — ошибка, не угадывание.
+3. Резерв — cwd адаптера.
+4. Неоднозначность → явная ошибка привязки; никогда «последнее активное окно».
+Привязка закрепляется за соединением адаптера; каждый вызов и каждый taskId проверяется по space. `CLAUDE_CODE_SESSION_ID` — только для корреляции.
+
+## 2. Codex app-server
+
+Факты (help + исходники upstream):
+- Есть `codex app-server --listen unix://|ws://` (много клиентов на один процесс), `app-server daemon` (start/stop/restart/update) и `proxy`. На Windows «unix socket» = AF_UNIX, не named pipe.
+- `cwd` — свойство thread/turn: один процесс ведёт много проектов. Изоляции доступа между клиентами нет — её должен делать Rundix.
+- Auth — на процесс (`AuthManager`), не на thread: разные аккаунты одновременно = разные процессы.
+- Отключение клиента не прерывает turn; thread без подписчиков выгружается через ~30 мин простоя. Смерть процесса = потеря живого turn, история (rollout) остаётся; `thread/resume` переотправляет незакрытые server requests. Exactly-once нет — неоднозначную отправку не повторять автоматически (как сейчас).
+- Сегодня Rundix: один app-server (stdio) на окно VS Code, общий для всех чатов окна; MCP-задачи идут через него же.
+
+Предложение: сервис владеет **одним app-server на одновременно используемый аккаунт** (stdio, дочерний процесс сервиса, как сейчас transport.cjs); space — логическая граница внутри сервиса. Отдельный процесс на space — только если понадобится.
+
+## 3. Вынос ядра из extension.cjs
+
+Факты (статический анализ):
+- extension.cjs ≈ 3000 строк; ядро сессий (create/send/resume/queue/approvals/notifications) зависит от `vscode` в основном через настройки, `globalStorageUri`, `workspaceState`, SecretStorage, trust, предупреждения и наличие панели.
+- Скрытые связи с UI: сессия без панели удаляется; `resumeThread` и ожидание квоты смотрят на `panel`.
+- Хранилище: всё в `globalStorage/…/sessions-v1`, `mcp/tasks`, `mcp/bridge.json` — без ключа окна/проекта. MCP-планировщик рассчитан на **одного владельца** (`lease-mcp-bridge`); два исполнителя над одной папкой задач небезопасны. `bridge.json` пишется не атомарно.
+- Проверки `projectDirectory` против папок workspace нет.
+- Часть тестов вырезает функции из extension.cjs по текстовым маркерам — их надо перевести на импорт модулей до переноса.
+
+Предложение: `createSessionCore(host)` с узким интерфейсом (paths, settings, KV, secrets, trust, события changed/sent/notify, openChat/closeChat, logger, clock). 8 шагов, каждый с зелёными тестами (~1.8–3k строк переноса суммарно, крупнейшие — connection/server lifecycle и send/queue). **Сервис — единственный владелец задач и исполнения; окно — клиент** (подписка на события/снимки), а не второй исполнитель над теми же JSON.
+
+## 4. Пул (приватный Extended) вне VS Code
+
+Факты:
+- Пул живёт в **облачном broker** Extended (Cloudflare Worker + контейнер; refresh-токены зашифрованы там). Companion хранит в VS Code SecretStorage только маленькую запись (URL broker, device credential, выбранный аккаунт) и получает короткоживущие access-токены.
+- Ротация (pre-turn, порог ≤10 %, перебор кандидатов с проверкой лимитов) — в companion `provider.cjs` + приватные модули; CLI-владение, leases и лимиты — в публичном extension.cjs.
+- Connection API v1 — функции внутри Extension Host; через процессы не переносится.
+- SecretStorage недоступен вне VS Code; `keytar` архивирован (2022). `@napi-rs/keyring` 2.1.2 (живой, бинарники Win/macOS x64/ARM64) — Credential Manager / Keychain. Лимит Credential Manager 2560 байт — запись broker укладывается.
+
+Предложение:
+- Публичный сервис ↔ **приватный provider-процесс** (дочерний, framed RPC по stdio, путь — из пользовательского конфига, не из workspace) ↔ broker. Контракт «provider v2 (service)»: `authenticate`, `handleRequest(refresh)`, `prepareTurn` → `ready | waitUntil | needsDecision | unavailable`, `cancelWait`, `dispose`; каждый вызов несёт generation/lease/revision. Нет provider → MCP-задачи не стартуют (fail closed, как сейчас).
+- Секрет broker — в ОС через `@napi-rs/keyring` внутри приватного provider; однократная миграция из SecretStorage делает companion (у него есть доступ), без файлов-экспортов.
+- Ротация и лимиты — общие для всех spaces.
+
+## 5. Процесс сервиса
+
+Факты/доки: Windows — Task Scheduler at logon (без админа) лучше Startup/HKCU Run; скрытая консоль требует GUI-лаунчера. macOS — LaunchAgent. Single instance — named pipe (Win) / unix socket (mac) + lock с generation. Обновление — версионированные каталоги вне папки расширения + передача управления после дренажа задач.
+
+Предложение:
+- **Запуск по требованию**: MCP-адаптер (Claude) или окно VS Code поднимает сервис detached, если его нет; автозапуск ОС — опционально позже (не трогаем ОС владельца без нужды). Recovery задач после перезагрузки Windows — при первом обращении.
+- IPC окно/адаптер → сервис: per-user named pipe / unix socket + capability-секрет в файле с правами пользователя (развитие нынешнего bridge.json).
+- Node: тот, что уже используется launcher'ом MCP (без бандла своего runtime на первом этапе) — проверить.
+- Обновление: сервис из версионированной копии в globalStorage; новая версия расширения просит старый сервис «дренироваться и выйти», запускает новый.
+
+## 6. Общая схема (предложение)
+
+```
+Claude (проект A) ─stdio─ mcp-adapter ─┐            ┌─ app-server (аккаунт N)
+Claude (проект B) ─stdio─ mcp-adapter ─┼─ pipe ─ rundix-service ─┤
+VS Code окно A ───────── клиент space A┘   spaces A,B │           └─ provider (private) ─ broker
+VS Code окно B ───────── клиент space B               └─ store: sessions, mcp/tasks per space
+```
+- Хранилище сервиса: `<userData>/rundix-service/` (вне VS Code storage), задачи с полем `space`; миграция существующих `mcp/tasks` → space по `projectDirectory`.
+- Окно показывает только задачи своего space (space окна = git-корень его workspace folder).
+
+## 7. Главные риски
+1. Ядро сейчас вплетено в панели — перенос большой, нужен поэтапный.
+2. Новый контракт provider v2 и миграция секрета — затрагивает приватный Extended и broker-креды.
+3. Неоднозначные отправки при падении сервиса — сохранить текущие гарантии (не повторять).
+4. EnterWorktree/clear/resume в Claude не переподключают MCP — привязка по `CLAUDE_PROJECT_DIR` git-корня это переживает (worktree внутри репо).
+5. Windows: хвосты helper-процессов Codex, скрытая консоль, права на pipe.
+
+## 8. Решения владельца (2026-10-20)
+1. **Объём первого этапа — только MCP-задачи.** Обычные чаты, открытые вручную, остаются в окне VS Code как сейчас; чаты MCP-задач живут в сервисе, окно их показывает и продолжает.
+2. **Проект задачи — автоматически по git-корню** папки запуска Claude (`CLAUDE_PROJECT_DIR` → git-корень). Задача принадлежит проекту того Claude, который её поставил; `projectDirectory` может быть в другом репо (как задача пула в CodexVScodeExt из сессии Rundix).
+3. **Запуск по требованию**: сервис поднимают MCP-адаптер или окно VS Code; автозагрузку ОС не трогаем.
+4. **Лимиты пула исчерпаны без окна — ждать сброса**: задача остаётся в очереди со статусом ожидания лимита и продолжается сама; Claude видит это в `wait_task`.
+5. **CODEX_HOME сервиса — обычная папка пользователя** (как сейчас): настройки, инструкции, скиллы, MCP-серверы и история на прежнем месте; защита — жёсткий запрет хода до подтверждённого входа из пула + тест, что вход пула не перезаписывает личный вход. Проверено 2026-10-20 (`npm.cmd run test:cli-auth`, docs/cli-external-auth-verification.md, CLI 0.159.2 и 0.163.0): вход/refresh/выход процесса файл не трогают, но `account/logout` в режиме file удаляет `auth.json`; с `-c cli_auth_credentials_store="ephemeral"` — безопасно. Требования к сервису: всегда ephemeral, никогда не вызывать logout, gate заново после каждого рестарта app-server.
+
+## 9. Детальные дизайны (2026-10-20, 3 раунда ревью: Gemini 3.8 Flash + Claude Sonnet)
+- Публичный протокол сервиса: `plans/headless-protocol.md`.
+- Дизайн приватного провайдера хранится отдельно в `plans/headless-provider.md` приватного репозитория Extended и не входит в публичный проект.
+- Упрощения этапа 1: чистый Node (фиксированный pipe/socket, EADDRINUSE как singleton), idle-exit только без незавершённых задач, один app-server и один активный аккаунт пула (ротация только в простое), companion зеркалит запись broker в хранилище ОС (без миграции владения), waiting_limit не будит ожидание.

@@ -121,12 +121,42 @@ async function main(){
     const corruptBackup=createMigration({root:changedRoot});await blocked(corruptBackup,changedSource,'needs_repair');await corruptBackup.close();
     fs.writeFileSync(backupFile,backupBytes);
     const verifiedAgain=createMigration({root:changedRoot});await verifiedAgain.sync();assert.equal(verifiedAgain.visible(sa,[canonical(a)]).length,2);await verifiedAgain.close();
-    // A task must never turn an ordinary manual session into imported MCP history.
+    // Legacy 0.3.x task references work even when mcpTask was persisted false.
     const manualRoot=make('service-manual'),manualSource=make('legacy-manual');seed(manualSource,'synthetic-manual-reference',a);registerRoot(manualRoot,manualSource);
     const manualStore=new SessionStore(path.join(manualSource,'sessions-v1')),manualFile=manualStore.file('session','synthetic-session-synthetic-manual-reference');
     const manualSession=JSON.parse(fs.readFileSync(manualFile,'utf8'));manualSession.mcpTask=false;fs.writeFileSync(manualFile,JSON.stringify(manualSession));
-    const manualImport=createMigration({root:manualRoot});await blocked(manualImport,manualSource,'needs_repair');await manualImport.close();
-    assert(fs.existsSync(path.join(manualSource,'mcp','tasks')));assert(!fs.existsSync(path.join(manualSource,'mcp','service-migration.json')));
+    const manualImport=createMigration({root:manualRoot});await blocked(manualImport,manualSource,'ready');
+    assert.equal((await manualImport.chat(sa,manualImport.visible(sa,[canonical(a)])[0].taskId,[canonical(a)],'synthetic')).items.length,1);await manualImport.close();
+    const compatibilityRoot=make('service-compatibility'),compatibilitySource=make('legacy-compatibility');
+    for(const id of ['absent','missing','unrelated','deleted'])seed(compatibilitySource,'synthetic-'+id,id==='deleted'?path.join(a,'synthetic-vanished-worktree'):a);
+    const compatStore=new SessionStore(path.join(compatibilitySource,'sessions-v1'));
+    const absent=compatStore.session('synthetic-session-synthetic-absent');delete absent.mcpTask;compatStore.write('session',absent.key,absent);
+    fs.unlinkSync(compatStore.file('session','synthetic-session-synthetic-missing'));
+    const unrelated=compatStore.session('synthetic-session-synthetic-unrelated');unrelated.id='synthetic-different-chat';compatStore.write('session',unrelated.key,unrelated);
+    registerRoot(compatibilityRoot,compatibilitySource);let compatible=createMigration({root:compatibilityRoot});await blocked(compatible,compatibilitySource,'ready');
+    const summaries=compatible.visible(sa,[canonical(a)]);assert.equal(summaries.length,3);
+    for(const summary of summaries){const chat=await compatible.chat(sa,summary.taskId,[canonical(a)],'synthetic');assert.equal(chat.readOnly,true);assert.equal(chat.items.length,summary.task.taskId==='synthetic-absent'?1:0);}
+    const deletedSpace=compatible.spaces([canonical(a)])[0];assert.equal(compatible.visible(deletedSpace.spaceId,[canonical(a)]).length,1);
+    await compatible.close();compatible=createMigration({root:compatibilityRoot});await blocked(compatible,compatibilitySource,'ready');assert.equal(compatible.visible(sa,[canonical(a)]).length,3);await compatible.close();
+    // Registration prunes vanished roots before enforcing the registry cap.
+    const pruneRoot=make('service-prune'),pruneSource=make('legacy-prune');
+    new SessionStore(pruneRoot).write('legacy','roots',{schemaVersion:1,roots:Array.from({length:100},(_,i)=>path.join(base,'synthetic-gone-'+i))});
+    registerRoot(pruneRoot,pruneSource);assert.deepEqual(new SessionStore(pruneRoot).read('legacy','roots').roots,[canonical(pruneSource)]);
+    // Maintenance removes exactly the acceptance-profile entries, retaining all others.
+    const cleanupRoot=make('service-cleanup'),cleanupTemp=make('synthetic-cleanup-temp');
+    const cleanupStore=new SessionStore(cleanupRoot),cleanupList=['live','n7','n8'].map(name=>path.join(canonical(cleanupTemp),'rundix-'+name+'-synthetic','vscode-profile','User','globalStorage','local-rundix-tools.rundix'));
+    cleanupList.push(path.join(base,'synthetic-owner-storage'));cleanupStore.write('legacy','roots',{schemaVersion:1,roots:cleanupList});
+    const {cleanup}=require('../scripts/cleanup-live-legacy-roots.cjs');
+    const cleanupAlias=path.join(base,'synthetic-temp-alias');fs.symlinkSync(cleanupTemp,cleanupAlias,process.platform==='win32'?'junction':'dir');
+    assert.equal(cleanup({root:cleanupRoot,temp:cleanupAlias}).candidates,3);
+    assert.equal(cleanup({root:cleanupRoot,temp:cleanupTemp}).applied,false);assert.equal(cleanupStore.read('legacy','roots').roots.length,4);
+    const cleanupLease=cleanupStore.acquire('legacy-roots');try{assert.throws(()=>cleanup({root:cleanupRoot,temp:cleanupTemp,apply:true}));}finally{cleanupLease();}
+    assert.deepEqual(cleanup({root:cleanupRoot,temp:cleanupTemp,apply:true}),{candidates:3,remaining:1,applied:true});
+    assert.deepEqual(cleanupStore.read('legacy','roots').roots,[cleanupList[3]]);assert.equal(fs.readdirSync(cleanupRoot).filter(name=>name.endsWith('.bak')).length,1);
+    assert.throws(()=>cleanup({root:cleanupRoot,temp:cleanupTemp,apply:true}),{code:'unexpected_candidate_count'});
+    // Registry contention never turns healthy history into repair.
+    const pruneLease=new SessionStore(pruneRoot).acquire('legacy-roots'),pruning=createMigration({root:pruneRoot});
+    try{await pruning.sync();assert.equal(pruning.status(undefined).state,'ready');}finally{pruneLease();await pruning.close();}
     // One unavailable root cannot prevent IPC or another root's history.
     const mixedRoot=make('service-mixed'),busySource=make('legacy-busy'),badSource=make('legacy-bad'),goneSource=make('legacy-gone'),healthySource=make('legacy-healthy');
     seed(busySource,'synthetic-busy',a);seed(badSource,'synthetic-bad',a);seed(healthySource,'synthetic-healthy',b);

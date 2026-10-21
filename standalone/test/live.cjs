@@ -1,3 +1,4 @@
+require('./test-isolation.cjs').isolate();
 const {AppServer}=require('../runtime/transport.cjs');const assert=require('node:assert/strict');const path=require('node:path');const fs=require('node:fs');
 (async()=>{
  const s=new AppServer();let id;const dir=path.resolve(__dirname,'../.verification/live-fixture');fs.mkdirSync(dir,{recursive:true});

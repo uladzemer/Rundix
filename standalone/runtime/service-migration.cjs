@@ -18,6 +18,13 @@ function roots(store){
   if(value?.schemaVersion!==1 || !Array.isArray(value.roots) || value.roots.length>100 || value.roots.some(root=>typeof root!=='string' || !path.isAbsolute(root)))throw failure('migration_conflict');
   return value.roots;
 }
+// Only ENOENT proves a root vanished; permission failures must retain it.
+function existingRoots(list){return list.filter(source=>{try{fs.lstatSync(source);return true;}catch(error){return error.code!=='ENOENT';}});}
+function pruneRoots(store){
+  let release;try{release=store.acquire('legacy-roots');}catch{return {list:roots(store),removed:[]};}
+  try{const original=roots(store),list=existingRoots(original);if(json(list)!==json(original))store.write('legacy','roots',{schemaVersion:1,roots:list});return {list,removed:original.filter(source=>!list.includes(source))};}
+  finally{release();}
+}
 function registryBusy(){return Object.assign(Error('legacy_registry_busy'),{code:'legacy_registry_busy',retryable:true});}
 const jitter=attempt=>Math.min(150,20*2**Math.min(attempt,3))+Math.floor(Math.random()*30);
 function registerRoot(root,source,{timeoutMs=1500}={}){
@@ -29,7 +36,7 @@ function registerRoot(root,source,{timeoutMs=1500}={}){
     if(Date.now()>=deadline)throw registryBusy();
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Math.min(jitter(attempt++),deadline-Date.now()));
   }}
-  try{const list=roots(store);if(!list.includes(source)){if(list.length>=100)throw failure('migration_conflict');store.write('legacy','roots',{schemaVersion:1,roots:[...list,source]});}}
+  try{const original=roots(store),list=existingRoots(original);if(!list.includes(source)){if(list.length>=100)throw failure('migration_conflict');list.push(source);}if(json(list)!==json(original))store.write('legacy','roots',{schemaVersion:1,roots:list});}
   finally{release();}
   return source;
 }
@@ -141,10 +148,13 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
         if(!['queued','running','waiting_approval','waiting_limit','completed','error','cancelled'].includes(task.state) || !Array.isArray(task.operations))throw failure('migration_conflict');
         let session=null;const sessionFile=sourceStore.file('session',task.sessionKey);
         if(await exists(sessionFile)){
-          session=await read(sessionFile);
-          if(session.key!==task.sessionKey || task.chatId && session.id!==task.chatId || !Array.isArray(session.items) || session.mcpTask!==true)throw failure('migration_conflict');
-          if(session.id){if(!key(session.id))throw failure('migration_conflict');try{sessionLeases.push(sourceStore.acquire(session.id));}catch{throw failure('legacy_owner_active');}}
-        }else if(task.chatId)throw failure('migration_conflict');
+          try{session=await read(sessionFile);}catch(error){if(error.code!=='ENOENT')throw error;}
+          // 0.3.x task sessions may omit mcpTask or persist it as false.
+          // The task's exact key/chat reference establishes the association.
+          // Missing or unrelated transcripts leave a read-only task summary.
+          if(session?.key!==task.sessionKey || task.chatId && session.id!==task.chatId || !Array.isArray(session?.items))session=null;
+          if(session?.id){if(!key(session.id))throw failure('migration_conflict');try{sessionLeases.push(sourceStore.acquire(session.id));}catch{throw failure('legacy_owner_active');}}
+        }
         let inferred=null,directory=path.normalize(task.projectDirectory);if(process.platform==='win32')directory=directory.toLowerCase();
         try{inferred=resolveSpace(directory).spaceId;directory=canonical(directory);}catch{}
         const interrupted=['running','waiting_approval'].includes(task.state) || !!task.recoveryRequired || !!task.needsReconcile || session?.lastTurnStatus==='inProgress';
@@ -193,7 +203,7 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
       }
       for(const source of ready){try{await fsp.lstat(source);if(await exists(path.join(source,'mcp','tasks')))ready.delete(source);}catch{ready.delete(source);}}
       const visited=new Set();
-      for(;;){const configured=roots(store);if(statuses.delete(undefined))for(const listener of listeners)listener(undefined,{state:'ready'});
+      for(;;){const {list:configured,removed}=pruneRoots(store);for(const source of removed){ready.delete(source);bridges.get(source)?.dispose();bridges.delete(source);leases.get(source)?.();leases.delete(source);publish(source,{state:'vanished'});}if(statuses.delete(undefined))for(const listener of listeners)listener(undefined,{state:'ready'});
         const pending=configured.filter(source=>!visited.has(source) && !ready.has(source) && (force || !(status(source).retryAt>clock())));if(!pending.length)return;
         for(const source of pending){visited.add(source);try{await importRoot(source);}catch(error){
           if((hooks.afterCopy || hooks.afterVerify || hooks.afterMarker) && !error.code)throw error;

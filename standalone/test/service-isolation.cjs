@@ -25,6 +25,8 @@ try {
   assert.equal(defaults.directory,path.join(root,'local','Rundix','service'));
   assert.equal(defaults.providerConfig,path.join(root,'roaming','Rundix','rundix-service','provider.json'));
   assert.equal(servicePaths().directory,process.env.RUNDIX_SERVICE_ROOT);
+  const productionRoot=path.join(process.env.LOCALAPPDATA || path.join(os.homedir(),'AppData','Local'),'Rundix','service');
+  if(process.platform==='win32')assert.throws(()=>servicePaths({root:productionRoot}),/cannot use the production service root/);
   assert.equal(configLocation(),path.join(process.env.RUNDIX_PROVIDER_CONFIG_DIR,'provider.json'));
   assert.equal(servicePaths({root}).directory,root,'Explicit root takes precedence');
   const options = {platform:'win32',sid:'S-1-5-21-42420',root:defaults.directory};

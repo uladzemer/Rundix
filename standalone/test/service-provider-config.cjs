@@ -40,7 +40,7 @@ try {
   fs.writeFileSync(entryPath, originalEntry, {mode:0o600});
   const alias = path.join(root, 'alias'); fs.symlinkSync(directory, alias, process.platform === 'win32' ? 'junction' : 'dir');
   invalidConfig({...config, manifestPath:path.join(alias, 'provider-manifest.json')});
-  const expected = configLocation({pathEnv:{},platform:'win32', appData:path.join(root, 'roaming'), home:root});
+  const expected = configLocation({pathEnv:{},platform:'win32', appData:path.join(root, 'roaming'), localAppData:path.join(root, 'local'), home:root});
   assert.equal(expected, path.join(root, 'roaming', 'Rundix', 'rundix-service', 'provider.json'));
   assert.equal(configLocation({pathEnv:{},platform:'darwin', home:root}), path.join(root, 'Library', 'Application Support', 'Rundix', 'rundix-service', 'provider.json'));
   assert.throws(() => readProviderConfig({configPath:path.join(root, 'absent.json')}), {code:'PROVIDER_NOT_CONFIGURED', reason:'action_required'});

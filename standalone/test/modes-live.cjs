@@ -1,3 +1,4 @@
+require('./test-isolation.cjs').isolate();
 // Verify effective settings returned by the installed CLI; no agent turn or tools run.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

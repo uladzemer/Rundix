@@ -237,7 +237,7 @@ function activate(context) {
     serviceEpoch++;
     const client=serviceClient;serviceClient=null;client?.close();serviceSpaceId=null;
     for(const record of serviceChats.values())void postServiceChat(record,null);
-    publishMcpPanel(true);
+    publishMcpPanel(true);broadcast();
   }
   async function connectServiceWindow() {
     if(serviceDisposed || !vscode.workspace.isTrusted)throw Object.assign(Error('Workspace trust is required.'),{code:'workspace_untrusted'});
@@ -248,7 +248,7 @@ function activate(context) {
       const folder=lastEditor && vscode.workspace.getWorkspaceFolder(lastEditor.document.uri);
       if(folder)try{serviceSpaceId=require('./runtime/service-space.cjs').resolveSpace(folder.uri.fsPath).spaceId;}catch{}
       client.on('changed',()=>{if(serviceClient===client)publishMcpPanel();});
-      client.on('status',status=>{if(serviceClient===client){serviceError=status==='connected'?null:'service_unavailable';publishMcpPanel(true);}});
+      client.on('status',status=>{if(serviceClient===client){serviceError=status==='connected'?null:'service_unavailable';publishMcpPanel(true);broadcast();}});
       client.on('chatChanged',event=>{const record=serviceChats.get(serviceChatKey(event.spaceId,event.taskId));if(record)void refreshServiceChat(record,client);});
       client.on('status',status=>{if(serviceClient===client)for(const record of serviceChats.values()){
         if(status==='connected')void refreshServiceChat(record,client);else void postServiceChat(record,null);
@@ -571,7 +571,7 @@ function activate(context) {
           modelsUpdatedAt: core.state.catalogUpdatedAt,
           account: connections.projectAccount(core.state.account),
           connection: connections.display(),
-          mcpBridgeRunning:!!mcpHost.bridge,
+          mcpBridgeRunning:serviceMode?!!serviceClient?.peer && !serviceClient.peer.closed:!!mcpHost.bridge,
           authBusy: core.state.authBusy,
           chatWidth:vscode.workspace.getConfiguration('rundix').get('chatWidth','wide'),
           contextDisplay:vscode.workspace.getConfiguration('rundix').get('contextDisplay','percent'),

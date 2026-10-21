@@ -27,8 +27,15 @@ exports.run = async () => {
     launcher.installLauncherAsync = () => {installs++;return {root,launcher:'synthetic-launcher', configuration:{mcpServers:{rundix:{command:'node', args:['synthetic-launcher','--service']}}}};};
     api = await vscode.extensions.getExtension('local-rundix-tools.rundix').activate();
     assert.equal(api.mcp.panelSnapshot().serviceMode, true, 'Only globalValue chooses mode');
+    const iconSession=api.create({key:'synthetic-service-icon',name:'Synthetic service icon',cwd:root,items:[]});
+    const iconPanel=api.view(iconSession).panel,iconMessages=[];
+    const originalPost=iconPanel.webview.postMessage.bind(iconPanel.webview);
+    iconPanel.webview.postMessage=message=>{if(message.type==='state')iconMessages.push(message.data.mcpBridgeRunning);return originalPost(message);};
+    const waitIcon=async expected=>{const until=Date.now()+5000;while(iconMessages.at(-1)!==expected){assert(Date.now()<until,'Service icon state deadline');await new Promise(resolve=>setTimeout(resolve,20));}};
+
     await assert.rejects(api.mcp.connectPool(), {code:'unsupported'});
     assert.equal(await api.mcp.start(), 'synthetic-launcher');
+    await waitIcon(true);assert.equal(api.mcp.tasks(),null);report.serviceChatIconConnected=true;
     assert.equal(installs, 1); assert.equal(api.mcp.tasks(), null, 'No window MCP host started');
     const result = await api.mcp.panelAction({action:'configuration'});
     assert.deepEqual(result.configuration.mcpServers.rundix.args, ['synthetic-launcher','--service']);
@@ -71,7 +78,7 @@ exports.run = async () => {
     const stale=api.mcp.start().catch(()=>{}),stop=api.mcp.stop(),restart=api.mcp.start();
     await Promise.all([stale,stop,restart]);assert.equal(api.mcp.panelSnapshot().bridgeRunning,true,'Explicit restart outlives stale start');
     report.startStopStart=true;
-    await api.mcp.stop(); assert.equal(api.mcp.panelSnapshot().bridgeRunning, false);
+    await api.mcp.stop(); assert.equal(api.mcp.panelSnapshot().bridgeRunning, false);await waitIcon(false);report.serviceChatIconDisconnected=true;iconPanel.dispose();
     assert.equal(activationContext.globalState.get('mcpServiceStopped'),true);
     for(const staleEnabled of [false,true]){
       await activationContext.globalState.update('mcpEnabled',staleEnabled);

@@ -43,9 +43,11 @@ function isolate() {
   // No runtime file imports this helper; it is absent from the VSIX.
   const sourcePaths = require('../runtime/service-paths.cjs');
   const productionPaths = sourcePaths.servicePaths;
+  const productionDirectory = path.resolve(productionPaths().defaultDirectory).toLowerCase();
   sourcePaths.servicePaths = (options = {}) => {
     const env = options.pathEnv || process.env;
     const paths = productionPaths({...options,root:options.root || env.RUNDIX_SERVICE_ROOT});
+    if (path.resolve(paths.directory).toLowerCase() === productionDirectory) throw Error('Test harness cannot use the production service root.');
     if (env.RUNDIX_PROVIDER_CONFIG_DIR) paths.providerConfig = path.join(path.resolve(env.RUNDIX_PROVIDER_CONFIG_DIR),'provider.json');
     // A unique temporary root already namespaces IPC, including installed copies.
     return paths;

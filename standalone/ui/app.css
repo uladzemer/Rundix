@@ -1180,6 +1180,7 @@ input::placeholder {
   font-size: var(--text-small);
   line-height: 1.25;
   margin-top: 0;
+  white-space: pre-line;
 }
 .menu-row[aria-pressed="true"],
 .menu-row[aria-pressed="true"]:hover:not(:disabled) {

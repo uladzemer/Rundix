@@ -2,6 +2,10 @@
 
 Install and update Rundix through [Microsoft Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix).
 
+## 0.4.5 — 2026-10-21
+
+- Server account choices now show each account's five-hour and weekly remaining percentages with their reset times.
+
 ## 0.4.4 — 2026-10-21
 
 - Optional connections can supply a bounded menu of choices directly in the account dialog. Opening or refreshing it reloads the provider's presentation; hidden or failed reads remove previous choices. Switching is guarded by the idle credential lease and rejects stale actions.

@@ -22,7 +22,7 @@ The provider supplies:
 
 ## Optional connection menu (Rundix 0.4.4+)
 
-`api.connections.menuVersion === 1` advertises a generic provider menu in the account dialog. Providers may implement both `readMenu()` and `runMenuAction(id)`. A read returns `null` to show nothing, or `{title, items:[{id,label,detail?,checked?,disabled?}]}`. The base accepts at most 32 items, bounds text lengths and projects only these presentation fields. Providers own visibility, privacy and the underlying service logic; they must return no hidden identifiers or credentials in presentation fields.
+`api.connections.menuVersion === 1` advertises a generic provider menu in the account dialog. Providers may implement both `readMenu()` and `runMenuAction(id)`. A read returns `null` to show nothing, or `{title, items:[{id,label,detail?,checked?,disabled?}]}`. The base accepts at most 32 items, bounds text lengths and projects only these presentation fields. `detail` may contain bounded newlines for compact secondary information such as provider-owned quota windows and reset times; the provider remains responsible for freshness, visibility and privacy and must return no hidden identifiers or credentials in presentation fields.
 
 Opening the account menu or refreshing status reads fresh presentation with a bounded wait. Failure removes previous rows and shows a generic retry message. Results and one-use action revisions are scoped to the selected provider instance and connection revision. Actions run under the existing idle credential lease; the provider must recheck its current policy and bound its own network operations. Returning `activate` reconnects the CLI, while `cancel` preserves it. Existing providers without menu methods retain the settings-only interface.
 

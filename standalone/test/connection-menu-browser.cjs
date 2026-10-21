@@ -31,6 +31,7 @@ const chrome=process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applicat
         window.fixture.connection.menu={title:'Synthetic choices '+language+' '+dark,revision:'synthetic-revision',items:[{id:'one',label:'one@example.test',detail:'plus',checked:true},{id:'two',label:'two@example.test',detail:'pro'}]};window.update();
       },{language,dark});
       await page.waitForFunction(()=>document.querySelector('.account-menu')?.textContent.includes('two@example.test'));
+      assert.equal(await page.$eval('.account-menu .menu-row small',node=>getComputedStyle(node).whiteSpace),'pre-line');
       await page.screenshot({path:path.join(__dirname,`../.verification/connection-menu-${language}-${dark?'dark':'light'}-${width}.png`)});
       const bounds=await page.$eval('.account-menu',node=>({scroll:node.scrollWidth,client:node.clientWidth}));
       assert.ok(bounds.scroll<=bounds.client+1,JSON.stringify({language,dark,width,...bounds}));

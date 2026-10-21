@@ -2,10 +2,11 @@
 
 Install and update Rundix through [Microsoft Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix).
 
-## 0.4.2 ? 2026-10-21
+## 0.4.2 — 2026-10-21
 
 - Background service: a typed Codex usage-limit failure now records one automatic continuation in the same chat, then waits for the selected provider to confirm availability. Account selection remains in the installed provider.
-- Background service: tasks restore their existing thread on a replacement CLI; unavailable task/history reads back off and stop until explicit Continue, preserving delivery uncertainty.
+- Background service: tasks restore their existing thread and configuration on a replacement CLI; task/history failures back off, then keep slow retries without occupying execution slots. Explicit Continue resets recovery; unsent input survives restarts.
+- Background service: automatic limit continuations are bounded to two consecutive turns, at least 60 seconds apart; ordinary window recovery keeps the 0.4.1 behavior.
 - Background service: time waiting in the task queue no longer consumes the connection startup budget.
 
 ## 0.4.1 — 2026-10-21

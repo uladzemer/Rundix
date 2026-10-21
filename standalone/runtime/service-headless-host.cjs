@@ -79,6 +79,8 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       on('notification', message => {
         if (this.cli !== cli || disposed) return;
         const row = runs.get(message.params?.threadId);
+        const task=row && mcp.tasks.tasks.get(row.taskId);
+        if(task)task.lastActivityAt=clock.now();
         if (row && message.params?.willRetry!==true && recovery.usageLimit(message.params?.error || message.params?.turn?.error)) {
           const turnId=message.params?.turn?.id || message.params?.turnId || row.turnId;
           if (turnId && (!row.turnId || row.turnId===turnId)) {
@@ -131,6 +133,8 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       // Persist the thread before any admission/reconnect; task.chatId may lag
       // the already durable session after a crash before turn/start's ACK.
       task.chatId=params.threadId;task.deliveryPhase='preparing';mcp.tasks.save(task);
+      if(task.limitContinuation?.state==='pending' && task.nextInput===recovery.CONTINUE && (recovery.continuationBlocked(task) || recovery.continuationNotBefore(task)>clock.now()))
+        throw Object.assign(actionRequired('BUSY_ACTIVE'),{notSent:true,deliveryUncertain:false,providerWait:{resetAt:null,reason:'exhausted',retryAfterMs:Math.max(60000,recovery.continuationNotBefore(task)-clock.now())}});
       const generationBefore=this.cli.binding?.appServerGeneration;
       let outcome;
       try {outcome = await provider.prepareTurn({taskId:task.taskId, spaceId:task.space || 'unbound',
@@ -143,6 +147,9 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
           {notSent:true, deliveryUncertain:false, providerWait:wait, retryable:outcome.code === 'BUSY_ACTIVE'});
       }
       logger({code:'provider_admission_ready'});
+      // Admission consumes this wait even if its reserved child exits before
+      // dispatch. A later retry must acquire a fresh wait, never a retired ID.
+      delete task.waitId;
       try{remaining();}catch(error){provider.releaseReserved(outcome.grant);throw error;}
       if (task.cancelRequested || disposed) { provider.releaseReserved(outcome.grant); throw Object.assign(actionRequired(), {notSent:true, deliveryUncertain:false}); }
       const row = {threadId:params.threadId, taskId:task.taskId, grant:outcome.grant, completed:new Set()}; runs.set(params.threadId, row);
@@ -151,18 +158,24 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
         if(generationBefore!==this.cli.binding?.appServerGeneration) {
           // Rollouts survive account changes; the new app-server must load the
           // thread before dispatch, even if it was created by the old child.
-          await this.cli.request('thread/read',{threadId:params.threadId,includeTurns:false},9000);
-          await this.cli.request('thread/resume',{threadId:params.threadId,excludeTurns:true},9000);
+          await this.cli.request('thread/read',{threadId:params.threadId,includeTurns:false},30000);
+          await this.cli.request('thread/resume',await core.resumeOptions(core.sessions.get(task.sessionKey),params.threadId),30000);
           for(const session of core.sessions.values())session.loaded=false;
         }
+        if(row.exited || !this.cli)throw Object.assign(Error('CLI changed before dispatch.'),{notSent:true,deliveryUncertain:false});
         task.deliveryPhase='dispatching';
-        if(task.limitContinuation?.state==='pending')task.limitContinuation.state='dispatching';
+        task.queuedRecoveryInput=false;
+        task.lastActivityAt=clock.now();
+        if(task.limitContinuation?.state==='pending' && task.nextInput===recovery.CONTINUE){
+          task.autoLimit={consecutive:(task.autoLimit?.consecutive || 0)+1,lastSentAt:clock.now()};
+          task.limitContinuation.state='dispatching';
+        }
         mcp.tasks.save(task);
         dispatched();
         const result = await provider.dispatchTurn(outcome.grant, params); row.turnId = result.turn.id;
         const session=core.sessions.get(task.sessionKey);
         if(session)session.cliGeneration=this.cli.binding?.appServerGeneration;
-        task.deliveryPhase='confirmed';
+        task.deliveryPhase='confirmed';task.needsReconcile=false;task.lastStatusReadAt=clock.now();
         if(task.limitContinuation?.state==='dispatching') {
           task.limitContinuation.state='delivered';task.limitContinuation.turnId=result.turn.id;
         }
@@ -170,12 +183,16 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
         if (row.completed.has(row.turnId)) finishRun(row, row.turnId);
         return result;
       } catch (error) {
-        if(row.exited)throw Object.assign(error,{confirmedCliExit:true,deliveryUncertain:false});
         if(task.deliveryPhase==='preparing') {
-          provider.releaseReserved(outcome.grant);runs.delete(params.threadId);
+          if(!row.exited)try{provider.releaseReserved(outcome.grant);}catch{}
+          runs.delete(params.threadId);
           throw Object.assign(error,{notSent:true,deliveryUncertain:false,retryable:true});
         }
-        if (error.deliveryUncertain === false) runs.delete(params.threadId);
+        if(row.exited)throw Object.assign(error,{confirmedCliExit:true,deliveryUncertain:false});
+        if (error.deliveryUncertain === false) {
+          if(task.limitContinuation?.state==='dispatching'){task.limitContinuation.state='pending';task.autoLimit.consecutive=Math.max(0,task.autoLimit.consecutive-1);}
+          runs.delete(params.threadId);
+        }
         else {
           row.uncertain = true;
           for (const candidate of row.completed) if (finishRun(row, candidate)) break;
@@ -190,7 +207,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     }
   }
   core = createSessionCore({paths:{storage:root}, workspaceState, settings, logger:coreLogger, clock,
-    deferProviderNotifications:true,
+    deferProviderNotifications:true,serviceMode:true,
     onDeferredProviderRefresh:()=>logger({code:'provider_account_refresh_deferred'}),
     trusted:() => true, events:{changed:noop, sessionChanged:onSessionChanged, treeChanged:noop, notify:noop, completed:noop},
     hasChat:() => true, isActive:() => false, activeSession:() => null, openChat:noop, loadSelected:noop,
@@ -218,7 +235,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       if(key==='mcpMaxParallelTasks'){try{return settings(key,fallback);}catch{return 1;}}
       return settings(key,fallback);
     }, clock, transport,
-    ui:{hasChat:() => false}, taskOptions:{...taskOptions,archiveLog:logger}, decorateAdapter:adapter => {
+    ui:{hasChat:() => false}, taskOptions:{now:()=>clock.now(),...taskOptions,archiveLog:logger}, decorateAdapter:adapter => {
       const start=adapter.start;
       adapter.readinessBudget=true;
       adapter.limitRecovery=true;
@@ -226,36 +243,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       const assertConnection=adapter.assertConnection;
       adapter.assertConnection=(...args)=>{settings.assertValid();return assertConnection(...args);};
       adapter.cancelWait = task => provider.cancelWait({taskId:task.taskId, spaceId:task.space, waitId:task.waitId});
-      const status = adapter.status;
-      adapter.status = async task => {
-        const session=core.sessions.get(task.sessionKey);
-        const saved=session || core.store.session(task.sessionKey);
-        if(!task.chatId && !saved?.id && task.deliveryPhase!=='dispatching')
-          return {done:true,failed:true,cancelled:!!task.cancelRequested,progress:'Execution did not start'};
-        const generation=provider.cli?.binding?.appServerGeneration;
-        if(session && session.cliGeneration!==generation)session.loaded=false;
-        if(session?.busy && Date.now()-(task.lastStatusReadAt || 0)>=15000) {
-          session.loaded=false;task.needsReconcile=true;
-        }
-        if(task.needsReconcile && saved?.id) {
-          await core.connect();
-          const result=await core.state.server.request('thread/read',{threadId:saved.id,includeTurns:true},9000);
-          const last=result.thread?.turns?.at(-1);
-          if(last && recovery.usageLimit(last.error))task.exhaustedTurnId=last.id;
-          task.lastStatusReadAt=Date.now();
-        }
-        const value = await status(task);
-        const current=core.sessions.get(task.sessionKey);
-        if(current)current.cliGeneration=provider.cli?.binding?.appServerGeneration;
-        // A typed terminal for a lost ACK must release the corresponding driver
-        // grant too, otherwise every later admission sees BUSY_ACTIVE forever.
-        const row=runs.get(value.chatId);
-        if(value.done && row && value.finishedTurnId)finishRun(row,value.finishedTurnId,true);
-        if(value.done && task.exhaustedTurnId && (!task.turnId || task.turnId===task.exhaustedTurnId))
-          return {...value,exhaustedTurnId:task.exhaustedTurnId};
-        return task.providerFailureCode ? {...value, failed:true, answerUnknown:!value.done,
-          error:'action_required: Open companion connection settings and reconnect.', progress:'Provider action required'} : value;
-      };
+      adapter.status=require('./service-task-status.cjs').createTaskStatus({core,provider,now:()=>clock.now(),status:adapter.status,finishRun,runs});
       return decorateAdapter ? decorateAdapter(adapter) : adapter;
     }});
   provider.on('actionRequired', ({code, turns}) => {
@@ -275,13 +263,15 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     if(!row)return;
     row.exited=true;runs.delete(row.threadId);
     const task=mcp.tasks?.tasks.get(taskId);if(!task)return;
+    if(task.deliveryPhase==='preparing') {
+      if(task.limitContinuation?.state==='pending'){task.waitId ||= randomUUID();recovery.enterLimitWait(task,clock.now());}
+      else {task.state='queued';task.recoveryRequired=false;task.needsReconcile=false;task.progress='CLI changed before dispatch; retry queued';}
+      mcp.tasks.save(task);mcp.tasks.schedule();return;
+    }
     task.state='error';task.error='Execution stopped after confirmed CLI exit. Continue explicitly after checking the chat.';
     task.recoveryRequired=false;task.needsReconcile=true;
     if(row.limitTurnId && !task.cancelRequested && recovery.continueAfterLimit(task,row.limitTurnId)) {
-      task.state='waiting_limit';task.waitId=randomUUID();task.waitingLimit={resetAt:null,reason:'exhausted'};
-      task.nextCheckAt=Date.now();task.retryNotBefore=0;task.error=null;
-      delete task.serviceReadiness;task.readinessAfterWait=true;
-      task.progress='Turn ended by usage limit; waiting for provider';
+      task.waitId=randomUUID();recovery.enterLimitWait(task,clock.now());
     }
     const session=core.sessions.get(task.sessionKey);if(session){session.loaded=false;session.busy=false;session.turnId=null;}
     try{mcp.tasks.release(task);}catch{logger({code:'host_error'});}

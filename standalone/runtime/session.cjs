@@ -70,7 +70,7 @@ function copyText(items, itemId, codeIndex) {
   if (code === undefined) throw Error(locale.t("Блок кода не найден."));
   return code;
 }
-function notification(session, message) {
+function notification(session, message, {serviceMode=false}={}) {
   const p = message.params || {};
   if (!session.id || (p.threadId !== session.id && p.thread?.id !== session.id))
     return false;
@@ -108,7 +108,7 @@ function notification(session, message) {
     session.busy = true;
   } else if (message.method === "turn/completed") {
     const expected=session.turnId || session.lastStartedTurnId;
-    if(expected && p.turn?.id && p.turn.id!==expected)return false;
+    if(serviceMode && expected && p.turn?.id && p.turn.id!==expected)return false;
     session.busy = false;
     session.compacting = false;
     session.turnId = null;

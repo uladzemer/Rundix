@@ -76,12 +76,12 @@ async function main() {
     assert.throws(() => host.mcp.tasks.call('reload_window', {}), {code:'unsupported'});
     loseAck = true;
     const unknown = await host.mcp.tasks.call('submit_task', {requestId:'synthetic-lost-ack', description:'Synthetic ambiguous send', acceptanceCriteria:'Synthetic terminal', projectDirectory:project});
-    await host.mcp.tasks.tick(); await host.mcp.tasks.idle(); await pause(150); await host.mcp.tasks.tick();
+    await host.mcp.tasks.tick(); await host.mcp.tasks.idle(); await pause(150); await host.mcp.tasks.tick(); await host.mcp.tasks.idle();
     assert.equal(host.provider.activeTurns, 0, 'Typed start+completion release a grant despite a lost ACK');
     assert.equal(host.mcp.tasks.get(unknown.taskId).recoveryRequired, false);
     loseAck = true; lateAck = true;
     const delayed = await host.mcp.tasks.call('submit_task', {requestId:'synthetic-buffered-ack', description:'Synthetic delayed ACK', acceptanceCriteria:'Synthetic terminal', projectDirectory:project});
-    await host.mcp.tasks.tick(); await host.mcp.tasks.idle(); await host.mcp.tasks.tick();
+    await host.mcp.tasks.tick(); await host.mcp.tasks.idle(); await host.mcp.tasks.tick(); await host.mcp.tasks.idle();
     assert.equal(host.provider.activeTurns, 0, 'A stale event after real completion cannot overwrite buffered terminal evidence');
     assert.equal(host.mcp.tasks.get(delayed.taskId).recoveryRequired, false);
     const log = boundedLogger(root); log({code:'service_started', text:'SYNTHETIC_IGNORED_TEXT'}); log('SYNTHETIC_IGNORED_TEXT');

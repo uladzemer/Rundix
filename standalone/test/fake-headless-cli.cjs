@@ -69,7 +69,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
     result = {thread:{id:thread.id, cwd:thread.cwd}, model:'synthetic-model', reasoningEffort:'medium'};
   }
   const thread = readThread(params.threadId);
-  if (message.method === 'thread/read') result={thread:{id:thread?.id,cwd:thread?.cwd,turns:params.includeTurns?thread?.turns:[]}};
+  if (message.method === 'thread/read') result={thread:{id:thread?.id,cwd:thread?.cwd,status:{type:thread?.turns.some(t=>t.status==='inProgress')?'active':'idle'},turns:params.includeTurns?thread?.turns:[]}};
   if (message.method === 'thread/resume') {
     if(!thread){output({id:message.id,error:{code:-32000,message:'Synthetic thread unavailable'}});return;}
     loaded.add(thread.id);result = {thread:{id:thread.id, cwd:thread.cwd,status:{type:thread.turns.some(t=>t.status==='inProgress')?'active':'idle'}}, model:'synthetic-model', reasoningEffort:'medium'};
@@ -84,7 +84,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
     const turn = {id:'synthetic-turn-' + instance + '-' + ++turnSequence, status:'inProgress'}; thread.turns.push(turn);persist(thread);
     output({id:message.id, result:{turn}});
     output({method:'turn/started', params:{threadId:thread.id, turn:{...turn}}});
-    if(process.env.RUNDIX_SYNTHETIC_LIMIT_ONCE==='1' && thread.turns.length===1) {
+    if((process.env.RUNDIX_SYNTHETIC_LIMIT_ALWAYS==='1' || process.env.RUNDIX_SYNTHETIC_LIMIT_ONCE==='1' && thread.turns.length===1) && (()=>{try{return JSON.parse(fs.readFileSync(process.env.RUNDIX_SYNTHETIC_TURN_POLICY,'utf8')).limit!==false;}catch{return true;}})()) {
       setTimeout(()=>{
         turn.status='failed';turn.error={message:'Synthetic usage limit',codexErrorInfo:'usageLimitExceeded'};persist(thread);
         output({method:'error',params:{threadId:thread.id,turnId:turn.id,error:turn.error,willRetry:false}});

@@ -48,7 +48,7 @@ async function scenario(kind){
     const submitted=await submit('synthetic-'+kind);let task=host.mcp.tasks.get(submitted.taskId);
     task.createdAt=Date.now()-600000;
     if(kind==='lost-terminal') {
-      await until(host,()=>{task.lastStatusReadAt=0;return task.state==='completed';});
+      await until(host,()=>{task.lastStatusReadAt=0;task.lastActivityAt=0;return task.state==='completed';});
       assert.equal(sends.length,1);assert.equal(host.provider.activeTurns,0,'Authoritative terminal read releases the uncertain grant without an ACK/completion notification');
       assert.equal(task.recoveryRequired,false);return;
     }
@@ -86,7 +86,7 @@ async function scenario(kind){
     await until(host,()=>task.state==='completed');const chatId=task.chatId;
     // Reproduce a restart record whose task chat ID lagged the durable session.
     task.chatId=null;task.state='running';task.recoveryRequired=true;task.needsReconcile=true;
-    host.mcp.tasks.save(task);await host.mcp.tasks.tick();assert.equal(task.chatId,chatId);assert.equal(task.state,'completed');
+    host.mcp.tasks.save(task);await host.mcp.tasks.tick();await host.mcp.tasks.idle();assert.equal(task.chatId,chatId);assert.equal(task.state,'completed');
     const adapter=host.mcp.tasks.adapter,status=adapter.status;let reads=0,unavailable=true;
     adapter.status=async value=>{reads++;if(unavailable)throw Error('Synthetic status unavailable');return status(value);};
     task.state='running';task.recoveryRequired=true;host.mcp.tasks.save(task);
@@ -96,8 +96,8 @@ async function scenario(kind){
       for(let retry=0;retry<20;retry++)await host.mcp.tasks.tick();
       assert.equal(reads,before,'Repeated scheduler ticks respect exponential backoff');assert.equal(task.revision,revision);
     }
-    assert.equal(reads,MAX_READ_FAILURES);assert(task.statusRead.paused);
-    task.statusRead.nextAt=0;await host.mcp.tasks.tick();assert.equal(reads,MAX_READ_FAILURES,'Status reads stop after the bounded retry budget');
+    assert.equal(reads,MAX_READ_FAILURES);assert(task.statusRead.slow);
+    await host.mcp.tasks.tick();assert.equal(reads,MAX_READ_FAILURES,'Slow retry does not run before its time');
     unavailable=false;
     await host.mcp.tasks.call('continue_task',{taskId:task.taskId,requestId:'synthetic-explicit-recover',clarification:'Synthetic explicit recovery'});
     await until(host,()=>task.state==='completed');assert.equal(task.chatId,chatId);assert.equal(sends.length,2);

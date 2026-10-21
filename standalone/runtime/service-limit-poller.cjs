@@ -1,6 +1,7 @@
 // One poller per service/provider, independent of task count and waiters.
 const {randomUUID} = require('node:crypto');
 const {providerWait} = require('./service-headless-host.cjs');
+const recovery=require('./task-recovery.cjs');
 function createLimitPoller({host, pollMs = 15000, now = Date.now}) {
   let inFlight = false, closed = false, paused = false, backoff = 60000;
   const waiting = () => [...host.mcp.tasks.tasks.values()].filter(task => task.state === 'waiting_limit' && !task.cancelRequested);
@@ -19,6 +20,13 @@ function createLimitPoller({host, pollMs = 15000, now = Date.now}) {
       if (result.kind === 'ready') {
         backoff = 60000;
         for (const task of waiting()) {
+          if(recovery.continuationBlocked(task)) {
+            task.state='error';task.recoveryRequired=false;task.waitingLimit=null;
+            task.error='action_required: Automatic continuation limit reached. Inspect the chat and continue explicitly.';
+            task.progress='Automatic continuation stopped after repeated limits';
+            host.mcp.tasks.release(task);host.mcp.tasks.save(task);continue;
+          }
+          if(recovery.continuationNotBefore(task)>now())continue;
           task.state = 'queued'; task.waitingLimit = null; task.progress = 'Provider availability confirmed; admission queued';
           host.mcp.tasks.save(task);
         }
@@ -33,7 +41,7 @@ function createLimitPoller({host, pollMs = 15000, now = Date.now}) {
         for (const task of tasks.filter(task=>task.state==='waiting_limit' && !task.cancelRequested)) {
           task.retryNotBefore=now()+(wait.retryAfterMs || result.retryAfterMs || 0);
           const value = {resetAt:wait.resetAt, reason:wait.reason};
-          task.nextCheckAt = next;
+          task.nextCheckAt = Math.max(next,recovery.continuationBlocked(task)?0:recovery.continuationNotBefore(task));
           if (JSON.stringify(task.waitingLimit) !== JSON.stringify(value)) {task.waitingLimit = value; host.mcp.tasks.save(task);}
           else host.mcp.tasks.store.write('mcp-task', task.taskId, task); // Scheduling metadata is durable without a visible revision bump.
         }

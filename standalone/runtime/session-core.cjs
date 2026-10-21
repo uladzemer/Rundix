@@ -36,7 +36,7 @@ function createSessionCore(host) {
   // The dependency bridge is internal: modules see live state without receiving
   // the host's editor API, context, resource identifiers or presentation handles.
   const deps = {
-    AppServer: host.createTransport || AppServer, PendingLogin,
+    AppServer: host.createTransport || AppServer, PendingLogin, serviceMode:host.serviceMode===true,
     sessions, pendingRequests, threadReleases, turnLeases, store, library, connections,
     storagePath: host.paths.storage, workspaceState: host.workspaceState,
     settings: host.settings, trusted: host.trusted, editorSelection: host.editorSelection,
@@ -62,7 +62,7 @@ function createSessionCore(host) {
     forms: require('../ui/forms.js'), modes: require('../ui/modes.js'), speed: require('../ui/speed.js'),
     buildInput: require('./input.cjs').buildInput,
     captureCompletion: require('./completion-notifications.cjs').capture,
-    notification: require('./session.cjs').notification, readItem: require('./session.cjs').readItem,
+    notification:(session,message)=>require('./session.cjs').notification(session,message,{serviceMode:host.serviceMode===true}), readItem: require('./session.cjs').readItem,
     acquireQueuedSession: require('./queued-session-transfer.cjs').acquireQueuedSession,
     assertQueueCurrent: require('./queued-edits.cjs').assertQueueCurrent,
   };

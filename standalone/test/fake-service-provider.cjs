@@ -31,6 +31,17 @@ const peer = new ProviderPeer({readable:process.stdin, writable:process.stdout, 
   }
   if (method === 'prepareTurn') {
     counts.prepareTurn++;
+    if(scenario==='prepare-reconnect'){
+      const {result:reconnected}=await peer.request('cli/reconnect',{parentRequestId:context.id,owner:{leaseId:context.fence.binding.leaseId},
+        binding:context.fence.binding,idleGrantId:idleGrant?.leaseId},context.fence,5000);
+      const fence={...context.fence,binding:reconnected.effectiveBinding};
+      const {result:login}=await peer.request('cli/request',{parentRequestId:context.id,owner:{leaseId:fence.binding.leaseId},
+        binding:fence.binding,idleGrantId:idleGrant?.leaseId,method:'account/login/start',
+        params:{type:'chatgptAuthTokens',accessToken:'SYNTHETIC_NOT_A_CREDENTIAL',chatgptAccountId:'synthetic-reconnected'}},fence,5000);
+      scenario='ready';
+      return {kind:'ready',effectiveBinding:fence.binding,accountRevision:login.nextAccountRevision,authGrantId:login.authGrantId,
+        limitsSnapshotId:'synthetic-limits',checkRevision:1,validUntil:Date.now()+60000};
+    }
     if (scenario.startsWith('scan-')) {
       await peer.request('cli/request', {parentRequestId:context.id, owner:{leaseId:context.fence.binding.leaseId}, binding:context.fence.binding, idleGrantId:idleGrant?.leaseId,
         method:'account/login/start', params:{type:'chatgptAuthTokens', accessToken:'SYNTHETIC_NOT_A_CREDENTIAL', chatgptAccountId:scenario === 'scan-same' ? 'synthetic-account' : 'synthetic-scanned-account'}}, context.fence, 5000);

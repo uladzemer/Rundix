@@ -54,7 +54,7 @@ function audit(file) {
   // Experimental service mode ships its complete runtime, never synthetic fixtures.
   for (const module of ['service-paths','service-endpoint','service-ipc','service-process','service-lifecycle','service-space','service-cli',
     'service-json','service-provider-config','service-provider-rpc','service-provider-contract','service-provider',
-    'service-headless-host','service-readiness','task-recovery','service-main','service-task-rpc','service-limit-poller','service-adapter','service-launcher','service-environment','service-settings','service-task-archive','service-fatal',
+    'service-headless-host','service-readiness','task-recovery','service-task-status','service-main','service-task-rpc','service-limit-poller','service-adapter','service-launcher','service-environment','service-settings','service-task-archive','service-fatal',
     'service-connection','service-window-rpc','service-window-client','service-projection','service-task-chat','service-migration']) {
     assert(names.has(`extension/runtime/${module}.cjs`), 'Missing headless module');
   }

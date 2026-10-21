@@ -9,6 +9,11 @@ async function resume(deps, s, id) {
   }
 }
 
+async function resumeOptions(deps,s,id) {
+  return {threadId:id,excludeTurns:true,
+    ...(s.preflight?.enabled?{config:await deps.preparationConfig(s),...(deps.preflight.preparing(s.preflight)?{sandbox:'read-only',approvalPolicy:'never'}:{})}:deps.mcpThreadConfig(s)?{config:deps.mcpThreadConfig(s)}:{})};
+}
+
 async function resumeThread(deps, s, id) {
   // Serialize reloads with best-effort MCP cleanup, including a tab reopened while it is in flight.
   await deps.threadReleases.get(id)?.catch(()=>{});
@@ -21,11 +26,7 @@ async function resumeThread(deps, s, id) {
     deps.select(existing);
     return;
   }
-  const result = await deps.server.request("thread/resume", {
-    threadId: id,
-    excludeTurns: true,
-    ...(s.preflight?.enabled?{config:await deps.preparationConfig(s),...(deps.preflight.preparing(s.preflight)?{sandbox:'read-only',approvalPolicy:'never'}:{})}:deps.mcpThreadConfig(s)?{config:deps.mcpThreadConfig(s)}:{}),
-  });
+  const result = await deps.server.request("thread/resume", await resumeOptions(deps,s,id));
   s.id = id;
   s.cwd = result.thread.cwd || s.cwd;
   s.parentId = result.thread.forkedFromId || s.parentId;
@@ -46,10 +47,10 @@ async function resumeThread(deps, s, id) {
     if (s.busy)
       s.turnId = turns.data?.find((turn) => turn.status === "inProgress")?.id;
     else {
-      s.turnId=null;
+      if(deps.serviceMode)s.turnId=null;
       s.lastTurnStatus=turns.data?.[0]?.status;
-      s.lastReadTurnId=turns.data?.[0]?.id;
-      s.error=turns.data?.[0]?.error?.message || null;
+      if(deps.serviceMode)s.lastReadTurnId=turns.data?.[0]?.id;
+      if(deps.serviceMode)s.error=turns.data?.[0]?.error?.message || null;
     }
   }
   const page = await deps.server.request("thread/items/list", {
@@ -69,4 +70,4 @@ async function resumeThread(deps, s, id) {
   await deps.save(s);
   deps.publish(s);
 }
-module.exports = { resume, resumeThread };
+module.exports = { resume, resumeThread, resumeOptions };

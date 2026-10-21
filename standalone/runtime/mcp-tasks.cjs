@@ -29,10 +29,11 @@ function directoryFilter(value) {
   try { return directories.canonical(value); } catch { return process.platform==='win32' ? value.toLowerCase() : value; }
 }
 class McpTasks {
-  constructor({store, adapter, directoryStore = store, maxParallel = () => 1, spaceOf = task => task.space, taskFilter = () => true, scope, signal, changed, maxStoredPerSpace=1000, keepClosed=100, archiveLog}) {
+  constructor({store, adapter, directoryStore = store, maxParallel = () => 1, spaceOf = task => task.space, taskFilter = () => true, scope, signal, changed, maxStoredPerSpace=1000, keepClosed=100, archiveLog, now=Date.now}) {
     // Optional task.space is absent for legacy/current-window tasks. No routing yet.
     this.spaceOf = spaceOf; this.taskFilter = taskFilter; this.scope = scope; this.signal = signal;
-    this.changed = changed;
+    this.changed = changed;this.now=now;
+    this.serviceRecovery=adapter.limitRecovery===true;this.observations=new Map();this.observedAt=new Map();
     this.store = store; this.directoryStore=directoryStore; this.adapter = adapter; this.maxParallel = maxParallel; this.tasks = new Map(); this.waiters = new Set(); this.starting = new Set(); this.launches = new Set(); this.operations = new Map(); this.executing = false; this.closed = false;
     if(scope){this.archive=new (require('./service-task-archive.cjs').TaskArchive)(store,{log:archiveLog});this.maxStoredPerSpace=maxStoredPerSpace;this.keepClosed=keepClosed;}
     for (const name of fs.readdirSync(store.directory).filter(n => /^mcp-task-[\w-]+\.json$/.test(n))) {
@@ -59,6 +60,7 @@ class McpTasks {
     if(count()>=this.maxStoredPerSpace)throw fail('limit','Task storage limit reached for this space. Close finished tasks first.');
   }
   save(task) {
+    if(this.serviceRecovery && ['completed','error','cancelled'].includes(task.state) && !task.recoveryRequired)this.preserveQueued(task);
     if(this.scope && task.state==='cancelled'){task.error=null;delete task.blockedReason;delete task.blockedUntil;}
     const restoring=this.archive && !this.tasks.has(task.taskId) && this.archive.get(task.taskId);
     const staysArchived=restoring && ['completed','cancelled','error'].includes(task.state) && !task.recoveryRequired;
@@ -69,6 +71,11 @@ class McpTasks {
     for (const waiter of this.waiters) waiter.check();
     // Projection failures never change the durable execution outcome.
     try { this.changed?.(task); } catch {}
+  }
+  preserveQueued(task) {
+    if(task.nextInput && task.queuedRecoveryInput){inputRecovery.remember(task,task.nextInput);delete task.nextInput;delete task.queuedRecoveryInput;}
+    for(const text of task.continuations || [])inputRecovery.remember(task,text);
+    task.continuations=[];
   }
   release(task) {
     directories.release(this.directoryStore,task.projectDirectory,task.taskId);
@@ -279,18 +286,17 @@ class McpTasks {
         }
         string(args.clarification, 'clarification');
         connected(this.adapter, task);
-        recovery.retryRead(task);
-        task.readRetryEpoch=(task.readRetryEpoch || 0)+1;
+        if(this.serviceRecovery){recovery.retryRead(task);task.readRetryEpoch=(task.readRetryEpoch || 0)+1;}
         if(this.archive)delete task.closedAt;
         if(active.has(task.state)) {
           task.continuations ||= [];
           if(task.continuations.length>=20)throw fail('limit', 'Too many queued continuations.');
           task.continuations.push(args.clarification);
-        } else {task.nextInput=args.clarification; task.state='queued'; task.error=null; task.cancelRequested=false; delete task.waitId;task.waitingLimit=null;
+        } else {if(this.serviceRecovery){if(task.nextInput && task.queuedRecoveryInput)inputRecovery.remember(task,task.nextInput);task.queuedRecoveryInput=true;}task.nextInput=args.clarification; task.state='queued'; task.error=null; task.cancelRequested=false; delete task.waitId;task.waitingLimit=null;
           if(this.adapter.readinessBudget){delete task.serviceReadiness;task.readinessOrigin=Date.now();}}
         task.progress='Continuation queued';
       } else {
-        recovery.retryRead(task);
+        if(this.serviceRecovery){recovery.retryRead(task);task.readRetryEpoch=(task.readRetryEpoch || 0)+1;}
         // The active attempt is handled by start()/reconciliation; only queued
         // inputs are safe recovery here, never an in-flight nextInput.
         if(task.state==='queued' && !task.recoveryRequired && !this.starting.has(task.taskId) && task.nextInput)
@@ -338,10 +344,10 @@ class McpTasks {
     catch { return this.block(task, 'Waiting for the selected companion connection; inspect the Rundix MCP panel'); }
     // Recovery only observes the old chat; it never resubmits its old input.
     if (task.recoveryRequired) {
-      if (!recovery.canRead(task)) return 'blocked';
+      if(this.serviceRecovery)return task.liveRecovery && !recovery.slowRecovery(task)?'stopped':'blocked';
       let status;
-      try { status = await this.adapter.status(task); recovery.retryRead(task); }
-      catch { this.statusFailed(task); return 'blocked'; }
+      try { status = await this.adapter.status(task); }
+      catch { return this.block(task,'Previous chat status unavailable; restore the connection'); }
       if (this.closed) return 'stopped';
       if (!status.done) {
         if(status.pending && !task.unknownAnswer){task.state='waiting_approval';task.progress=status.progress || 'Waiting for approval';this.save(task);return 'stopped';}
@@ -360,58 +366,83 @@ class McpTasks {
     return 'ready';
   }
   statusFailed(task) {
-    recovery.readFailed(task);
+    recovery.readFailed(task,this.now());
     this.update(task, () => {
-      task.state='error';task.recoveryRequired=true;task.needsReconcile=true;
-      task.error=task.statusRead.paused
-        ? 'Chat status unavailable. Restore the connection and explicitly continue after inspecting the chat.'
-        : 'Chat status temporarily unavailable; retrying.';
+      task.recoveryRequired=true;task.needsReconcile=true;
+      // Queued user input remains queued; a healthy live turn remains running.
+      if(!['queued','running','waiting_approval'].includes(task.state))
+        task.error='Chat status temporarily unavailable; retrying automatically.';
     });
     // Retry bookkeeping alone must not churn visible revisions.
     this.store.write('mcp-task',task.taskId,task);
+  }
+  async observe(task) {
+    let status;
+    const observedRevision=task.revision;
+    try { status = await this.adapter.status(task); }
+    catch {
+      if(this.closed || this.scope && task.revision!==observedRevision)return;
+      if(this.serviceRecovery)this.statusFailed(task);
+      else {
+        task.state='error';task.recoveryRequired=true;task.needsReconcile=true;
+        task.error='Chat status unavailable. Restore the connection and explicitly continue after inspecting the chat.';
+        this.save(task);
+      }
+      return;
+    }
+    if (this.closed) return;
+    if(this.scope && task.revision!==observedRevision)return;
+    const hadReadFailure=this.serviceRecovery && !!task.statusRead;
+    if(this.serviceRecovery)recovery.retryRead(task);
+    this.update(task, ()=>{
+      if(task.state==='error' && task.recoveryRequired && !status.answerUnknown)task.error=status.error || null;
+      task.pendingIds=this.adapter.pending(task).map(r=>String(r.id));
+      if (status.chatId) task.chatId=status.chatId;
+      if(status.answerUnknown){task.state='error';task.recoveryRequired=true;task.progress=status.progress;}
+      else if (status.done) {
+        // Preparing is a durable proof that this input never reached turn/start.
+        // Terminal evidence belongs to the previous turn, including after restart.
+        if(this.serviceRecovery && !status.notSent && task.deliveryPhase==='preparing' && task.nextInput && !task.cancelRequested){
+          if(task.limitContinuation?.state==='pending'){task.waitId ||= randomUUID();recovery.enterLimitWait(task,this.now());}
+          else {task.queuedRecoveryInput=true;task.state='queued';task.recoveryRequired=false;task.error=null;task.progress='Unsent input queued';}
+          return;
+        }
+        if(this.adapter.limitRecovery && status.exhaustedTurnId && !task.cancelRequested && task.queuedRecoveryInput && task.nextInput) {
+          task.continuations=[task.nextInput,...(task.continuations || [])];delete task.nextInput;delete task.queuedRecoveryInput;
+        }
+        if (this.adapter.limitRecovery && status.exhaustedTurnId && !task.cancelRequested && recovery.continueAfterLimit(task,status.exhaustedTurnId)) {
+          task.waitId=randomUUID();recovery.enterLimitWait(task,this.now());
+          return;
+        }
+        if(this.serviceRecovery && !status.notSent && task.queuedRecoveryInput && task.nextInput && !task.cancelRequested){task.state='queued';task.recoveryRequired=false;task.error=null;task.progress='Continuation queued';return;}
+        if(this.serviceRecovery && !status.exhaustedTurnId && !status.failed && !status.cancelled)recovery.successfulTurn(task);
+        task.state=status.cancelled?'cancelled':status.failed?'error':'completed';
+        task.progress='Turn finished'; task.report=status.report; task.recoveryRequired=false;
+        if(task.state==='completed' && task.continuations?.length){task.nextInput=task.continuations.shift();if(this.serviceRecovery)task.queuedRecoveryInput=true;task.state='queued';task.progress='Continuation queued';
+          if(this.adapter.readinessBudget){delete task.serviceReadiness;task.readinessOrigin=Date.now();}}
+        else this.release(task);
+      } else { task.state=status.pending?'waiting_approval':'running'; task.progress=status.progress || task.progress; }
+    });
+    if(hadReadFailure)this.store.write('mcp-task',task.taskId,task);
   }
   async tick() {
     if (this.closed || this.executing) return;
     this.executing=true;
     try {
-      for (const task of this.tasks.values()) {
-        // A task still being started is owned by its start() call until that returns.
-        if ((['running','waiting_approval'].includes(task.state) || task.state==='error' && task.recoveryRequired) && !this.starting.has(task.taskId)) {
-          if (!recovery.canRead(task)) continue;
-          let status;
-          const observedRevision=task.revision;
-          try { status = await this.adapter.status(task); }
-          catch { if (this.closed) return; if(this.scope && task.revision!==observedRevision)continue;this.statusFailed(task);continue; }
-          if (this.closed) return;
-          if(this.scope && task.revision!==observedRevision)continue;
-          recovery.retryRead(task);
-          this.update(task, ()=>{
-            if(task.state==='error' && task.recoveryRequired && !status.answerUnknown)task.error=status.error || null;
-            task.pendingIds=this.adapter.pending(task).map(r=>String(r.id));
-            if (status.chatId) task.chatId=status.chatId;
-            if(status.answerUnknown){task.state='error';task.recoveryRequired=true;task.progress=status.progress;}
-            else if (status.done) {
-              if (this.adapter.limitRecovery && status.exhaustedTurnId && !task.cancelRequested && recovery.continueAfterLimit(task,status.exhaustedTurnId)) {
-                task.state='waiting_limit';task.recoveryRequired=false;task.needsReconcile=false;
-                task.waitId=randomUUID();task.waitingLimit={resetAt:null,reason:'exhausted'};
-                task.nextCheckAt=Date.now();task.retryNotBefore=0;
-                task.error=null;task.progress='Turn ended by usage limit; waiting for provider';
-                delete task.serviceReadiness;task.readinessAfterWait=true;
-                return;
-              }
-              task.state=status.cancelled?'cancelled':status.failed?'error':'completed';
-              task.progress='Turn finished'; task.report=status.report; task.recoveryRequired=false;
-              if(task.state==='completed' && task.continuations?.length){task.nextInput=task.continuations.shift();task.state='queued';task.progress='Continuation queued';
-                if(this.adapter.readinessBudget){delete task.serviceReadiness;task.readinessOrigin=Date.now();}}
-              else this.release(task);
-            } else { task.state=status.pending?'waiting_approval':'running'; task.progress=status.progress || task.progress; }
-          });
-        }
+      const observed=[...this.tasks.values()].filter(task=>(['running','waiting_approval'].includes(task.state) || task.state==='error' && task.recoveryRequired || this.serviceRecovery && task.state==='queued' && task.recoveryRequired) && !this.starting.has(task.taskId));
+      for(const task of observed.sort((a,b)=>(this.observedAt.get(a.taskId)||0)-(this.observedAt.get(b.taskId)||0))){
+        if(this.serviceRecovery){
+          if(this.observations.has(task.taskId) || !recovery.canRead(task,this.now()) || this.observations.size>=3)continue;
+          this.observedAt.set(task.taskId,Date.now());
+          const work=this.observe(task).catch(()=>{}).finally(()=>{this.observations.delete(task.taskId);this.schedule();});
+          this.observations.set(task.taskId,work);
+        }else await this.observe(task);
       }
+      if(this.serviceRecovery)await Promise.resolve();
       // Up to maxParallel turns run at once; directory leases keep one turn per project/worktree.
       // Ambiguous turns reserve capacity until observation proves they stopped, even if the last read failed.
-      const counted = new Set([...this.tasks.values()].filter(t=>t.state==='queued' && t.recoveryRequired).map(t=>t.taskId));
-      let capacity = this.limit() - [...this.tasks.values()].filter(t=>['running','waiting_approval'].includes(t.state) || t.state==='error' && t.recoveryRequired).length - counted.size;
+      const counted = new Set([...this.tasks.values()].filter(t=>t.state==='queued' && t.recoveryRequired && !(this.serviceRecovery && recovery.slowRecovery(t))).map(t=>t.taskId));
+      let capacity = this.limit() - [...this.tasks.values()].filter(t=>(['running','waiting_approval'].includes(t.state) || t.state==='error' && t.recoveryRequired) && !(this.serviceRecovery && recovery.slowRecovery(t))).length - counted.size;
       // A blocked task must not stall tasks for other directories; order within one directory is preserved.
       const blocked = new Set();
       for (const task of [...this.tasks.values()].filter(t=>t.state==='queued').sort((a,b)=>a.createdAt-b.createdAt)) {
@@ -431,11 +462,11 @@ class McpTasks {
       this.executing=false;
       // Only blocked queued tasks remain: retry once a second instead of re-probing every 50 ms.
       const tasks=[...this.tasks.values()];
-      if (tasks.some(t=>['running','waiting_approval'].includes(t.state))) this.schedule();
-      else if (tasks.some(t=>(t.state==='queued' || t.state==='error' && t.recoveryRequired) && !t.statusRead?.paused)) this.schedule(1000);
+      if (tasks.some(t=>['running','waiting_approval'].includes(t.state) && !(this.serviceRecovery && recovery.slowRecovery(t)))) this.schedule();
+      else if (tasks.some(t=>(active.has(t.state) || t.recoveryRequired))) this.schedule(1000);
     }
   }
-  idle() { return Promise.all([...this.launches]); }
+  idle() { return Promise.all([...this.launches,...this.observations.values()]); }
   launch(task) {
     this.starting.add(task.taskId);
     const started = this.start(task).catch(()=>{}).finally(()=>{ this.starting.delete(task.taskId); this.schedule(); });
@@ -445,9 +476,10 @@ class McpTasks {
     if (this.closed) { directories.release(this.directoryStore,task.projectDirectory,task.taskId); return; }
     const input=task.nextInput || task.description + '\n\nAcceptance criteria:\n' + task.acceptanceCriteria +
       '\n\nFinish with a report containing result, changed files, checks performed and remaining issues.';
-    // Once another attempt is intended, this text is no longer proven unsent.
-    // nextInput remains durable; a definite refusal below restores recovery.
-    inputRecovery.delivered(task,input);
+    // Service preparation is durably proven unsent until the transport dispatches.
+    // Window delivery bookkeeping retains its existing behavior.
+    if(this.serviceRecovery){task.deliveryPhase='preparing';task.nextInput=input;task.queuedRecoveryInput=true;}
+    else inputRecovery.delivered(task,input);
     task.state='running'; task.progress='Starting existing Codex executor'; task.recoveryRequired=true; task.awaitingPreparation=false; this.save(task);
     try {
       await this.adapter.start(task,input,()=>this.save(task));

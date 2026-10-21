@@ -2,6 +2,14 @@
 
 Install and update Rundix through [Microsoft Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix).
 
+## 0.4.0 — 2026-10-21
+
+- Experimental background service (`rundix.mcpService: "service"`): MCP tasks run in a per-user background process, so Claude Code can submit, wait for and continue Codex tasks with VS Code closed. Each task belongs to the project (Git root) of the Claude session that submitted it; other projects cannot list, read or continue it, and every VS Code window shows only its project's tasks and task chats. Off by default — window mode is unchanged.
+- The service starts on demand, keeps a single instance per user, survives restarts without re-running work, waits for a usage-limit reset instead of failing, and runs Codex with an ephemeral credential store so your own Codex sign-in is never touched. Tasks from 0.3.x are imported into the service.
+- Service task chats render Codex reports as readable text; continuations and answers to Codex questions go through the service.
+- Connection companions can provide a background connection through a versioned, fail-closed provider interface; without one, service tasks report that action is required.
+- Internal: session core and MCP task hosting no longer depend on the VS Code API.
+
 ## 0.3.1 — 2026-10-20
 
 - Fixed: after an MCP task continued (for example once the pool switched accounts on a usage limit), the delivered continuation could stay in the chat's input box. The composer now tracks who owns a draft, clears text the extension placed there once it is delivered, and never removes what you typed yourself.

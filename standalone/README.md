@@ -63,6 +63,7 @@ Useful user settings (read only from your user settings, never from a repository
 - `rundix.mcpMaxParallelTasks` — how many tasks run at once (default 3).
 - `rundix.mcpThreadConfig` — Codex config overrides for task chats only, for example to disable browser or computer-use helpers that unattended tasks do not need and that keep task folders in use on Windows.
 - `"workbench.editor.tabSizing": "fixed"` — keeps tabs narrow while hovering a task tab shows its description.
+- `rundix.mcpService` — experimental: `"service"` runs MCP tasks in a per-user background service instead of a VS Code window. Tasks keep running with VS Code closed, and each project (Git root of the Claude session) sees only its own tasks; every window shows its project's tasks and chats. Requires an installed companion that provides a background connection; see [background service](https://github.com/uladzemer/Rundix/blob/main/standalone/docs/mcp.md).
 
 ## What's new and feedback
 
@@ -119,6 +120,7 @@ Rundix может установить и обновлять официальн�
 - `rundix.mcpMaxParallelTasks` — сколько задач выполняется одновременно (по умолчанию 3).
 - `rundix.mcpThreadConfig` — переопределения конфигурации Codex только для чатов задач, например отключение браузерных и computer-use помощников, которые не нужны автоматическим задачам и на Windows держат папки задач.
 - `"workbench.editor.tabSizing": "fixed"` — вкладки остаются узкими, а при наведении на вкладку задачи видно её описание.
+- `rundix.mcpService` — экспериментально: `"service"` выполняет MCP-задачи в фоновом сервисе пользователя, а не в окне VS Code. Задачи продолжаются при закрытом VS Code, и каждый проект (Git-корень сессии Claude) видит только свои задачи; каждое окно показывает задачи и чаты своего проекта. Нужно установленное дополнение, которое даёт фоновое подключение; см. [фоновый сервис](https://github.com/uladzemer/Rundix/blob/main/standalone/docs/mcp.md).
 
 ### Демонстрация и обратная связь
 

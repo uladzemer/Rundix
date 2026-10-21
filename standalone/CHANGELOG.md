@@ -8,6 +8,10 @@ Install and update Rundix through [Microsoft Marketplace](https://marketplace.vi
 - Background service: tasks restore their existing thread and configuration on a replacement CLI; task/history failures back off, then keep slow retries without occupying execution slots. Explicit Continue resets recovery; unsent input survives restarts.
 - Background service: automatic limit continuations are bounded to two consecutive turns, at least 60 seconds apart; ordinary window recovery keeps the 0.4.1 behavior.
 - Background service: time waiting in the task queue no longer consumes the connection startup budget.
+- Background service: a turn interrupted by a Codex or service restart becomes a recoverable error — Continue resumes the same chat instead of the task being cancelled.
+- Background service: a new task chat whose thread was lost by a restart before its first turn is recreated automatically instead of failing with "Execution did not start".
+- Background service: a failed or interrupted turn no longer leaves the project directory reserved ("project directory is unavailable") until the service restarts.
+- Background service: your own Continue is always sent, even after the automatic continuation limit; an already answered limit never triggers another automatic continuation.
 
 ## 0.4.1 — 2026-10-21
 

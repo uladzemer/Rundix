@@ -1185,7 +1185,7 @@ input::placeholder {
 .connection-quota { display:flex; flex-direction:column; gap:1px; margin-top:2px; }
 .connection-quota-line { display:grid; grid-template-columns:42px 62px minmax(0,1fr); gap:5px; align-items:baseline; font-size:var(--text-small); }
 .connection-quota-line > small { color:var(--muted); }
-.connection-quota-line > time { color:var(--muted); font-size:var(--text-small); white-space:nowrap; }
+.connection-quota-line > time { color:var(--muted); font-size:var(--text-small); white-space:normal; overflow-wrap:anywhere; }
 .connection-quota-value { font-size:var(--text-small); font-weight:600; }
 .connection-quota-value.healthy { color:var(--vscode-testing-iconPassed,#73c991); }
 .connection-quota-value.warning { color:var(--vscode-editorWarning-foreground,#cca700); }

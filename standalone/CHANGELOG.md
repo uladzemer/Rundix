@@ -2,6 +2,10 @@
 
 Install and update Rundix through [Microsoft Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix).
 
+## 0.4.6 — 2026-10-21
+
+- Account menu adds limit/name sorting and shows countdowns alongside five-hour and weekly reset times.
+
 ## 0.4.5 — 2026-10-21
 
 - Server account choices now show each account's five-hour and weekly remaining percentages with their reset times.

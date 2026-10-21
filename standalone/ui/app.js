@@ -74,6 +74,7 @@ let fileResults = [],
   fileTimer,
   filesGeneration = 0,
   mention = null;
+let accountSortMode = previous.accountSortMode === 'name' ? 'name' : 'limit';
 let modeView = null,
   fastView = null,
   pendingEffort = null;
@@ -457,6 +458,7 @@ function persist() {
     draft: input.value,
     drafts: localDrafts,
     composerDrafts: composerDrafts.records,
+    accountSortMode,
     quizDrafts: [...quizDrafts],
     queuedDrafts: [...queuedDrafts],
     historyScope,
@@ -1195,7 +1197,13 @@ function open(kind, refresh = true, changeItems = null) {
     if (connectionMenu?.error) target.append(el('p',WorkbenchI18n.t('Не удалось обновить меню подключения. Нажмите «Обновить статус».')));
     if (connectionMenu?.items?.length) {
       target.append(el('small',connectionMenu.title));
-      for (const item of connectionMenu.items) {
+      const score=item=>item.quota?.length ? Math.min(...item.quota.map(window=>window.remaining)) : Number.POSITIVE_INFINITY;
+      const items=[...connectionMenu.items].sort((left,right)=>accountSortMode==='name' ? left.label.localeCompare(right.label) : score(left)-score(right) || left.label.localeCompare(right.label));
+      const rerender=()=>{close();open('account',false);};
+      row(target,WorkbenchI18n.t('Сортировка'),accountSortMode==='limit'?WorkbenchI18n.t('По лимиту'):WorkbenchI18n.t('По имени'),rerender,{disabled:state.busy || state.authBusy || state.compacting});
+      row(target,WorkbenchI18n.t('По лимиту'),'',()=>{accountSortMode='limit';persist();rerender();},{checked:accountSortMode==='limit',disabled:state.busy || state.authBusy || state.compacting});
+      row(target,WorkbenchI18n.t('По имени'),'',()=>{accountSortMode='name';persist();rerender();},{checked:accountSortMode==='name',disabled:state.busy || state.authBusy || state.compacting});
+      for (const item of items) {
         const button=row(target,item.label,item.detail,
         ()=>send('connectionMenuAction',{id:item.id,revision:connectionMenu.revision}),
         {checked:item.checked,disabled:item.disabled || state.busy || state.authBusy || state.compacting});
@@ -1204,7 +1212,10 @@ function open(kind, refresh = true, changeItems = null) {
           for(const window of item.quota){
             const remaining=el('strong',`${window.label} ${Math.round(window.remaining)}%`,'connection-quota-value');
             remaining.classList.add(window.remaining<=10?'critical':window.remaining<=25?'warning':'healthy');
-            const reset=window.resetAt ? new Date(window.resetAt*1000).toLocaleDateString(WorkbenchI18n.language,{month:'short',day:'numeric'})+' '+new Date(window.resetAt*1000).toLocaleTimeString(WorkbenchI18n.language,{hour:'2-digit',minute:'2-digit'}) : '—';
+            const resetDate=window.resetAt ? new Date(window.resetAt*1000) : null;
+            const seconds=resetDate ? Math.max(0,Math.round((resetDate.getTime()-Date.now())/1000)) : 0;
+            const countdown=seconds ? (WorkbenchI18n.language==='en' ? `in ${Math.floor(seconds/86400)?Math.floor(seconds/86400)+'d ':''}${Math.floor(seconds%86400/3600)?Math.floor(seconds%86400/3600)+'h ':''}${Math.max(1,Math.floor(seconds%3600/60))}m` : `через ${Math.floor(seconds/86400)?Math.floor(seconds/86400)+' д ':''}${Math.floor(seconds%86400/3600)?Math.floor(seconds%86400/3600)+' ч ':''}${Math.max(1,Math.floor(seconds%3600/60))} мин`) : '—';
+            const reset=resetDate ? new Date(window.resetAt*1000).toLocaleDateString(WorkbenchI18n.language,{month:'short',day:'numeric'})+' '+new Date(window.resetAt*1000).toLocaleTimeString(WorkbenchI18n.language,{hour:'2-digit',minute:'2-digit'})+' · '+countdown : '—';
             const line=el('span',undefined,'connection-quota-line');
             line.append(el('small',window.label),remaining,el('time','↻ '+reset));
             quota.append(line);

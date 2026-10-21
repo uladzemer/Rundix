@@ -35,6 +35,7 @@ const chrome=process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applicat
       assert.equal(await page.$eval('.account-menu .menu-row small',node=>getComputedStyle(node).whiteSpace),'normal');
       assert.equal(await page.$eval('.connection-quota-value.healthy',node=>node.textContent),'5ч 80%');
       assert.equal(await page.$eval('.connection-quota-value.warning',node=>node.textContent),'Нед 20%');
+      assert.equal(await page.$eval('.account-menu',node=>node.textContent.includes('По лимиту') || node.textContent.includes('By limit')),true);
       await page.screenshot({path:path.join(__dirname,`../.verification/connection-menu-${language}-${dark?'dark':'light'}-${width}.png`)});
       const bounds=await page.$eval('.account-menu',node=>({scroll:node.scrollWidth,client:node.clientWidth}));
       assert.ok(bounds.scroll<=bounds.client+1,JSON.stringify({language,dark,width,...bounds}));

@@ -744,6 +744,11 @@ button:disabled {
   padding: 14px 16px 8px;
   color: var(--vscode-input-foreground, inherit);
 }
+.composer textarea.parked {
+  color: transparent;
+  caret-color: var(--vscode-input-foreground, currentColor);
+  overflow: hidden;
+}
 .composer textarea:focus-visible {
   outline: none;
 }

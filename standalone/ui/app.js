@@ -38,6 +38,14 @@ const queuedDrafts = new Map(previous.queuedDrafts || []);
 const approvalDrafts = new Map();
 const pendingSends = new Map();
 const pendingPreviews = new Map();
+// Submitted text stays in the textarea for draft reconciliation, but is hidden
+// while it is in flight; typing over it replaces it (see `beforeinput`).
+const parkedSends = new Map();
+const displacedSends = new Map();
+function composerParked() {
+  const text=parkedSends.get(state.key);
+  return !!text && input.value===text && pendingSends.get(state.key)===text;
+}
 const quotaDismissals=new Map(Array.isArray(previous.quotaDismissals)?previous.quotaDismissals:[]);
 const reviewDismissals = new Set(Array.isArray(previous.reviewDismissals) ? previous.reviewDismissals.filter(key => typeof key === 'string').slice(-64) : []);
 const pendingClipboardImages=new Set();
@@ -322,7 +330,7 @@ ide.className = "quiet-button";
 model.className = "model-button dropdown";
 submit.className = "icon-button submit-button";
 function updateSubmitState() {
-  submit.disabled = sending || !!pendingModel || !!pendingEffort || pendingClipboardImages.size>0 || (!input.value.trim() && !state.attachments?.some(file=>file.kind==='image'));
+  submit.disabled = sending || composerParked() || !!pendingModel || !!pendingEffort || pendingClipboardImages.size>0 || (!input.value.trim() && !state.attachments?.some(file=>file.kind==='image'));
   enqueue.disabled=submit.disabled;enqueue.hidden=true;
   stop.hidden=!state.busy;
   submit.replaceChildren(icon('send'));
@@ -498,14 +506,17 @@ function placeMenu() {
 function resizeComposer() {
   const emptyChat = !state.items.length && !state.busy && !sending;
   composer.classList.toggle('is-new-chat', emptyChat);
+  const parked = composerParked();
+  input.classList.toggle('parked', parked);
   const signature =
-    input.value + "\u0000" + input.clientWidth + "\u0000" + innerHeight + "\u0000" + emptyChat;
+    input.value + "\u0000" + input.clientWidth + "\u0000" + innerHeight + "\u0000" + emptyChat + "\u0000" + parked;
   if (inputSizeSignature === signature) return;
   inputSizeSignature = signature;
   input.style.height = "auto";
   const minimumHeight = parseFloat(getComputedStyle(input).minHeight);
-  input.style.height =
+  input.style.height = parked ? minimumHeight + "px" :
     Math.max(minimumHeight, Math.min(input.scrollHeight, 240, innerHeight * 0.35)) + "px";
+  if (parked) { input.scrollTop = 0; if (document.activeElement === input) input.setSelectionRange(0, 0); }
   placeMenu();
 }
 function dialog(label, kind) {
@@ -1808,11 +1819,13 @@ function renderHistory() {
   query.focus();
 }
 function submitText(action='send') {
-  if ((!input.value.trim() && !state.attachments?.some(file=>file.kind==='image')) || sending || pendingModel || pendingEffort || pendingClipboardImages.size) return;
+  if ((!input.value.trim() && !state.attachments?.some(file=>file.kind==='image')) || sending || composerParked() || pendingModel || pendingEffort || pendingClipboardImages.size) return;
   sending = true;
   state.error=null;
-  updateSubmitState();
   pendingSends.set(state.key, input.value);
+  parkedSends.set(state.key, input.value);
+  displacedSends.delete(state.key);
+  updateSubmitState();
   composerDrafts.submit(state.key,input.value);
   if(!state.busy && !state.compacting && !state.followUps?.length && !state.followUpSending && action==='send'){
     const node=el('article',undefined,'item user pending-send');
@@ -2267,6 +2280,7 @@ window.addEventListener("message", (event) => {
     input.value=reconciled.text;
     if(reconciled.delivered){
       sending=false;pendingSends.delete(msg.data.key);pendingPreviews.delete(msg.data.key);
+      parkedSends.delete(msg.data.key);displacedSends.delete(msg.data.key);
     }
     if (!historyScope) historyScope = msg.data.historyScope === "all" ? "all" : "workspace";
     hydrated = true;
@@ -2274,14 +2288,26 @@ window.addEventListener("message", (event) => {
     document.documentElement.dataset.controlMotion =
       ['on', 'off'].includes(state.controlMotion) ? state.controlMotion : 'auto';
     document.documentElement.dataset.chatWidth=state.chatWidth==='compact'?'compact':'wide';
-    if (state.error) {sending = false;pendingPreviews.delete(state.key);pendingSends.delete(state.key);}
+    if (state.error) {
+      sending = false;pendingPreviews.delete(state.key);pendingSends.delete(state.key);parkedSends.delete(state.key);
+      // The failed text was typed over while hidden: give it back next to the new draft.
+      const displaced=displacedSends.get(state.key);
+      displacedSends.delete(state.key);
+      if(displaced && input.value!==displaced){
+        input.value=input.value ? displaced+'\n\n'+input.value : displaced;
+        composerDrafts.edit(state.key);persist();send('draft',{text:input.value});
+      }
+    }
     render();
     if (changed)
       transcriptScroll.restore(scrollPositions.get(state.key) ?? messages.scrollHeight);
   } else if (msg.type === "sent") {
     const key = msg.key || state.key,
       submitted = msg.text ?? pendingSends.get(key);
+    // A `sent` for another message (e.g. an MCP task) must not drop this send's recovery text.
+    const own=msg.text===undefined || msg.text===(parkedSends.get(key) ?? displacedSends.get(key));
     pendingSends.delete(key);
+    if(own){parkedSends.delete(key);displacedSends.delete(key);}
     if(msg.consumeDraft===false)composerDrafts.edit(key);
     if (key !== state.key) {
       if (msg.consumeDraft!==false && composerDrafts.canConsume(key,submitted,localDrafts[key])) {
@@ -2384,6 +2410,17 @@ input.addEventListener('paste',event=>{
     reader.onerror=()=>{pendingClipboardImages.delete(requestId);state.error=WorkbenchI18n.t('Не удалось прочитать изображение из буфера обмена.');render();};
     reader.readAsDataURL(file);
   }
+});
+input.addEventListener('beforeinput',event=>{
+  if(!composerParked())return;
+  const key=state.key;
+  displacedSends.set(key,parkedSends.get(key));
+  parkedSends.delete(key);
+  if(event.inputType==='insertCompositionText'){input.value='';return;}
+  event.preventDefault();
+  input.value=event.inputType==='insertLineBreak' || event.inputType==='insertParagraph' ? '\n' :
+    event.inputType.startsWith('insert') ? event.data ?? event.dataTransfer?.getData('text/plain') ?? '' : '';
+  input.dispatchEvent(new Event('input',{bubbles:true}));
 });
 input.addEventListener("input", () => {
   composerDrafts.edit(state.key);

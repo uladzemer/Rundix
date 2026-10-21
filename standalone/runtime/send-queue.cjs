@@ -115,15 +115,24 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
   ensureDirectory();
   const input = deps.buildInput(text, attached, options.includeIde!==false && s.prefs.ide ? deps.editorSelection() : null);
   const sessionRelease = deps.store.acquire(s.id), releaseDirectory=directoryLease;
-  const client=deps.server, connection=deps.activeConnection, threadId=s.id,
+  const client=deps.server, connection=deps.activeConnection,
     previousTurnId=s.turnId || s.lastStartedTurnId || [...s.items].reverse().find(item=>item.turnId)?.turnId;
   let unresolved=true, startPending=true, startUncertain=false, released=false, observed=null;
+  // The transport may replace a never-run thread before dispatch (it rewrites
+  // startParams.threadId); the turn, its events and its leases follow it.
+  let threadId=s.id, startParams=null;
   let reconciliationTimer, reconciliationDeadline;
   const stopReconciliation=()=>{
     if(reconciliationTimer!==undefined)(deps.clearTimeout || clearTimeout)(reconciliationTimer);
     if(reconciliationDeadline!==undefined)(deps.clearTimeout || clearTimeout)(reconciliationDeadline);
   };
   const current=()=>deps.server===client && deps.activeConnection===connection && s.id===threadId;
+  const follow=()=>{
+    const moved=startParams?.threadId;
+    if(!moved || moved===threadId)return;
+    if(deps.turnLeases.get(threadId)===release){deps.turnLeases.delete(threadId);deps.turnLeases.set(moved,release);}
+    threadId=moved;
+  };
   const release = () => {
     // Disconnect cleanup cannot turn an unanswered mutation into a clean failure.
     if(unresolved || (startPending || startUncertain) && observed?.status==='inProgress' || released)return;
@@ -134,6 +143,7 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
   };
   const observeTurn=message=>{
     const p=message.params;
+    follow();
     // The listener belongs to this client, so its own turn always settles the leases,
     // even after the chat or connection moved on; only the chat state needs current().
     if(p?.threadId!==threadId || !p.turn?.id || p.turn.id===previousTurnId ||
@@ -165,7 +175,7 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
   deps.publish(s);
   try {
     turnRequested=true;
-    const result = await client.request("turn/start", {
+    startParams = {
       threadId: s.id,
       serviceTierForTurn:serviceTier,
       input,
@@ -188,7 +198,9 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
             (s.prefs.focus?' Before using tools for a task, send a brief user-facing commentary explaining your next action. During longer work, send concise commentary at meaningful progress boundaries before the related tool steps. Use commentary messages for these updates, not tool output or private reasoning. Do not invent progress or delay direct answers that require no tools.':''),
         },
       },
-    });
+    };
+    const result = await client.request("turn/start", startParams);
+    follow();
     startPending=false;unresolved=false;
     // Consume recoverable input at confirmed delivery, including a retry after
     // companion preparation failed. Later bookkeeping must not leave it unsent.
@@ -201,7 +213,7 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
     const consumed=new Set(attached.map(file=>file.id));s.attachments=s.attachments.filter(file=>!consumed.has(file.id));
     return {turnId:result.turn.id,draftConsumed};
   } catch (error) {
-    startPending=false;
+    startPending=false;follow();
     if(!observed && error.deliveryUncertain===false){
       unresolved=false;release();
       if(current())s.busy=false;

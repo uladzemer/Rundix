@@ -2,6 +2,10 @@
 
 Install and update Rundix through [Microsoft Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix).
 
+## 0.4.3 — 2026-10-21
+
+- Background service: after a task chat was recreated during an account switch, the finished turn kept the project directory reserved, so the next Continue waited forever ("a turn is still running in this project directory"). The turn now follows the recreated chat and releases the directory.
+
 ## 0.4.2 — 2026-10-21
 
 - Background service: a typed Codex usage-limit failure now records one automatic continuation in the same chat, then waits for the selected provider to confirm availability. Account selection remains in the installed provider.

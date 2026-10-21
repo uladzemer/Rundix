@@ -180,6 +180,9 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
             if(!replacement)throw error;
             threadStarts.delete(original);threadStarts.set(replacement,startParams);
             session.id=replacement;session.cwd=started.thread.cwd || session.cwd;
+            // The in-flight send's leases move with the id, atomically with it.
+            const lease=core.turnLeases.get(original);
+            if(lease){core.turnLeases.delete(original);core.turnLeases.set(replacement,lease);}
             runs.delete(original);row.threadId=replacement;runs.set(replacement,row);
             params.threadId=replacement;task.chatId=replacement;
           }

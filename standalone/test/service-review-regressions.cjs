@@ -231,12 +231,12 @@ async function generationAndPredispatchExit(exit){
 // first turn; the empty thread had no rollout, so its resume failed forever.
 async function freshThreadGenerationChange(){
   const directory=project('fresh-thread-generation'),data=fixture(directory);
-  let host,reconnected=false,sends=[];
+  let host,reconnected=false,sends=[],leaseFollowed=[];
   const makeCli=data.hostOptions.providerOptions.createCli;
   data.hostOptions.providerOptions.createCli=options=>{
     const cli=makeCli(options),request=cli.request.bind(cli);
     cli.request=async(method,params,...args)=>{
-      if(method==='turn/start')sends.push(params);
+      if(method==='turn/start'){sends.push(params);leaseFollowed.push(host.core.turnLeases.has(params.threadId));}
       const result=await request(method,params,...args);
       if(method==='thread/start' && !reconnected){
         reconnected=true;
@@ -252,6 +252,11 @@ async function freshThreadGenerationChange(){
     await until(host,()=>row.state==='completed' || row.state==='error');
     assert.equal(row.state,'completed','A fresh thread lost by a CLI restart before its first turn is replaced, not refused');
     assert(reconnected);assert.equal(sends.length,1,'The original input is sent exactly once');assert.equal(sends[0].threadId,row.chatId);
+    // Live 0.4.2 defect: the turn's leases stayed on the replaced thread id and
+    // blocked the project directory for every later turn.
+    await host.mcp.tasks.call('continue_task',{taskId:row.taskId,requestId:'synthetic-fresh-continue',clarification:'Synthetic second turn'});
+    await until(host,()=>row.state==='completed' && sends.length===2);assert.equal(sends[1].threadId,row.chatId);
+    assert.deepEqual(leaseFollowed,[true,true],'The in-flight lease is keyed by the replacement before dispatch');
   }finally{await host?.dispose({force:true});await data.close();}
 }
 

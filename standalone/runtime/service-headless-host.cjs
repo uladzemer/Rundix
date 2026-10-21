@@ -58,6 +58,8 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
   const coreLogger = input => logger(stopping && input === 'CLI stopped. Reconnect the provider.'
     ? {code:'cli_stopped'} : input);
   const runs = new Map();
+  // thread/start parameters by thread, to replace a thread that never ran a turn.
+  const threadStarts = new Map();
   const noop = () => {};
   const taskForThread = threadId => {
     const session = [...core.sessions.values()].find(session => session.id === threadId);
@@ -125,7 +127,11 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     async request(method, params = {}, timeoutMs) {
       if (!this.cli || disposed) throw actionRequired('PROVIDER_UNAVAILABLE');
       if (method !== 'turn/start') {
-        try {return await ready(()=>this.cli.request(method, params, timeoutMs));}
+        try {
+          const result=await ready(()=>this.cli.request(method, params, timeoutMs));
+          if(method==='thread/start' && result?.thread?.id)threadStarts.set(result.thread.id,params);
+          return result;
+        }
         catch(error) {logger({code:error?.reason==='connection_changed'?'cli_read_binding_changed':'cli_read_failed',method,providerCode:error?.code});throw error;}
       }
       const task = taskForThread(params.threadId);
@@ -158,8 +164,24 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
         if(generationBefore!==this.cli.binding?.appServerGeneration) {
           // Rollouts survive account changes; the new app-server must load the
           // thread before dispatch, even if it was created by the old child.
-          await this.cli.request('thread/read',{threadId:params.threadId,includeTurns:false},30000);
-          await this.cli.request('thread/resume',await core.resumeOptions(core.sessions.get(task.sessionKey),params.threadId),30000);
+          const session=core.sessions.get(task.sessionKey),original=params.threadId;
+          try {
+            await this.cli.request('thread/read',{threadId:original,includeTurns:false},30000);
+            await this.cli.request('thread/resume',await core.resumeOptions(session,original),30000);
+          } catch(error) {
+            // Codex writes a rollout only after the first turn, so a thread that
+            // never ran cannot be loaded by the new app-server. Nothing was sent:
+            // replace the empty thread on this generation and dispatch there.
+            const startParams=threadStarts.get(original);
+            if(!startParams || session?.id!==original || session.lastStartedTurnId || (session.items||[]).length)throw error;
+            const started=await this.cli.request('thread/start',startParams,30000);
+            const replacement=started?.thread?.id;
+            if(!replacement)throw error;
+            threadStarts.delete(original);threadStarts.set(replacement,startParams);
+            session.id=replacement;session.cwd=started.thread.cwd || session.cwd;
+            runs.delete(original);row.threadId=replacement;runs.set(replacement,row);
+            params.threadId=replacement;task.chatId=replacement;
+          }
           for(const session of core.sessions.values())session.loaded=false;
         }
         if(row.exited || !this.cli)throw Object.assign(Error('CLI changed before dispatch.'),{notSent:true,deliveryUncertain:false});

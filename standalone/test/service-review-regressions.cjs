@@ -221,6 +221,34 @@ async function generationAndPredispatchExit(exit){
     {preflight:{enabled:true}},'synthetic-thread'),{threadId:'synthetic-thread',excludeTurns:true,config:{synthetic:'restricted'},sandbox:'read-only',approvalPolicy:'never'});
 }
 
-(async()=>{try{await queuedInput();await windowsAndSlowRecovery();await lightweightStatus();await repeatedLimit();await historyRecovery();await preparingRestart();await generationAndPredispatchExit(false);await generationAndPredispatchExit(true);
+// Live 0.4.2 defect: admission restarted the CLI between thread/start and the
+// first turn; the empty thread had no rollout, so its resume failed forever.
+async function freshThreadGenerationChange(){
+  const directory=project('fresh-thread-generation'),data=fixture(directory);
+  let host,reconnected=false,sends=[];
+  const makeCli=data.hostOptions.providerOptions.createCli;
+  data.hostOptions.providerOptions.createCli=options=>{
+    const cli=makeCli(options),request=cli.request.bind(cli);
+    cli.request=async(method,params,...args)=>{
+      if(method==='turn/start')sends.push(params);
+      const result=await request(method,params,...args);
+      if(method==='thread/start' && !reconnected){
+        reconnected=true;
+        await host.provider.configureByClient({clientId:'synthetic-client',operationId:'synthetic-fresh-reconnect',expectedSelectionRevision:1,action:'synthetic',payload:{scenario:'prepare-reconnect'}});
+      }
+      return result;
+    };return cli;
+  };
+  try{
+    host=await createHeadlessHost({root:directory,generation:'synthetic-fresh-thread',taskOptions:{scope:()=> 'synthetic-space'},...data.hostOptions});
+    const submitted=await host.mcp.tasks.call('submit_task',{requestId:'synthetic-fresh',description:'Synthetic fresh',acceptanceCriteria:'Synthetic check',projectDirectory:directory});
+    const row=host.mcp.tasks.get(submitted.taskId);
+    await until(host,()=>row.state==='completed' || row.state==='error');
+    assert.equal(row.state,'completed','A fresh thread lost by a CLI restart before its first turn is replaced, not refused');
+    assert(reconnected);assert.equal(sends.length,1,'The original input is sent exactly once');assert.equal(sends[0].threadId,row.chatId);
+  }finally{await host?.dispose({force:true});await data.close();}
+}
+
+(async()=>{try{await queuedInput();await windowsAndSlowRecovery();await lightweightStatus();await repeatedLimit();await historyRecovery();await preparingRestart();await generationAndPredispatchExit(false);await generationAndPredispatchExit(true);await freshThreadGenerationChange();
  console.log('PASS review regressions: unchanged window recovery, lossless preparing restart, slow retries/free slots, lightweight status, bounded limits, concurrent history, generation config and CLI exit before dispatch.');
 }finally{assert.equal(path.dirname(root),os.tmpdir());assert(path.basename(root).startsWith('rundix-review-regression-synthetic-'));fs.rmSync(root,{recursive:true,force:true});}})().catch(error=>{console.error(error);process.exitCode=1;});

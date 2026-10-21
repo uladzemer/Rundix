@@ -72,6 +72,8 @@ readline.createInterface({input:process.stdin}).on('line', line => {
   if (message.method === 'thread/read') result={thread:{id:thread?.id,cwd:thread?.cwd,status:{type:thread?.turns.some(t=>t.status==='inProgress')?'active':'idle'},turns:params.includeTurns?thread?.turns:[]}};
   if (message.method === 'thread/resume') {
     if(!thread){output({id:message.id,error:{code:-32000,message:'Synthetic thread unavailable'}});return;}
+    // Real Codex writes a rollout only after the first turn: another process cannot resume an empty thread.
+    if(!loaded.has(thread.id) && !thread.turns.length){output({id:message.id,error:{code:-32600,message:'Synthetic no rollout found'}});return;}
     loaded.add(thread.id);result = {thread:{id:thread.id, cwd:thread.cwd,status:{type:thread.turns.some(t=>t.status==='inProgress')?'active':'idle'}}, model:'synthetic-model', reasoningEffort:'medium'};
   }
   if (message.method === 'thread/turns/list') result = {data:(thread?.turns || []).slice().reverse()};

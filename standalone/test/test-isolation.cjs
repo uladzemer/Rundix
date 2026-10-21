@@ -11,14 +11,29 @@ function realRoots(env = process.env) {
 }
 function snapshot(roots = realRoots()) {
   const result = {};
-  function visit(file, key) {
+  // Only service-owned working data is excluded. Never disable the guard based
+  // on a live PID: a concurrent test leak into configuration must still fail.
+  // Launcher/configuration writes (settings.json, installation.json, bin) and
+  // providers remain guarded, even while an owner's window installs a version.
+  const workingDirectories = new Set(['diagnostics','state','sessions-v1','mcp','migrations','legacy','versions']);
+  const workingRecord = /^(?:bridge|legacy-roots|lease-(?:service-startup|service-install|legacy-roots))\.json(?:\.[a-f0-9-]{36}\.tmp|\.reap(?:\.[0-9]+-[a-f0-9-]{36}\.tmp)?)?$/;
+  function visit(file, key, relative = '') {
     let info;
     try {info = fs.lstatSync(file, {bigint:true});} catch (error) {if (error.code === 'ENOENT') return; throw error;}
     // Hash names so even the saved metadata does not disclose personal paths.
     const id = createHash('sha256').update(key).digest('hex');
-    result[id] = [info.mtimeNs,info.ctimeNs,info.birthtimeNs,info.size,info.mode,info.ino].map(String);
+    // Child writes change parent directory timestamps/size. Compare directory
+    // identity instead; additions/removals are detected through child entries.
+    result[id] = (info.isDirectory() && !info.isSymbolicLink()
+      ? [info.birthtimeNs,info.mode,info.ino]
+      : [info.mtimeNs,info.ctimeNs,info.birthtimeNs,info.size,info.mode,info.ino]).map(String);
     if (info.isDirectory() && !info.isSymbolicLink())
-      for (const name of fs.readdirSync(file).sort()) visit(path.join(file,name),key+'/'+name);
+      for (const name of fs.readdirSync(file).sort()) {
+        // Do not enumerate live working subtrees or open any production files.
+        // Unknown entries are guarded, including new top-level service entries.
+        if (relative === 'service' && (workingDirectories.has(name) || workingRecord.test(name))) continue;
+        visit(path.join(file,name),key+'/'+name,relative ? relative+'/'+name : name);
+      }
   }
   roots.forEach((root,index) => visit(root,String(index)));
   return result;
@@ -54,7 +69,7 @@ function isolate() {
   };
   active = {before, root};
   process.on('exit', () => {
-    try {assertUnchanged(before); console.log('PASS real-root guard: unchanged (metadata only).');}
+    try {assertUnchanged(before); console.log('PASS real-root guard: protected paths unchanged (metadata only; live service working data excluded).');}
     catch (error) {console.error(error.message);process.exitCode = 1;}
     finally {if (root) fs.rmSync(root,{recursive:true,force:true});}
   });

@@ -21,6 +21,46 @@ try {
   before = snapshot(watched);fs.unlinkSync(provider);assert.throws(() => assertUnchanged(before,watched),/guard FAILED/);
   fs.symlinkSync(watched[1],path.join(watched[0],'link'),process.platform === 'win32' ? 'junction' : 'dir');
   before = snapshot([watched[0]]);fs.writeFileSync(path.join(watched[1],'outside'),'SYNTHETIC');assertUnchanged(before,[watched[0]]);
+  const service = path.join(watched[0],'service');fs.mkdirSync(service);
+  const workingFiles = ['diagnostics/service-0.log','state/meta-synthetic.json',
+    'sessions-v1/session-synthetic.json','mcp/tasks/mcp-task-synthetic.json',
+    'migrations/synthetic.json','legacy/synthetic/task-synthetic.json',
+    'versions/0.0.0-synthetic/runtime/service-main.cjs','bridge.json','legacy-roots.json',
+    'lease-legacy-roots.json','lease-service-startup.json','lease-service-install.json',
+    'bridge.json.00000000-0000-4000-8000-000000000000.tmp',
+    'lease-legacy-roots.json.reap.123-00000000-0000-4000-8000-000000000000.tmp/owner'];
+  const writeWorking = () => {
+    for (const name of workingFiles) {
+      const file=path.join(service,name);fs.mkdirSync(path.dirname(file),{recursive:true});
+      fs.appendFileSync(file,'SYNTHETIC service write\n');
+    }
+  };
+  before=snapshot(watched);writeWorking();assertUnchanged(before,watched);
+  writeWorking();assertUnchanged(before,watched);
+  for (const name of workingFiles) fs.unlinkSync(path.join(service,name));
+  assertUnchanged(before,watched);
+  const protectedFiles = [path.join(service,'settings.json'),path.join(service,'installation.json'),
+    path.join(service,'bin','mcp-server.cjs'),path.join(service,'bin','unexpected.cjs'),
+    path.join(watched[1],'rundix-service','provider.json'),
+    path.join(service,'providers','synthetic','provider.json'),
+    path.join(watched[1],'providers','synthetic','provider.json'),
+    path.join(service,'unexpected','synthetic.json'),path.join(watched[0],'unexpected.json')];
+  for (const file of protectedFiles) {
+    fs.mkdirSync(path.dirname(file),{recursive:true});
+    before=snapshot(watched);fs.writeFileSync(file,'SYNTHETIC test leak');writeWorking();
+    assert.throws(()=>assertUnchanged(before,watched),/guard FAILED/,'Creation must fail alongside live writes');
+    before=snapshot(watched);fs.appendFileSync(file,' modified');writeWorking();
+    assert.throws(()=>assertUnchanged(before,watched),/guard FAILED/,'Modification must fail alongside live writes');
+    before=snapshot(watched);fs.unlinkSync(file);writeWorking();
+    assert.throws(()=>assertUnchanged(before,watched),/guard FAILED/,'Deletion must fail alongside live writes');
+  }
+  before=snapshot(watched);
+  assert(!JSON.stringify(before).includes('synthetic'),'Snapshots contain hashed names only');
+  const originalRead=fs.readFileSync;
+  try {
+    fs.readFileSync=()=>assert.fail('Guard must not read file contents');
+    assertUnchanged(before,watched);
+  } finally {fs.readFileSync=originalRead;}
   const defaults = servicePaths({pathEnv:{},platform:'win32',home:root,localAppData:path.join(root,'local'),appData:path.join(root,'roaming')});
   assert.equal(defaults.directory,path.join(root,'local','Rundix','service'));
   assert.equal(defaults.providerConfig,path.join(root,'roaming','Rundix','rundix-service','provider.json'));
@@ -50,7 +90,7 @@ try {
     "const assert=require('node:assert/strict');assert(!Object.keys(process.env).some(key=>/^RUNDIX_/i.test(key)));"],
     {env:inherited,windowsHide:true,stdio:'pipe',timeout:10000});
   assert.equal(child.status,0,'Filtered service children never receive RUNDIX_*');
-  console.log('PASS isolation: source-only overrides, production/installed override rejection, stripped child environment; guard detects creation/modification/deletion and skips junction targets.');
+  console.log('PASS isolation: source-only overrides, production/installed override rejection, stripped child environment; metadata guard tolerates live service writes, detects concurrent configuration/bin/provider/unknown-entry leaks, and skips junction targets.');
 } finally {fs.rmSync(root,{recursive:true,force:true});}
 
 })().catch(error=>{console.error(error);process.exitCode=1;});

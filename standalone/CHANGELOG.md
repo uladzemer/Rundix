@@ -2,6 +2,12 @@
 
 Install and update Rundix through [Microsoft Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix).
 
+## 0.4.1 — 2026-10-21
+
+- Background service: MCP task history from 0.3.x is imported even when older task chats lack the MCP marker; tasks whose chat is missing are kept as read-only entries instead of blocking the import with "data needs repair".
+- Background service: the MCP button shows the green indicator when the window is connected to the service.
+- Background service: storage locations that no longer exist are removed from the import list.
+
 ## 0.4.0 — 2026-10-21
 
 - Experimental background service (`rundix.mcpService: "service"`): MCP tasks run in a per-user background process, so Claude Code can submit, wait for and continue Codex tasks with VS Code closed. Each task belongs to the project (Git root) of the Claude session that submitted it; other projects cannot list, read or continue it, and every VS Code window shows only its project's tasks and task chats. Off by default — window mode is unchanged.

@@ -351,7 +351,85 @@ async function movedOnChecks() {
   }
 }
 
+async function capacityChecks() {
+  const {createCapacityRecovery,DELAYS,CONTINUE}=require('../runtime/model-capacity.cjs');
+  function setup() {
+    const f=fixture();
+    f.context.capacityRecovery=createCapacityRecovery(f.context);
+    f.s.lastStartedTurnId='synthetic-original';
+    f.fail=(id='synthetic-original',message='Selected model is at capacity. Please try a different model.')=>
+      f.server.emit('notification',{method:'turn/completed',params:{threadId:f.s.id,turn:{id,status:'failed',error:{message}}}});
+    f.start(async()=>{
+      const id='synthetic-auto-'+f.calls.filter(c=>c.method==='turn/start').length;
+      f.emit('turn/started',id,'inProgress');return {turn:{id}};
+    });
+    return f;
+  }
+  {
+    const f=setup();f.s.draft='Synthetic newer draft';f.s.attachments=[{id:'synthetic-attachment'}];
+    f.s.followUps=[{id:'synthetic-follow-up',text:'Synthetic queued input',attachments:[]}];
+    f.fail();f.fail();assert.equal(f.timers.size,1,'Duplicate failure schedules once');
+    for(let attempt=0;attempt<DELAYS.length;attempt++) {
+      await f.advance(DELAYS[attempt]-1);
+      assert.equal(f.calls.filter(c=>c.method==='turn/start').length,attempt);
+      await f.advance(1);f.assertOwned();
+      const call=f.calls.filter(c=>c.method==='turn/start').at(-1);
+      assert.deepEqual(call.params.input,[{type:'text',text:CONTINUE}]);
+      assert.equal(call.params.threadId,'synthetic-thread');
+      assert.equal(f.s.draft,'Synthetic newer draft');assert.equal(f.s.attachments.length,1);
+      assert.equal(f.s.followUps.length,1);
+      f.fail(f.s.lastStartedTurnId);f.assertReleased();
+    }
+    await f.advance(1000000);assert.equal(f.calls.filter(c=>c.method==='turn/start').length,3);
+    assert.equal(f.s.capacityRetry,null);
+  }
+  for(const mutate of [f=>f.context.capacityRecovery.cancel(f.s),f=>f.context.capacityRecovery.clear(),
+    f=>{f.context.server={};},f=>{f.context.activeConnection={};},f=>{f.context.account={type:'chatgpt',email:'synthetic@example.test'};},
+    f=>{f.context.limitsEpoch++;},f=>{f.s.id='synthetic-other';},f=>{f.s.model='synthetic-other';},
+    f=>{f.s.cwd='synthetic-other-project';},f=>{f.s.prefs.access='manual';},f=>{f.s.prefs.plan=true;},
+    f=>{f.context.sessions.delete(f.s.key);},f=>{f.s.lastStartedTurnId='synthetic-newer';}]) {
+    const f=setup();f.fail();mutate(f);await f.advance(60000);
+    assert.equal(f.calls.filter(c=>c.method==='turn/start').length,0,'Changed ownership cancels continuation');
+  }
+  for(const reason of ['Synthetic network failure','Usage limit exceeded']) {
+    const f=setup();f.fail(undefined,reason);assert.equal(f.timers.size,0);
+  }
+  for(const key of ['mcpTask','preflight','stopRequested']) {
+    const f=setup();f.s[key]=key==='preflight'?{enabled:true}:true;f.fail();assert.equal(f.timers.size,0);
+  }
+  {
+    const f=setup();f.s.busy=true;f.s.turnId='synthetic-original';
+    f.server.emit('notification',{method:'error',params:{threadId:f.s.id,turnId:f.s.turnId,
+      willRetry:true,error:{message:'Selected model is at capacity. Please try a different model.'}}});
+    assert.equal(f.timers.size,0,'CLI retry is not a terminal failure');
+    f.emit('turn/completed','synthetic-original');assert.equal(f.s.error,null);
+    assert.equal(f.timers.size,0);
+    f.emit('turn/started','synthetic-newer','inProgress');f.fail();assert.equal(f.s.busy,true,'Stale failure cannot stop a newer turn');
+    assert.equal(f.timers.size,0);
+  }
+  {
+    const f=setup();f.fail();await f.advance(60000);
+    f.emit('turn/completed',f.s.lastStartedTurnId);f.assertReleased();
+    assert.equal(f.s.error,null);assert.equal(f.s.capacityRetry,null);
+    f.emit('turn/started','synthetic-new-task','inProgress');f.fail('synthetic-new-task');
+    assert.equal(f.s.capacityRetry.attempt,1,'A successful task resets the attempt budget');
+    f.context.capacityRecovery.beforeSend(f.s,{});await f.advance(1000000);
+    assert.equal(f.calls.filter(c=>c.method==='turn/start').length,1,'Manual send cancels the pending continuation');
+  }
+  {
+    const f=setup();f.fail();f.start(async()=>{throw uncertain();});await f.advance(60000);await f.advance(1000000);
+    assert.equal(f.calls.filter(c=>c.method==='turn/start').length,1,'Ambiguous continuation never replays');
+    assert.equal(f.s.capacityRetry,null);
+  }
+  {
+    const f=setup();f.fail();f.context.refreshAccount=async()=>{f.context.limitsEpoch++;return false;};
+    await f.advance(60000);assert.equal(f.calls.filter(c=>c.method==='turn/start').length,0,'Recheck ownership after async preparation');
+    f.assertReleased();
+  }
+}
+
 (async () => {
+  await capacityChecks();
   await rotatedDraftChecks();await transportChecks();await sendChecks();await queueChecks();await movedOnChecks();
   console.log('Send/queue: uncertain start reconciliation and leases, no follow-up replay, transactional enqueue passed.');
 })().catch(error => { console.error(error);process.exitCode = 1; });

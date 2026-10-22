@@ -591,6 +591,7 @@ function activate(context) {
           usageModel: s.usageModel || null,
           usageStale: !!s.usageStale,
           error: s.error || null,
+          capacityRetry:s.capacityRetry || null,
           prefs: s.prefs,
           defaults: library.defaults,
           bookmarks: library

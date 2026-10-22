@@ -9,6 +9,7 @@
 !LICENSE
 !THIRD_PARTY_NOTICES.txt
 !runtime/account.cjs
+!runtime/model-capacity.cjs
 !runtime/async-questions.cjs
 !runtime/question-records.cjs
 !runtime/task-preflight.cjs

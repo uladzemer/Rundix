@@ -56,8 +56,8 @@ async function windowsAndSlowRecovery(){
   }finally{service.dispose();}
   const {notification}=require('../runtime/session.cjs');
   const windowSession={id:'synthetic-thread',busy:true,turnId:'synthetic-new',items:[]};
-  assert(notification(windowSession,{method:'turn/completed',params:{threadId:windowSession.id,turn:{id:'synthetic-old',status:'completed'}}}));
-  assert.equal(windowSession.busy,false);
+  assert.equal(notification(windowSession,{method:'turn/completed',params:{threadId:windowSession.id,turn:{id:'synthetic-old',status:'completed'}}}),false);
+  assert.equal(windowSession.busy,true,'An old completion cannot stop the newer turn or arm capacity recovery');
   const {resumeThread}=require('../runtime/session-resume.cjs');
   for(const serviceMode of [false,true]){
     const s={id:'synthetic-resume',items:[],prefs:{},turnId:'synthetic-preserved',error:'Synthetic preserved error'};

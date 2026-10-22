@@ -180,6 +180,7 @@ function notifySessions(deps, message) {
             deps.turnLeases.get(s.id)?.();
             deps.turnLeases.delete(s.id);
             s.lastTurnStatus=message.params.turn.status;
+            deps.capacityRecovery?.completed(s,message);
             void deps.save(s);
             void deps.applyPendingMode(s).catch(error=>{s.error=error.message;deps.publish(s);});
             if(s.lastTurnStatus==='completed' && !s.stopRequested)void deps.drainFollowUps(s).catch(error=>{s.error=error.message;deps.publish(s);});
@@ -195,6 +196,7 @@ function notifySessions(deps, message) {
 
 function disconnect(deps, notificationServer, message) {
       if (deps.server !== notificationServer) return;
+      deps.capacityRecovery?.clear();
       if (deps.pendingLogin.current?.client === notificationServer) deps.pendingLogin.finish();
       deps.connecting = null;
       deps.limitsEpoch++;

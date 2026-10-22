@@ -77,6 +77,7 @@ function createSessionCore(host) {
   const pendingLogin = require('./account-lifecycle.cjs').createPendingLogin(deps);
   Object.assign(deps, { pendingLogin, browserSignInMessage });
   const { connect, save } = operations;
+  deps.capacityRecovery=require('./model-capacity.cjs').createCapacityRecovery(deps);
   let nextDraft = 1;
   function createSession({ key = randomUUID(), saved = store.session(key) || host.workspaceState.get('session:' + key) || {}, inherited = {} } = {}) {
     const s = sessions.get(key) || {
@@ -157,6 +158,7 @@ function createSessionCore(host) {
     return state.accountStatusRequest;
   }
   function stopAccountServer() {
+    deps.capacityRecovery.clear();
     pendingLogin.finish();
     state.server?.removeAllListeners(); state.server?.dispose(); state.server = null; state.connecting = null;
   }
@@ -238,7 +240,7 @@ function createSessionCore(host) {
   }
   return {
     state, sessions, pendingRequests, threadReleases, turnLeases, store, library, connections, pendingLogin,
-    ...operations, createSession, browserSignInMessage, providerClient, refreshAccount, withLocalSignIn,
+    ...operations, capacityRecovery:deps.capacityRecovery, createSession, browserSignInMessage, providerClient, refreshAccount, withLocalSignIn,
     refreshAccountStatus, stopAccountServer, resetConnection, refreshLimits, updateDraftModel, refreshCatalog, preparationConfig,
   };
 }

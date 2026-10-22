@@ -3,6 +3,7 @@ const chromePath=[process.env.CHROME_PATH,'C:/Program Files/Google/Chrome/Applic
 if(!chromePath)throw Error('Set CHROME_PATH to an installed Chrome or Chromium executable.');
 (async()=>{const browser=await puppeteer.launch({executablePath:chromePath,headless:true,pipe:true});try{
  await require('./mcp-draft-sync-browser.cjs')({browser});
+ await require('./model-capacity-browser.cjs')({browser});
  const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.setViewport({width:700,height:850});await page.setContent('<html><body><main id="app"></main></body></html>');
  await page.addStyleTag({content:fs.readFileSync(path.join(__dirname,'../ui/app.css'),'utf8')});
  await page.evaluate(()=>{

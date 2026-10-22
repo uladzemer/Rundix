@@ -2130,8 +2130,9 @@ function render() {
   alerts.replaceChildren();
   if (state.error) {
     const error = el("div", state.error, "error");
-    const retry = el("button", WorkbenchI18n.t("Переподключиться"));
-    retry.onclick = () => send("retry");
+    if(state.capacityRetry)error.append(el('p',WorkbenchI18n.t('Модель перегружена. Пауза перед автопродолжением: {0} с. Попытка {1}/3. Контекст и черновик сохранены.',state.capacityRetry.delaySeconds,state.capacityRetry.attempt)));
+    const retry = el("button", WorkbenchI18n.t(state.capacityRetry?'Отменить автопродолжение':"Переподключиться"));
+    retry.onclick = () => send(state.capacityRetry?'stop':"retry");
     error.append(retry);
     alerts.append(error);
   }

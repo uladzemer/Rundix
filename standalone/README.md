@@ -47,6 +47,8 @@ Completion sounds, Telegram notifications and local Stop scripts are optional. T
 
 Compatible companion extensions can add another connection. Select one through `/account` → **Connection settings**. If the selected companion is unavailable, Rundix preserves your draft and reports the error before sending.
 
+If a visible ordinary chat ends with “Selected model is at capacity”, Rundix sends a continuation in the same thread after pauses of 60, 120 and 300 seconds, up to three attempts. Cancel from the error card or send your own message. Drafts, attachments and queued messages are preserved. Changing the account, connection, model or task settings cancels recovery; reloading the window does not restore pending attempts. MCP/service tasks and task preparation use their existing recovery behavior. Server capacity still determines when the model can respond.
+
 Control Rundix from Claude Code through the optional [local MCP bridge](https://github.com/uladzemer/Rundix/blob/main/standalone/docs/mcp.md). Click **MCP** at the top of the chat to open its controls, tasks and copyable Claude configuration. VS Code must remain open and an installed companion connection must be selected.
 
 ### Claude Code and Codex working together
@@ -105,6 +107,8 @@ Rundix может установить и обновлять официальн�
 Звуки завершения, Telegram и локальные Stop-скрипты включаются по желанию. Telegram выключен до настройки; после включения он отправляет итоговый ответ в выбранный чат. Stop-скрипты выполняются с вашими правами. Экспериментальная подготовка задачи запрашивает явное согласование перед выполнением.
 
 Совместимый дополнительный модуль может предоставить другой способ подключения. Выберите его через `/account` → **Настройки подключения**. Если выбранный модуль недоступен, Rundix сохранит черновик и сообщит об ошибке до отправки.
+
+Если открытый обычный чат завершился ошибкой «Selected model is at capacity», Rundix отправит продолжение в том же чате после пауз 60, 120 и 300 секунд — до трёх попыток. Отменить можно в карточке ошибки или отправкой своего сообщения. Черновик, вложения и очередь сохраняются. Смена аккаунта, подключения, модели или параметров задачи отменяет восстановление; после перезагрузки окна попытки не возобновляются. MCP-задачи, фоновый сервис и подготовка задания используют прежнее восстановление. Доступность модели по-прежнему зависит от сервера.
 
 ### Claude Code и Codex вместе
 

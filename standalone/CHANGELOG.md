@@ -1,5 +1,10 @@
 # Changelog / История изменений
 
+## 0.4.7 — 2026-10-22
+
+- Visible ordinary chats automatically continue a confirmed model-capacity failure in the same thread after 60, 120 and 300 seconds, at most three times. Cancel from the error card. Drafts, attachments and queued messages are preserved; changed connections/accounts/models cancel recovery. MCP/service tasks and task preparation keep their existing recovery behavior.
+- Successful turns now clear transient CLI retry errors; stale terminal/error notifications cannot stop a newer turn.
+
 Install and update Rundix through [Microsoft Marketplace](https://marketplace.visualstudio.com/items?itemName=local-rundix-tools.rundix).
 
 ## 0.4.6 — 2026-10-21

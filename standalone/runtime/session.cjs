@@ -104,15 +104,17 @@ function notification(session, message, {serviceMode=false}={}) {
     item.summary[i] = (item.summary[i] || "") + p.delta;
   } else if (message.method === "turn/started") {
     session.turnId = p.turn.id;
+    session.lastStartedTurnId = p.turn.id;
+    session.error = null;
     session.turnStartedAt = Date.now();
     session.busy = true;
   } else if (message.method === "turn/completed") {
     const expected=session.turnId || session.lastStartedTurnId;
-    if(serviceMode && expected && p.turn?.id && p.turn.id!==expected)return false;
+    if(expected && p.turn?.id && p.turn.id!==expected)return false;
     session.busy = false;
     session.compacting = false;
     session.turnId = null;
-    if (p.turn.error) session.error = p.turn.error.message;
+    session.error = p.turn.error?.message || null;
   } else if (message.method === "thread/closed") {
     // A late close must not unload a thread that a continuation already resumed and is running.
     if (!session.busy) session.loaded = false;
@@ -122,8 +124,10 @@ function notification(session, message, {serviceMode=false}={}) {
     session.usageStale = false;
   } else if (message.method === "thread/name/updated" && !session.customName)
     session.name = p.threadName;
-  else if (message.method === "error")
+  else if (message.method === "error") {
+    if(p.turnId && (session.turnId || session.lastStartedTurnId) && p.turnId!==(session.turnId || session.lastStartedTurnId))return false;
     session.error = p.error?.message || locale.t("Ошибка Codex");
+  }
   else return false;
   return true;
 }

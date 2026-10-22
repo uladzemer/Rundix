@@ -74,6 +74,8 @@ function notification(session, message, {serviceMode=false}={}) {
   const p = message.params || {};
   if (!session.id || (p.threadId !== session.id && p.thread?.id !== session.id))
     return false;
+  if(session.retrying && p.turnId && p.turnId===session.turnId &&
+    ['item/started','item/completed','item/agentMessage/delta','item/commandExecution/outputDelta','item/reasoning/summaryTextDelta'].includes(message.method))session.retrying=false;
   if (
     message.method === "item/started" ||
     message.method === "item/completed"
@@ -105,6 +107,7 @@ function notification(session, message, {serviceMode=false}={}) {
   } else if (message.method === "turn/started") {
     session.turnId = p.turn.id;
     session.lastStartedTurnId = p.turn.id;
+    session.retrying = false;
     session.error = null;
     session.turnStartedAt = Date.now();
     session.busy = true;
@@ -112,6 +115,7 @@ function notification(session, message, {serviceMode=false}={}) {
     const expected=session.turnId || session.lastStartedTurnId;
     if(expected && p.turn?.id && p.turn.id!==expected)return false;
     session.busy = false;
+    session.retrying = false;
     session.compacting = false;
     session.turnId = null;
     session.error = p.turn.error?.message || null;
@@ -126,7 +130,9 @@ function notification(session, message, {serviceMode=false}={}) {
     session.name = p.threadName;
   else if (message.method === "error") {
     if(p.turnId && (session.turnId || session.lastStartedTurnId) && p.turnId!==(session.turnId || session.lastStartedTurnId))return false;
-    session.error = p.error?.message || locale.t("Ошибка Codex");
+    // A CLI retry is still the same running turn, not a failed send or reconnect request.
+    if(p.willRetry===true && session.busy){session.retrying=true;session.error=null;}
+    else {session.retrying=false;session.error = p.error?.message || locale.t("Ошибка Codex");}
   }
   else return false;
   return true;

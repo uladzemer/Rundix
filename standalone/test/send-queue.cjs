@@ -352,7 +352,11 @@ async function movedOnChecks() {
 }
 
 async function capacityChecks() {
-  const {createCapacityRecovery,DELAYS,CONTINUE}=require('../runtime/model-capacity.cjs');
+  const {atCapacity,createCapacityRecovery,DELAYS,CONTINUE}=require('../runtime/model-capacity.cjs');
+  assert.equal(atCapacity({codexErrorInfo:'serverOverloaded',message:'Synthetic localized overload'}),true);
+  assert.equal(atCapacity({codexErrorInfo:'usageLimitExceeded',message:'Selected model is at capacity.'}),false);
+  assert.equal(atCapacity({codexErrorInfo:{httpConnectionFailed:{httpStatusCode:503}},message:'Synthetic transport failure'}),false);
+  assert.equal(atCapacity({codexErrorInfo:'other',message:'Selected model is at capacity.'}),true);
   function setup() {
     const f=fixture();
     f.context.capacityRecovery=createCapacityRecovery(f.context);
@@ -402,10 +406,27 @@ async function capacityChecks() {
     f.server.emit('notification',{method:'error',params:{threadId:f.s.id,turnId:f.s.turnId,
       willRetry:true,error:{message:'Selected model is at capacity. Please try a different model.'}}});
     assert.equal(f.timers.size,0,'CLI retry is not a terminal failure');
+    assert.equal(f.s.busy,true);assert.equal(f.s.error,null);assert.equal(f.s.retrying,true);
+    f.server.emit('notification',{method:'item/agentMessage/delta',params:{threadId:f.s.id,turnId:f.s.turnId,itemId:'synthetic-progress',delta:'Synthetic progress'}});
+    assert.equal(f.s.retrying,false,'Real progress clears the retry indicator');
+    f.server.emit('notification',{method:'error',params:{threadId:f.s.id,turnId:f.s.turnId,willRetry:true,error:{message:'Synthetic retry'}}});
     f.emit('turn/completed','synthetic-original');assert.equal(f.s.error,null);
+    assert.equal(f.s.retrying,false);
     assert.equal(f.timers.size,0);
     f.emit('turn/started','synthetic-newer','inProgress');f.fail();assert.equal(f.s.busy,true,'Stale failure cannot stop a newer turn');
     assert.equal(f.timers.size,0);
+  }
+  {
+    const f=setup();f.s.busy=true;f.s.turnId='synthetic-original';
+    f.server.emit('notification',{method:'error',params:{threadId:f.s.id,turnId:'synthetic-stale',willRetry:true,error:{message:'Synthetic stale retry'}}});
+    assert.notEqual(f.s.retrying,true);
+    f.server.emit('notification',{method:'error',params:{threadId:f.s.id,turnId:f.s.turnId,willRetry:false,error:{message:'Synthetic terminal overload',codexErrorInfo:'serverOverloaded'}}});
+    assert.equal(f.s.error,'Synthetic terminal overload');assert.equal(f.s.retrying,false);
+    assert.equal(f.timers.size,0,'Terminal error alone does not prove the turn stopped');
+    f.server.emit('notification',{method:'turn/completed',params:{threadId:f.s.id,turn:{id:f.s.turnId,status:'failed',error:{message:'Synthetic localized overload',codexErrorInfo:'serverOverloaded'}}}});
+    assert.equal(f.s.capacityRetry.attempt,1,'Typed failure arms recovery after terminal confirmation');
+    f.server.emit('disconnected','Synthetic disconnect');assert.equal(f.s.retrying,false);
+    assert.equal(f.s.capacityRetry,null);
   }
   {
     const f=setup();f.fail();await f.advance(60000);

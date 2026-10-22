@@ -29,6 +29,14 @@ module.exports=async({browser})=>{
       assert.equal(await page.$eval('textarea',node=>node.value),'Synthetic preserved draft');
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
       await page.screenshot({path:path.join(directory,`capacity-${language}-${dark?'dark':'light'}-${width}.png`)});
+      await page.evaluate(()=>{window.fixture.error=null;window.fixture.capacityRetry=null;window.fixture.busy=true;window.fixture.retrying=true;window.fixture.turnId='synthetic-retrying-turn';window.update();});
+      assert.equal(await page.$('.error'),null,'CLI retries must not offer reconnect');
+      assert.equal(await page.$eval('.activity-status',node=>node.hidden),false);
+      assert.equal(await page.$eval('.activity-status',node=>node.dataset.phase),'retrying');
+      assert.equal(await page.$eval('.activity-label',node=>node.textContent),language==='ru'?'Codex повторяет запрос…':'Codex is retrying…');
+      assert.equal(await page.$eval('textarea',node=>node.value),'Synthetic preserved draft');
+      await page.screenshot({path:path.join(directory,`cli-retrying-${language}-${dark?'dark':'light'}-${width}.png`)});
+      await page.evaluate(()=>{window.fixture.error='Selected model is at capacity. Please try a different model.';window.fixture.capacityRetry={attempt:2,delaySeconds:120};window.fixture.busy=false;window.fixture.retrying=false;window.update();});
     }
     await page.click('.error button');
     assert.equal(await page.evaluate(()=>window.calls.at(-1).action),'stop');

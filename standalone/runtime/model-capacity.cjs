@@ -3,6 +3,8 @@ const {identity}=require('./account.cjs');
 const DELAYS=[60000,120000,300000];
 const CONTINUE='Continue the task from where you stopped.';
 function atCapacity(error) {
+  // Prefer protocol data over display text, which can change or be localized.
+  if(error?.codexErrorInfo!=null && error.codexErrorInfo!=='other')return error.codexErrorInfo==='serverOverloaded';
   return typeof error?.message==='string' && /\bselected model is at capacity\b/i.test(error.message);
 }
 function createCapacityRecovery(deps) {

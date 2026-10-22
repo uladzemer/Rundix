@@ -54,6 +54,7 @@
   "Сохранение не подтверждено. Проверьте очередь перед повтором.": "Saving was not confirmed. Check the queue before retrying.",
   "Модель перегружена. Пауза перед автопродолжением: {0} с. Попытка {1}/3. Контекст и черновик сохранены.": "The model is at capacity. Pause before auto-continue: {0} s. Attempt {1}/3. Context and draft are preserved.",
   "Отменить автопродолжение": "Cancel auto-continue",
+  "Codex повторяет запрос…": "Codex is retrying…",
   "Автопродолжение отменено: состояние сессии изменилось.": "Auto-continue cancelled: session state changed.",
   "Автопродолжение ожидает доступности соединения. Продолжите вручную.": "Auto-continue is waiting for the connection. Continue manually.",
   "Не удалось сохранить правку. Проверьте, что задача ещё в очереди, и откройте её заново.": "Could not save the edit. Check that the task is still queued and open it again.",

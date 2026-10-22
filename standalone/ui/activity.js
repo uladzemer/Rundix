@@ -46,8 +46,10 @@ class WorkbenchActivity {
     let phase = preparing ? 'sending' : state.requests?.length ? 'waiting' : state.compacting ? 'compacting' : current?.type;
     if (!preparing && !state.requests?.length && !state.compacting && current?.status && current.status !== 'inProgress') phase = 'working';
     if (phase === 'agentMessage' && current?.phase !== 'final') phase = 'working';
+    if(!preparing && !state.requests?.length && !state.compacting && state.retrying)phase='retrying';
     const stages = {
       sending: ['send', ['Отправляю запрос…']],
+      retrying: ['send', ['Codex повторяет запрос…']],
       waiting: ['hand', ['Ожидаю вашего ответа…']],
       compacting: ['plan', ['Сжимаю контекст…', 'Обновляю контекст…']],
       contextCompaction: ['plan', ['Сжимаю контекст…', 'Обновляю контекст…']],

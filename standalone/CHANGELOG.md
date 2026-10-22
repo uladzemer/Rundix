@@ -1,5 +1,10 @@
 # Changelog / История изменений
 
+## 0.4.8 — 2026-10-22
+
+- A running CLI turn with `willRetry: true` now shows a retry status instead of a fatal error and Reconnect button. Progress, terminal completion and disconnect clear this transient status.
+- Model-capacity recovery now recognizes the typed `serverOverloaded` protocol error even when its display text changes. Typed usage-limit and transport errors do not trigger capacity continuations.
+
 ## 0.4.7 — 2026-10-22
 
 - Visible ordinary chats automatically continue a confirmed model-capacity failure in the same thread after 60, 120 and 300 seconds, at most three times. Cancel from the error card. Drafts, attachments and queued messages are preserved; changed connections/accounts/models cancel recovery. MCP/service tasks and task preparation keep their existing recovery behavior.

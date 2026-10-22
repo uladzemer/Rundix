@@ -209,6 +209,7 @@ function disconnect(deps, notificationServer, message) {
         s.loaded = false;
         s.turnId = null;
         s.busy = false;
+        s.retrying = false;
         // A compaction cut off by the crash will never report completion.
         s.compacting = false;
         s.error = message;

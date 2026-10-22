@@ -66,6 +66,7 @@
 !runtime/mcp-access.cjs
 !runtime/session-resume.cjs
 !runtime/send-queue.cjs
+!runtime/turn-writer-guard.cjs
 !runtime/question-policy.cjs
 !runtime/question-answer.cjs
 !runtime/session-core.cjs

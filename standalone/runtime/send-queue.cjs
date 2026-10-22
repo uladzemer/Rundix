@@ -60,6 +60,16 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
     });
     deps.connections.assertCurrent(connection);
     if (decision?.waitUntil) return {waitUntil:decision.waitUntil,connection};
+    if (decision?.reconnected && s.id) {
+      // A provider handoff restarts the CLI but keeps the rollout. Confirm that
+      // the old writer is gone before issuing a new turn on that same thread.
+      try {
+        await require('./turn-writer-guard.cjs').assertNoActiveWriter(deps,s);
+      } catch (error) {
+        if(error?.retryable) throw error;
+        throw Object.assign(Error(deps.locale.t('Не удалось проверить состояние задачи после переключения аккаунта. Переподключитесь и повторите отправку.')),{notSent:true,retryable:true,cause:error});
+      }
+    }
   }
   const exhausted = require('../ui/limits.js').exhaustion(deps.limits);
   if(options.requiredConnection && (deps.activeConnection?.id!==options.requiredConnection.id || deps.activeConnection?.revision!==options.requiredConnection.revision || !deps.activeConnection?.provider))throw Error('MCP task connection changed.');

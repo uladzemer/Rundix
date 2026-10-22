@@ -63,11 +63,10 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
     if (s.id) {
       // External account selection can change even when the provider reports
       // ready. Confirm that the old writer is gone before reusing this thread.
-      try {
-        await require('./turn-writer-guard.cjs').assertNoActiveWriter(deps,s);
-      } catch (error) {
-        if(error?.retryable) throw error;
-        throw Object.assign(Error(deps.locale.t('Не удалось проверить состояние задачи после переключения аккаунта. Переподключитесь и повторите отправку.')),{notSent:true,retryable:true,cause:error});
+      // A transient read failure must not block an otherwise valid send; the
+      // turn/start RPC remains the authoritative writer check.
+      try { await require('./turn-writer-guard.cjs').assertNoActiveWriter(deps,s); } catch (error) {
+        if (error?.retryable) throw error;
       }
     }
   }

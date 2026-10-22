@@ -1,5 +1,9 @@
 # Changelog / История изменений
 
+## 0.4.9 — 2026-10-22
+
+- Thread restoration now keeps all RPC reads on its owning connection and rejects results after an account, connection or chat change. An interrupted restore preserves the draft and cached history for a fresh attempt instead of marking the replacement connection as loaded.
+
 ## 0.4.8 — 2026-10-22
 
 - A running CLI turn with `willRetry: true` now shows a retry status instead of a fatal error and Reconnect button. Progress, terminal completion and disconnect clear this transient status.

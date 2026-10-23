@@ -85,6 +85,7 @@ async function main() {
     assert.equal(host.provider.activeTurns, 0, 'A stale event after real completion cannot overwrite buffered terminal evidence');
     assert.equal(host.mcp.tasks.get(delayed.taskId).recoveryRequired, false);
     const log = boundedLogger(root); log({code:'service_started', text:'SYNTHETIC_IGNORED_TEXT'}); log('SYNTHETIC_IGNORED_TEXT');
+    log({code:'turn_outcome',outcome:{attempt:1,account:1,model:1,status:'failed',category:'serverOverloaded',transition:'account_changed',fast:false,elapsedSeconds:3,text:'SYNTHETIC_IGNORED_TEXT'}});
     const logs = fs.readFileSync(path.join(root, 'diagnostics', 'service-0.log'), 'utf8');
     assert(!logs.includes(root)); assert(!logs.includes('SYNTHETIC_IGNORED_TEXT'));
     for (let rotation = 0; rotation < 4; rotation++) {

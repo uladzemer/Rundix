@@ -170,6 +170,7 @@ function notifySessions(deps, message) {
         // A duplicate/stale completion must not approve a different preparation turn.
         if(s.preflight?.enabled && message.method==='turn/completed' && message.params?.turn?.id!==s.turnId)continue;
         if (deps.notification(s, message)) {
+          deps.turnDiagnostics?.observe(s,message,deps.server);
           if(message.method==='item/completed' && message.params?.item?.type==='userMessage'){
             deps.questionRecords.restore(s);
           }
@@ -196,6 +197,7 @@ function notifySessions(deps, message) {
 
 function disconnect(deps, notificationServer, message) {
       if (deps.server !== notificationServer) return;
+      deps.turnDiagnostics?.disconnect(notificationServer);
       deps.capacityRecovery?.clear();
       if (deps.pendingLogin.current?.client === notificationServer) deps.pendingLogin.finish();
       deps.connecting = null;

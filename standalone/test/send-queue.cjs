@@ -450,7 +450,39 @@ async function capacityChecks() {
 }
 
 (async () => {
+  {
+    const f=fixture(),rows=[];
+    f.context.account={type:'chatgpt',email:'synthetic@example.test'};
+    f.context.turnDiagnostics=require('../runtime/turn-diagnostics.cjs').createTurnDiagnostics({now:()=>1000,write:row=>rows.push(row)});
+    f.start(async()=>{
+      f.emit('turn/started','synthetic-diagnostic-1','inProgress');
+      f.server.emit('notification',{method:'turn/completed',params:{threadId:f.s.id,turn:{id:'synthetic-diagnostic-1',status:'failed',error:{message:'Synthetic ignored service text',codexErrorInfo:'serverOverloaded'}}}});
+      return {turn:{id:'synthetic-diagnostic-1'}};
+    });
+    await f.context.send(f.s,'Synthetic diagnostic input',[]);
+    assert.equal(rows.length,1);assert.equal(rows[0].category,'serverOverloaded');assert.equal(rows[0].transition,'first');
+    f.context.account={type:'chatgpt',email:'synthetic-second@example.test'};
+    f.start(async()=>{f.emit('turn/started','synthetic-diagnostic-2','inProgress');f.emit('turn/completed','synthetic-diagnostic-2');return {turn:{id:'synthetic-diagnostic-2'}};});
+    await f.context.send(f.s,'Synthetic continuation',[]);
+    assert.equal(rows[1].transition,'account_changed');assert.equal(rows[1].status,'completed');
+    assert.equal(f.calls.filter(row=>row.method==='turn/start').length,2,'Diagnostics do not dispatch or replay model input');
+  }
   await capacityChecks();
+  {
+    const f=fixture(),rows=[];
+    f.s.lastStartedTurnId='synthetic-previous';
+    f.context.turnDiagnostics=require('../runtime/turn-diagnostics.cjs').createTurnDiagnostics({write:row=>rows.push(row)});
+    f.start(async()=>{
+      f.emit('turn/started','synthetic-older','inProgress');
+      f.server.emit('notification',{method:'turn/completed',params:{threadId:f.s.id,turn:{id:'synthetic-older',status:'failed',error:{codexErrorInfo:'serverOverloaded'}}}});
+      assert.equal(rows.length,0);
+      f.emit('turn/started','synthetic-current','inProgress');
+      f.emit('turn/completed','synthetic-current');
+      return {turn:{id:'synthetic-current'}};
+    });
+    await f.context.send(f.s,'Synthetic late notification diagnostic',[]);
+    assert.equal(rows.length,1);assert.equal(rows[0].status,'completed');assert.equal(rows[0].category,'none');
+  }
   await rotatedDraftChecks();await transportChecks();await sendChecks();await queueChecks();await movedOnChecks();
   console.log('Send/queue: uncertain start reconciliation and leases, no follow-up replay, transactional enqueue passed.');
 })().catch(error => { console.error(error);process.exitCode = 1; });

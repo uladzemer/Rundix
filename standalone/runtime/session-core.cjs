@@ -78,6 +78,8 @@ function createSessionCore(host) {
   Object.assign(deps, { pendingLogin, browserSignInMessage });
   const { connect, save } = operations;
   deps.capacityRecovery=require('./model-capacity.cjs').createCapacityRecovery(deps);
+  deps.turnDiagnostics=require('./turn-diagnostics.cjs').createTurnDiagnostics({now:()=>clock.now(),
+    write:value=>host.turnDiagnostic?host.turnDiagnostic(value):host.logger('[turn diagnostic] '+JSON.stringify(value))});
   let nextDraft = 1;
   function createSession({ key = randomUUID(), saved = store.session(key) || host.workspaceState.get('session:' + key) || {}, inherited = {} } = {}) {
     const s = sessions.get(key) || {
@@ -158,6 +160,7 @@ function createSessionCore(host) {
     return state.accountStatusRequest;
   }
   function stopAccountServer() {
+    deps.turnDiagnostics.disconnect(state.server);
     deps.capacityRecovery.clear();
     pendingLogin.finish();
     state.server?.removeAllListeners(); state.server?.dispose(); state.server = null; state.connecting = null;

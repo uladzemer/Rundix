@@ -67,6 +67,7 @@
 !runtime/session-resume.cjs
 !runtime/send-queue.cjs
 !runtime/turn-writer-guard.cjs
+!runtime/turn-diagnostics.cjs
 !runtime/question-policy.cjs
 !runtime/question-answer.cjs
 !runtime/session-core.cjs

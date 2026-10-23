@@ -210,7 +210,11 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
         },
       },
     };
+    const diagnostic=deps.turnDiagnostics?.begin(s,{client,connection,
+      accountKey:deps.account?.email?require('./account.cjs').identity(deps.account):null,
+      modelKey:selection.model,fast:serviceTier!=='default'});
     const result = await client.request("turn/start", startParams);
+    deps.turnDiagnostics?.accepted(diagnostic,result.turn?.id);
     follow();
     startPending=false;unresolved=false;
     // Consume recoverable input at confirmed delivery, including a retry after

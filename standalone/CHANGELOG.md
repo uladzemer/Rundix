@@ -1,5 +1,9 @@
 # Changelog / История изменений
 
+## 0.4.11 — 2026-10-23
+
+- Completed CLI turns now produce a bounded diagnostic record that distinguishes typed model overload, authorization and transport failures and whether the visible account or client changed since the previous dispatch. Account/model aliases are process-local numbers; no chat text, account names, tokens, thread IDs or paths are logged. Diagnostics do not change account selection or retry behavior. See `docs/turn-diagnostics.md` for interpretation and limits.
+
 ## 0.4.10 — 2026-10-22
 
 - Extended account handoffs now verify the saved thread has no active writer before reusing it, even when the provider reports the replacement account as ready.

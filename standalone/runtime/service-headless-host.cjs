@@ -21,7 +21,7 @@ function boundedLogger(root) {
   const codes = new Set(['host_error', 'cli_stopped', 'service_started', 'service_stopped', 'idle_exit_failed', 'provider_unavailable','archive_record_corrupt','archive_record_unavailable','archive_index_corrupt','archive_index_unavailable',
     'provider_auth_started','provider_auth_ready','provider_auth_failed','cli_read_binding_changed','cli_read_failed',
     'provider_admission_ready','provider_admission_failed','provider_admission_auth_required','provider_account_refresh_deferred',
-    'task_directory_busy','task_directory_reserved','task_directory_unavailable']);
+      'task_directory_busy','task_directory_reserved','task_directory_unavailable','turn_outcome']);
   const methods=new Set(['thread/read','thread/resume','thread/turns/list','thread/items/list','thread/unsubscribe',
     'account/read','account/rateLimits/read','model/list','config/read','thread/start','thread/name/set','turn/interrupt']);
   const providerCodes=new Set([...require('./service-provider-contract.cjs').UNAVAILABLE_CODES,
@@ -35,6 +35,7 @@ function boundedLogger(root) {
         fs.renameSync(file(0), file(1));
       }
       fs.appendFileSync(file(0), JSON.stringify({at:Date.now(), code,
+        ...(code==='turn_outcome'?{outcome:require('./turn-diagnostics.cjs').safeOutcome(input?.outcome)}:{}),
         ...(methods.has(input?.method)?{method:input.method}:{}),
         ...(providerCodes.has(input?.providerCode)?{providerCode:input.providerCode}:{})}) + '\n', {mode:0o600});
     } catch {} // Logging must never change send/recovery outcomes.
@@ -235,6 +236,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     }
   }
   core = createSessionCore({paths:{storage:root}, workspaceState, settings, logger:coreLogger, clock,
+    turnDiagnostic:outcome=>logger({code:'turn_outcome',outcome}),
     deferProviderNotifications:true,serviceMode:true,
     onDeferredProviderRefresh:()=>logger({code:'provider_account_refresh_deferred'}),
     trusted:() => true, events:{changed:noop, sessionChanged:onSessionChanged, treeChanged:noop, notify:noop, completed:noop},

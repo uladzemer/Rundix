@@ -19,7 +19,7 @@ GitHub Actions are disabled in repository settings at the owner's request on 18 
 
 Use `REVIEW.md` for a separate correctness/security review; substantial runtime/UI changes need a read-only reviewer with fresh context when available. Review at most three rounds, focusing later rounds on fixes and affected paths. Do not call self-review independent review.
 
-Commit completed changes after checks, staging only relevant files. Push only to a remote actually configured for this clean repository. Never attach the private source project's remote or history. Repository publication and Marketplace publication require an explicit request. Do not install this edition over another edition or change the user's VS Code settings outside this extension.
+Commit completed changes after checks, staging only relevant files. Push only to a remote actually configured for this clean repository. Never attach the private source project's remote or history. Repository publication and Marketplace publication require an explicit request. Marketplace publishing uses Microsoft Entra ID through `standalone/scripts/marketplace.ps1` (`status`, `login`, `publish`, `id`); the tenant ID stays in the untracked `marketplace.local.json` beside it. Do not install this edition over another edition or change the user's VS Code settings outside this extension.
 
 Keep reviewable local changes and explain missing information or concrete blockers. Final responses use four short Russian sections: «Что было задано», «Что я решил», «Что не удалось», «Что бы я ещё сделал». The last section includes at least three concrete optional suggestions with 🔴 / 🟡 / 🟢 circles in priority order; do not invent urgency.
 

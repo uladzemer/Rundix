@@ -9,3 +9,4 @@ auth.json
 **/.wrangler/
 .DS_Store
 .claude/worktrees/
+**/*.local.json

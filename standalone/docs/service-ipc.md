@@ -54,6 +54,26 @@ modules are absent. This document and synthetic tests are also excluded.
   is gone; an unknown identity does not. `processIdentityAsync(pid)` is used by
   endpoint/recovery to avoid blocking IPC timers. Self start identity is cached;
   remote identities are queried afresh.
+  On Windows the start time comes from `Get-Process`, falling back to
+  `Win32_Process.CreationDate` (CIM) for protected or other-user processes whose
+  `StartTime` is unreadable; the two differ by sub-millisecond rounding, so
+  `ownerState` treats starts within 10 ms as equal. An `EPERM` from the liveness
+  probe is neither "dead" nor proof of life: the start time is still queried.
+- Dead-owner rules in `probeOwner`: a descriptor whose pipe/socket dial fails with
+  `ENOENT` while the owner identity stays unverified is `dead` (a live service
+  always holds its endpoint; `dispose` removes the descriptor before closing it, so
+  this never describes a stopping owner; if removing it fails, the endpoint still
+  closes and the stale descriptor is handled by this rule). `EACCES`/`EPERM` prove nothing and stay
+  `unverified`, which keeps the singleton.
+- Lease PID reuse (`store.cjs`, Windows only — elsewhere the start time is not
+  comparable and behaviour is unchanged): a lease or record lock whose pid answers the
+  liveness probe (or `EPERM`) is reaped when that process started more than 30 s
+  after the lease file was written (the slack absorbs clock skew). Leases younger
+  than 10 s skip the query, an unreadable start time keeps the lease held, results
+  are cached per (pid, lease mtime) in a 64-entry map ("reused" permanently, other
+  results for 30 s, since the owner can die and its pid be reused later), and `assertNoActiveTurns`
+  applies the same check. A held lease raises an error with `code: 'SESSION_BUSY'`,
+  which `service_start_failed` logs as `errorCode`.
 - `service-lifecycle.idleExit({clients, busy, onIdle, idleMs?, pollMs?})` returns a
   disposable idle hook. A successful `onIdle` completes the hook; `false` or
   `{exiting:false}` declines and rearms, as does rejection. An injected `log`

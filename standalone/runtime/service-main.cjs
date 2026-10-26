@@ -4,6 +4,13 @@ const {createHeadlessHost} = require('./service-headless-host.cjs');
 const {createTaskRpc} = require('./service-task-rpc.cjs');
 const {createLimitPoller} = require('./service-limit-poller.cjs');
 
+// Startup failures used to exit silently. Only a short code or error class is recorded: no message, path or user data.
+function reportStartFailure(options, error, stderr = process.stderr) {
+  const safe = value => typeof value === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(value) ? value : null;
+  const errorCode = safe(error?.code) || safe(error?.name) || 'Error';
+  try { require('./service-headless-host.cjs').boundedLogger(locations(options).directory)({code:'service_start_failed', errorCode}); }
+  catch { try { stderr.write('service_start_failed ' + errorCode + '\n'); } catch {} }
+}
 // Singleton is acquired before creating core, provider or CLI.
 async function runService(options = {}) {
   const rpc = createTaskRpc({providerOptions:options.hostOptions?.providerOptions});
@@ -52,6 +59,6 @@ if (require.main === module) {
     log:value=>{if(service?.host)service.host.logger(value);else process.stderr.write('host_error\n');},
     shutdown:async()=>{await started.catch(()=>{});await service?.shutdown?.();}
   });
-  started.catch(()=>{process.exitCode=1;});
+  started.catch(error=>{process.exitCode=1;reportStartFailure({root:index < 0 ? undefined : process.argv[index + 1]},error);});
 }
-module.exports = {runService};
+module.exports = {runService, reportStartFailure};

@@ -289,6 +289,124 @@ async function main() {
       assert.equal(ownerState({pid:42420,processStart:'synthetic-start'},() => ({state:'unknown'})),'unverified');
       assert.equal(processIdentity(process.pid).state,'alive');
     });
+    await test('reused PID: CIM-style ticks tolerance, unreadable identity, pipe absence and denied access', async () => {
+      const serviceProcess = require('../runtime/service-process.cjs');
+      const ticksAt = ms => String(BigInt(Math.round(ms)) * 10000n + 621355968000000000n);
+      const base = ticksAt(Date.parse('2026-10-24T10:00:00Z'));
+      // Same moment read by Get-Process and by CIM (sub-ms rounding) is the same process; a later start is a reused PID.
+      assert.equal(ownerState({pid:42,processStart:base},() => ({state:'alive',processStart:String(BigInt(base) + 7n)})),'alive');
+      assert.equal(ownerState({pid:42,processStart:base},() => ({state:'alive',processStart:ticksAt(Date.parse('2026-10-25T10:00:00Z'))})),'dead');
+      assert.equal(ownerState({pid:42,processStart:base},() => ({state:'unknown'})),'unverified');
+      assert.equal(serviceProcess.startedAtMs({state:'alive',processStart:ticksAt(1700000000000)}),1700000000000);
+      assert.equal(serviceProcess.startedAtMs({state:'unknown'}),null);
+      assert.equal(serviceProcess.startedAtMs({state:'alive',processStart:'boot:123'}),null);
+      const script = serviceProcess.windowsStartScript(1234);
+      assert(script.includes('Win32_Process') && script.includes('ProcessId=1234') && script.includes('Get-Process -Id 1234'));
+      // Dial failure on a missing pipe + unverified owner = dead (the launcher spawns); an unreadable-but-present pipe stays unverified.
+      const where = endpoint.locations({root:testRoot('reused-pid')}); endpoint.protectDirectory(where.directory);
+      endpoint.publish(where,{version:2,endpoint:{kind:where.kind,address:where.address},pid:42421,processStart:'synthetic-start',generation:'synthetic-gone',secret:'b'.repeat(64),status:'ready',entryPath:'synthetic-entry.cjs'});
+      const unreadable = {root:testRoot('reused-pid'),pingTimeoutMs:50,inspectProcess:() => ({state:'unknown'})};
+      assert.equal((await endpoint.probeOwner(unreadable)).state,'dead');
+      assert.equal((await endpoint.probeOwner({...unreadable,inspectProcess:() => ({state:'alive',processStart:'synthetic-start'})})).state,'hung');
+      const create = net.createConnection;
+      net.createConnection = () => { const socket = new PassThrough(); socket.destroy = () => {}; setImmediate(() => socket.emit('error',Object.assign(Error('synthetic'),{code:'EACCES'}))); return socket; };
+      try { assert.equal((await endpoint.probeOwner(unreadable)).state,'unverified'); }
+      finally { net.createConnection = create; }
+      net.createConnection = () => { const socket = new PassThrough(); socket.destroy = () => {}; setImmediate(() => socket.emit('error',Object.assign(Error('synthetic'),{code:'EPERM'}))); return socket; };
+      try { assert.equal((await endpoint.probeOwner(unreadable)).state,'unverified'); }
+      finally { net.createConnection = create; }
+    });
+    await test('EPERM from process.kill still queries the start time (sync and async)', async () => {
+      const childProcess = require('node:child_process'), originalKill = process.kill, originalSync = childProcess.execFileSync, originalAsync = childProcess.execFile;
+      const modulePath = require.resolve('../runtime/service-process.cjs'), cached = require.cache[modulePath];
+      const queries = [], other = process.pid + 100000, ticks = '639000000000000000';
+      let killCode = 'EPERM';
+      try {
+        process.kill = (pid, signal) => { if (pid === other) throw Object.assign(Error('synthetic'),{code:killCode}); return originalKill.call(process,pid,signal); };
+        childProcess.execFileSync = (...args) => { queries.push(args[0]); return ticks + '\n'; };
+        childProcess.execFile = (...args) => { queries.push(args[0]); args[args.length - 1](null,{stdout:ticks + '\n',stderr:''}); };
+        delete require.cache[modulePath];
+        const fresh = require('../runtime/service-process.cjs');
+        assert.deepEqual(fresh.processIdentity(other,'win32'),{state:'alive',processStart:ticks});
+        assert.deepEqual(await fresh.processIdentityAsync(other,'win32'),{state:'alive',processStart:ticks});
+        assert.deepEqual(queries,['powershell.exe','powershell.exe']);
+        killCode = 'ESRCH';
+        assert.deepEqual(fresh.processIdentity(other,'win32'),{state:'dead'});
+        assert.deepEqual(await fresh.processIdentityAsync(other,'win32'),{state:'dead'});
+        assert.equal(queries.length,2);
+      } finally {
+        process.kill = originalKill; childProcess.execFileSync = originalSync; childProcess.execFile = originalAsync;
+        delete require.cache[modulePath]; if (cached) require.cache[modulePath] = cached;
+      }
+    });
+    await test('lease held by a reused PID becomes stale only when its process started after the lease', async () => {
+      const serviceProcess = require('../runtime/service-process.cjs'), identity = serviceProcess.processIdentity;
+      const child = spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
+      cleanup.push(() => child.kill());
+      const directory = path.join(root,'lease-reuse'), store = new SessionStore(directory), lease = store.file('lease','reuse');
+      const ticksAt = ms => String(BigInt(Math.round(ms)) * 10000n + 621355968000000000n);
+      let queries = 0;                                                   // the reuse check caches per (pid, lease mtime): each case gets its own age
+      const writeLease = ageMs => {
+        fs.writeFileSync(lease,JSON.stringify({pid:child.pid,nonce:'synthetic'}));
+        const when = new Date(Date.now() - ageMs); fs.utimesSync(lease,when,when);
+      };
+      const startedAgo = (leaseAgeMs, afterLeaseMs) => () => { queries++; return {state:'alive',processStart:ticksAt(Date.now() - leaseAgeMs + afterLeaseMs)}; };
+      try {
+        writeLease(60000);
+        serviceProcess.processIdentity = startedAgo(60000,-60000);
+        assert.throws(() => store.acquire('reuse'),error => error.code === 'SESSION_BUSY'); // process older than the lease: owner is alive
+        writeLease(61000);
+        serviceProcess.processIdentity = () => { queries++; return {state:'unknown'}; };
+        assert.throws(() => store.acquire('reuse'));                     // unreadable identity keeps the old behaviour
+        writeLease(62000);
+        serviceProcess.processIdentity = startedAgo(62000,20000);
+        assert.throws(() => store.acquire('reuse'));                     // within the 30 s clock slack
+        writeLease(5000);
+        const young = queries;
+        serviceProcess.processIdentity = startedAgo(5000,1000);
+        assert.throws(() => store.acquire('reuse'));                     // young lease: no query at all
+        assert.equal(queries,young);
+        // Cache: identical (pid, mtime) is answered once, however many times the acquire loop retries.
+        writeLease(64000);
+        const cached = queries;
+        serviceProcess.processIdentity = startedAgo(64000,-1000);
+        for (let attempt = 0; attempt < 5; attempt++) assert.throws(() => store.acquire('reuse'));
+        assert.equal(queries,cached + 1);
+        // assertNoActiveTurns: a lease whose pid was reused is not an active turn; a genuine one is.
+        const turns = new SessionStore(path.join(root,'lease-turns')), turn = turns.file('lease','turn');
+        const writeTurn = ageMs => { fs.writeFileSync(turn,JSON.stringify({pid:child.pid,nonce:'synthetic'})); const when = new Date(Date.now() - ageMs); fs.utimesSync(turn,when,when); };
+        writeTurn(70000);
+        serviceProcess.processIdentity = startedAgo(70000,-5000);
+        assert.throws(() => turns.assertNoActiveTurns());
+        writeTurn(71000);
+        serviceProcess.processIdentity = startedAgo(71000,50000);
+        turns.assertNoActiveTurns();
+        writeLease(63000);
+        serviceProcess.processIdentity = startedAgo(63000,50000);
+        store.acquire('reuse')();                                        // started after the lease: reused PID, reaped
+      } finally { serviceProcess.processIdentity = identity; }
+    });
+    await test('dispose removes the descriptor before the pipe closes', async () => {
+      const disposeRoot = testRoot('dispose-order'), where = endpoint.locations({root:disposeRoot}), serverClose = net.Server.prototype.close;
+      const service = await endpoint.startService({root:disposeRoot,call:async () => ({})});
+      assert.equal(service.status,'owner'); await service.ready();
+      assert(fs.existsSync(where.descriptor));
+      let descriptorAtClose = null;
+      net.Server.prototype.close = function (...args) { descriptorAtClose = fs.existsSync(where.descriptor); return serverClose.apply(this,args); };
+      try { await service.dispose(); } finally { net.Server.prototype.close = serverClose; }
+      assert.equal(descriptorAtClose,false);
+      assert(!fs.existsSync(where.descriptor));
+    });
+    await test('service start failure leaves a safe diagnostic event', async () => {
+      const {reportStartFailure} = require('../runtime/service-main.cjs');
+      const failRoot = testRoot('start-failed');
+      reportStartFailure({root:failRoot},Object.assign(Error('C:\\Users\\private\\secret'),{code:'EPERM'}));
+      reportStartFailure({root:failRoot},Object.assign(Error('private text'),{code:'not a safe code!'}));
+      const log = fs.readFileSync(path.join(endpoint.locations({root:failRoot}).directory,'diagnostics','service-0.log'),'utf8');
+      const rows = log.trim().split('\n').map(line => JSON.parse(line));
+      assert.deepEqual(rows.map(row => [row.code,row.errorCode]),[['service_start_failed','EPERM'],['service_start_failed','Error']]);
+      assert(!/private|secret|Users/.test(log));
+    });
     await test('idle hook resets on busy, rearms on failure/decline and reports safe errors', async () => {
       let clients = 1, busy = false, time = 0, tick, cancelled = false, fires = 0;
       const errors = [];

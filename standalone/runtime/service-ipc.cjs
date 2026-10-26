@@ -164,7 +164,8 @@ function dial(address, options = {}) {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection(address);
     const timer = setTimeout(() => { socket.destroy(); reject(failure('connect_timeout')); }, options.connectTimeoutMs || 2000);
-    const failed = () => { clearTimeout(timer); reject(failure('service_unavailable')); };
+    // reason keeps the OS code so callers can tell a missing endpoint (ENOENT) from access denied.
+    const failed = error => { clearTimeout(timer); reject(Object.assign(failure('service_unavailable'), {reason:error?.code})); };
     socket.once('error', failed);
     socket.once('connect', () => { clearTimeout(timer); socket.removeListener('error', failed); resolve(new Peer(socket, options)); });
   });

@@ -32,7 +32,7 @@ function registerRoot(root,source,{timeoutMs=1500}={}){
   if(contains([source],target) || contains([target],source))throw failure('migration_conflict');
   const store=new SessionStore(root),deadline=Date.now()+timeoutMs;let release,attempt=0;
   while(!release){try{release=store.acquire('legacy-roots');}catch(error){
-    if(error.code && !['EPERM','EACCES','EBUSY'].includes(error.code))throw error;
+    if(error.code && !['EPERM','EACCES','EBUSY','SESSION_BUSY'].includes(error.code))throw error;
     if(Date.now()>=deadline)throw registryBusy();
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Math.min(jitter(attempt++),deadline-Date.now()));
   }}
@@ -211,7 +211,7 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
           if(missing){
             try{const release=store.acquire('legacy-roots');try{store.write('legacy','roots',{schemaVersion:1,roots:roots(store).filter(value=>value!==source)});}finally{release();}
               bridges.get(source)?.dispose();bridges.delete(source);leases.get(source)?.();leases.delete(source);publish(source,{state:'vanished'});continue;
-            }catch(drop){error=drop.code?drop:registryBusy();}
+            }catch(drop){error=drop.code&&drop.code!=='SESSION_BUSY'?drop:registryBusy();}
           }
           const attempt=(status(source).attempt || 0)+1;
           const busy=error.code==='legacy_owner_active',transient=['EPERM','EBUSY','EACCES','ENOENT','legacy_source_changed','legacy_registry_busy'].includes(error.code);

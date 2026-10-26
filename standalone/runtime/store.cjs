@@ -1,17 +1,39 @@
 const locale=require('../ui/i18n.js');
 // Shared by extension hosts on this machine. Each session has its own atomic record.
 const fs=require('node:fs'),path=require('node:path');const {randomUUID}=require('node:crypto');
-const unreadableGraceMs=60000,recordLockTimeoutMs=2000,recordLockMaxAgeMs=10000;
+const reuseSlackMs=30000,reuseMinAgeMs=10000,reuseCacheMax=64,unreadableGraceMs=60000,recordLockTimeoutMs=2000,recordLockMaxAgeMs=10000;
 const pause=new Int32Array(new SharedArrayBuffer(4));
 function lockValue(target){try{return JSON.parse(fs.readFileSync(target,'utf8'));}catch(error){if(error.code==='ENOENT'||error instanceof SyntaxError)return null;throw error;}}
 function staleLock(target,maxAgeMs){
  try{return staleCheck(target,maxAgeMs);}catch{return false;}
 }
+// A live-looking (or EPERM) pid whose process started after the lease was written belongs to someone else.
+// Unreadable creation time keeps the lease held. Leases younger than reuseMinAgeMs skip the (slow) query.
+// The slack tolerates clock skew between the lease writer and the process start clock. A contended acquire
+// loop must not spawn a query per retry, so results are cached per (pid, lease mtime). Only "reused" is final:
+// a live owner can die and its pid be reused later, and an unreadable start time can be transient, so those
+// results expire after reuseRecheckMs.
+const reuseStarts=new Map(),reuseRecheckMs=30000;
+function reusedPid(pid,target){
+ if(pid===process.pid)return false;
+ try{
+  const mtime=fs.statSync(target).mtimeMs;
+  if(Date.now()-mtime<reuseMinAgeMs)return false;
+  const key=pid+':'+mtime,cached=reuseStarts.get(key);
+  if(cached&&(cached.reused||Date.now()-cached.at<reuseRecheckMs))return cached.reused;
+  const service=require('./service-process.cjs'),started=service.startedAtMs(service.processIdentity(pid));
+  const reused=started!==null&&started>mtime+reuseSlackMs;
+  reuseStarts.delete(key);
+  if(reuseStarts.size>=reuseCacheMax)reuseStarts.delete(reuseStarts.keys().next().value);
+  reuseStarts.set(key,{reused,at:Date.now()});
+  return reused;
+ }catch{return false;}
+}
 function staleCheck(target,maxAgeMs){
  // Record locks live for milliseconds, so an old one is stale even if its pid was reused or its owner hung.
  if(maxAgeMs){try{if(Date.now()-fs.statSync(target).mtimeMs>maxAgeMs)return true;}catch(error){if(error.code==='ENOENT')return false;throw error;}}
  const owner=lockValue(target);
- if(Number.isSafeInteger(owner?.pid)&&owner.pid>0){try{process.kill(owner.pid,0);return false;}catch(error){return error.code==='ESRCH';}}
+ if(Number.isSafeInteger(owner?.pid)&&owner.pid>0){try{process.kill(owner.pid,0);}catch(error){if(error.code==='ESRCH')return true;}return reusedPid(owner.pid,target);}
  try{return Date.now()-fs.statSync(target).mtimeMs>unreadableGraceMs;}catch(error){if(error.code==='ENOENT')return false;throw error;}
 }
 function reapGuard(target){
@@ -92,11 +114,12 @@ class SessionStore {
  updateMeta(id,change){return withRecordLock(this.file('record-meta',id),()=>this.write('meta',id,{...this.meta(id),...change}));}
  host(key){return this.read('host',key);}
  saveHost(host){return this.write('host',host.hostKey,host);}
- acquire(id){const release=tryLock(this.file('lease',id));if(release)return release;throw Error(locale.t('Эта сессия уже выполняет задачу в другом окне. Дождитесь завершения или создайте ветку.'));}
+ acquire(id){const release=tryLock(this.file('lease',id));if(release)return release;throw Object.assign(Error(locale.t('Эта сессия уже выполняет задачу в другом окне. Дождитесь завершения или создайте ветку.')),{code:'SESSION_BUSY'});}
  assertNoActiveTurns(){
   for(const name of fs.readdirSync(this.directory).filter(name=>/^lease-.*\.json$/.test(name)&&name!=='lease-account-credentials.json'&&name!=='lease-mcp-bridge.json'&&!name.startsWith('lease-directory-')&&!name.startsWith('lease-queued-session-'))){
    const lease=this.read('lease',name.slice(6,-5));if(!lease?.pid)continue;
    let alive=true;try{process.kill(lease.pid,0);}catch(error){alive=error.code!=='ESRCH';}
+   if(alive&&reusedPid(lease.pid,this.file('lease',name.slice(6,-5))))alive=false;
    if(alive)throw Error(locale.t('Дождитесь завершения задач во всех окнах Rundix перед сменой аккаунта.'));
   }
  }

@@ -162,14 +162,21 @@ async function startService(options = {}) {
       stopping = true;
       // A failed guard acquisition leaves disposal retryable. Keep close under the guard:
       // Node unlinks Unix sockets on server.close, so a new listener must not race it.
+      // The descriptor goes first so "descriptor present + pipe missing" (probeOwner: dead) never
+      // describes a live, stopping owner. Both steps hold the startup guard, so no second service
+      // can bind or publish between them; a client without a descriptor just waits or spawns.
       disposal = guarded(store, async () => {
+        // A failed unpublish (corrupt descriptor, persistent EPERM) must not keep a stopping service bound to
+        // its pipe forever. Close anyway: a stale descriptor without a pipe is ENOENT → dead and is replaced.
+        try {
+          await retryFs(() => {
+            if (readDiscovery(where)?.generation === descriptor.generation) fs.unlinkSync(where.descriptor);
+          });
+        } catch {}
         if (!closed) {
           for (const peer of peers) peer.close();
           await new Promise(resolve => server.close(resolve)); closed = true;
         }
-        await retryFs(() => {
-          if (readDiscovery(where)?.generation === descriptor.generation) fs.unlinkSync(where.descriptor);
-        });
       }).catch(error => {
         if (!closed) stopping = false;
         disposal = null; throw error;
@@ -206,8 +213,11 @@ async function probeOwner(options = {}) {
     peer = await ipc.dial(where.address,{connectTimeoutMs:options.pingTimeoutMs || 2000});
     const ping = await peer.request('service.ping',{},options.pingTimeoutMs || 5000);
     return {state:ping.generation === descriptor.generation ? 'responding' : 'unverified',generation:descriptor.generation};
-  } catch {
-    const state = await stateOf(descriptor,options.inspectProcess);
+  } catch (error) {
+    let state = await stateOf(descriptor,options.inspectProcess);
+    // A live service always holds its pipe/socket. A missing one proves the owner is gone even when the
+    // PID is held by an unreadable process; access denied proves nothing and keeps the singleton.
+    if (state === 'unverified' && error?.reason === 'ENOENT') state = 'dead';
     return {state:state === 'alive' ? 'hung' : state, generation:descriptor.generation};
   } finally { peer?.close(); }
 }

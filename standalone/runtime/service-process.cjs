@@ -9,16 +9,22 @@ function present(pid) {
   try { process.kill(pid, 0); return 'alive'; }
   catch (error) { return error.code === 'ESRCH' ? 'dead' : 'unknown'; }
 }
+// Get-Process cannot read StartTime of protected/system/other-user processes; Win32_Process
+// CreationDate (CIM) is readable for all of them. pid is a checked integer, never shell text.
+function windowsStartScript(pid) {
+  return `$ErrorActionPreference='Stop';$t=$null;try{$t=(Get-Process -Id ${pid}).StartTime}catch{};` +
+    `if(-not $t){$t=(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CreationDate};$t.ToUniversalTime().Ticks`;
+}
 function query(pid, platform) {
   return platform === 'win32'
-    ? ['powershell.exe', ['-NoProfile','-NonInteractive','-Command', `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`], options]
+    ? ['powershell.exe', ['-NoProfile','-NonInteractive','-Command', windowsStartScript(pid)], options]
     : ['/bin/ps', ['-p',String(pid),'-o','lstart='], {...options, env:{...process.env, LC_ALL:'C', TZ:'UTC'}}];
 }
 // No auth files, shell expansion, or process command lines are read here.
 function processIdentity(pid, platform = process.platform) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return {state:'unknown'};
   const state = present(pid);
-  if (state !== 'alive') return {state};
+  if (state === 'dead') return {state}; // EPERM (unknown) still gets a start-time query: protected PIDs are the reuse case
   if (pid === process.pid && platform === process.platform && selfIdentity) return selfIdentity;
   try {
     let processStart;
@@ -41,7 +47,7 @@ function processIdentity(pid, platform = process.platform) {
 async function processIdentityAsync(pid, platform = process.platform) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return {state:'unknown'};
   const state = present(pid);
-  if (state !== 'alive') return {state};
+  if (state === 'dead') return {state}; // EPERM (unknown) still gets a start-time query: protected PIDs are the reuse case
   if (pid === process.pid && platform === process.platform && selfIdentity) return selfIdentity;
   if (platform === 'linux') return processIdentity(pid,platform);
   try {
@@ -52,12 +58,25 @@ async function processIdentityAsync(pid, platform = process.platform) {
     return result;
   } catch { return {state:'unknown'}; }
 }
+// Windows start times are .NET ticks; the CIM fallback differs from Get-Process by sub-millisecond rounding.
+const ticksPattern = /^[0-9]{15,19}$/;
+function sameStart(a, b) {
+  if (a === b) return true;
+  if (!ticksPattern.test(a) || !ticksPattern.test(b)) return false;
+  const gap = BigInt(a) - BigInt(b);
+  return (gap < 0n ? -gap : gap) <= 100000n;
+}
+// Process creation time in epoch ms when the identity carries Windows ticks; otherwise null.
+function startedAtMs(identity) {
+  if (identity?.state !== 'alive' || !ticksPattern.test(identity.processStart || '')) return null;
+  return Number((BigInt(identity.processStart) - 621355968000000000n) / 10000n);
+}
 function ownerState(descriptor, inspect = processIdentity) {
   if (!descriptor) return 'unknown';
   const current = inspect(descriptor.pid);
   if (current.state === 'dead') return 'dead';
   if (current.state !== 'alive' || !current.processStart || !descriptor.processStart) return 'unverified';
-  if (current.processStart !== descriptor.processStart) return 'dead';
+  if (!sameStart(current.processStart, descriptor.processStart)) return 'dead';
   return 'alive';
 }
-module.exports = {processIdentity, processIdentityAsync, ownerState};
+module.exports = {processIdentity, processIdentityAsync, ownerState, startedAtMs, windowsStartScript};

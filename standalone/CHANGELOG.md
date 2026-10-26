@@ -1,5 +1,9 @@
 # Changelog / История изменений
 
+## 0.4.13 — 2026-10-26
+
+- The headless service recovers on its own when Windows reuses a dead service's PID for another process (for example `svchost`). Previously the owner stayed "unverified": no new service was started, MCP `tools/list` timed out ("tools fetch failed"), and a stale `mcp-bridge` lease made every new service exit silently. The start time is now read via CIM when `Get-Process` cannot read it, a missing pipe with an unverifiable owner counts as dead (access denied still blocks, keeping the singleton), leases whose PID belongs to a process started after the lease was written are reaped (also when switching accounts), the descriptor is removed before the pipe closes, and a failed start is logged as `service_start_failed` with a safe error code. See `docs/service-ipc.md`.
+
 ## 0.4.12 — 2026-10-26
 
 - When a chat turn ends with the typed usage-limit error, the connection companion is told once which account was exhausted, so the next preparation switches even if the quota snapshot still looks sufficient. A companion that declares `recoversUsageLimit()` gets an automatic same-thread continuation once the switch is possible (one chat at a time, at most two in a row; the original input is never replayed; no modal dialogs). Overload and limit continuations no longer reset each other's budgets. The chat shows the pause and can cancel it. Automatic continuation is chat-only: local sign-in, window MCP tasks and the headless service are not auto-continued, although the next send of any window task still reports the limit to the companion.

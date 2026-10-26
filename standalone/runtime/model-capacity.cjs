@@ -28,7 +28,7 @@ function createCapacityRecovery(deps) {
   }
   function beforeSend(s,options) {
     if(options.capacityRecovery)assertCurrent(s,options.capacityRecovery);
-    else {cancel(s);records.delete(s);}
+    else if(!options.limitRecovery) {cancel(s);records.delete(s);}
   }
   function completed(s,message) {
     const turn=message.params?.turn;

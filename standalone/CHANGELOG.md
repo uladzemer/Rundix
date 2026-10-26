@@ -1,5 +1,9 @@
 # Changelog / История изменений
 
+## 0.4.12 — 2026-10-26
+
+- When a chat turn ends with the typed usage-limit error, the connection companion is told once which account was exhausted, so the next preparation switches even if the quota snapshot still looks sufficient. A companion that declares `recoversUsageLimit()` gets an automatic same-thread continuation once the switch is possible (one chat at a time, at most two in a row; the original input is never replayed; no modal dialogs). Overload and limit continuations no longer reset each other's budgets. The chat shows the pause and can cancel it. Automatic continuation is chat-only: local sign-in, window MCP tasks and the headless service are not auto-continued, although the next send of any window task still reports the limit to the companion.
+
 ## 0.4.11 — 2026-10-23
 
 - Completed CLI turns now produce a bounded diagnostic record that distinguishes typed model overload, authorization and transport failures and whether the visible account or client changed since the previous dispatch. Account/model aliases are process-local numbers; no chat text, account names, tokens, thread IDs or paths are logged. Diagnostics do not change account selection or retry behavior. See `docs/turn-diagnostics.md` for interpretation and limits.

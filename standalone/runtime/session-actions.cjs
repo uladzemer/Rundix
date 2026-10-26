@@ -1,6 +1,7 @@
 // Plain session actions shared by editor input and MCP execution.
 async function stop(deps, s) {
   deps.capacityRecovery?.cancel(s);
+  deps.limitRecovery?.cancel(s);
   s.stopRequested=true;
   if(s.id && s.turnId)await deps.server.request("turn/interrupt",{threadId:s.id,turnId:s.turnId});
 }

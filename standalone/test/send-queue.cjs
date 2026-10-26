@@ -449,7 +449,158 @@ async function capacityChecks() {
   }
 }
 
+async function limitChecks() {
+  const {createLimitRecovery,DELAY_MS,MAX_CONTINUATIONS}=require('../runtime/limit-recovery.cjs');
+  const {CONTINUE}=require('../runtime/model-capacity.cjs');
+  const limitError={message:'Synthetic usage limit',codexErrorInfo:'usageLimitExceeded'};
+  function setup({recovers=true}={}) {
+    const f=fixture();f.prepared=[];
+    f.context.account={type:'chatgpt',email:'synthetic-first@example.test'};
+    f.context.providerClient=()=>({});
+    f.context.activeConnection={id:'synthetic-companion',provider:{
+      authenticate:async()=>{},
+      recoversUsageLimit:()=>recovers,
+      prepareTurn:async args=>{f.prepared.push(args);return f.decision?.(args) ?? null;},
+      waitForReset:async()=>{f.waited=(f.waited || 0)+1;return true;},
+    }};
+    f.context.limitRecovery=createLimitRecovery(f.context);
+    f.s.lastStartedTurnId='synthetic-original';
+    f.fail=(id='synthetic-original',error=limitError)=>
+      f.server.emit('notification',{method:'turn/completed',params:{threadId:f.s.id,turn:{id,status:'failed',error}}});
+    f.start(async()=>{
+      const id='synthetic-limit-'+f.calls.filter(c=>c.method==='turn/start').length;
+      f.emit('turn/started',id,'inProgress');return {turn:{id}};
+    });
+    f.starts=()=>f.calls.filter(c=>c.method==='turn/start');
+    return f;
+  }
+  {
+    const f=setup();f.s.draft='Synthetic newer draft';
+    f.decision=()=>{f.context.account={type:'chatgpt',email:'synthetic-second@example.test'};return {reconnected:true};};
+    f.fail();f.fail();assert.equal(f.timers.size,1,'Duplicate failure schedules once');
+    assert.equal(f.s.limitRetry.attempt,1);assert.equal(f.s.limitRetry.max,MAX_CONTINUATIONS);
+    await f.advance(DELAY_MS-1);assert.equal(f.starts().length,0);
+    await f.advance(1);f.assertOwned();
+    assert.equal(f.prepared[0].usageLimitReached,true,'Companion learns which account hit the limit');
+    assert.equal(f.prepared[0].automatic,true,'Companion knows nobody is waiting for a dialog');
+    assert.deepEqual(f.starts()[0].params.input,[{type:'text',text:CONTINUE}]);
+    assert.equal(f.starts()[0].params.threadId,'synthetic-thread','Same thread continues after an account change');
+    assert.equal(f.s.draft,'Synthetic newer draft');assert.equal(f.s.limitRetry,null);
+    for(let attempt=2;attempt<=MAX_CONTINUATIONS;attempt++){
+      f.fail(f.s.lastStartedTurnId);f.assertReleased();await f.advance(DELAY_MS);
+      assert.equal(f.starts().length,attempt);
+    }
+    f.fail(f.s.lastStartedTurnId);await f.advance(1000000);
+    assert.equal(f.starts().length,MAX_CONTINUATIONS,'Consecutive limit failures stop automatic continuation');
+    assert.equal(f.s.limitRetry,null);
+  }
+  {
+    const f=setup();f.fail();await f.advance(DELAY_MS);
+    f.emit('turn/completed',f.s.lastStartedTurnId);f.assertReleased();
+    f.emit('turn/started','synthetic-next-task','inProgress');f.fail('synthetic-next-task');
+    assert.equal(f.s.limitRetry.attempt,1,'A successful turn resets the budget');
+  }
+  {
+    const f=setup({recovers:false});f.fail();assert.equal(f.timers.size,0,'No continuation without a companion that can switch');
+    await f.context.send(f.s,'Synthetic manual input',[]);
+    assert.equal(f.prepared[0].usageLimitReached,true,'Manual send still reports the limit once');
+    f.emit('turn/completed',f.s.lastStartedTurnId);
+    await f.context.send(f.s,'Synthetic second input',[]);
+    assert.equal(f.prepared[1].usageLimitReached,undefined,'Evidence is consumed once');
+  }
+  {
+    const f=setup({recovers:false});f.fail();
+    f.context.account={type:'chatgpt',email:'synthetic-second@example.test'};
+    await f.context.send(f.s,'Synthetic manual input',[]);
+    assert.equal(f.prepared[0].usageLimitReached,undefined,'Evidence never moves to a different account');
+  }
+  for(const [reason,mutate] of [['expired',f=>{f.fail();return f.advance(1800000);}],
+    ['CLI replaced',f=>{f.context.server={};f.fail();f.context.server=f.server;}],
+    ['later success',f=>{f.fail();f.emit('turn/started','synthetic-other-turn','inProgress');f.s.turnStartedAt=1;f.emit('turn/completed','synthetic-other-turn');}]]) {
+    const f=setup({recovers:false});await mutate(f);
+    await f.context.send(f.s,'Synthetic manual input',[]);
+    assert.equal(f.prepared[0].usageLimitReached,undefined,'Stale evidence is not reported: '+reason);
+  }
+  {
+    const f=setup();f.fail(undefined,{message:'Synthetic overload',codexErrorInfo:'serverOverloaded'});
+    f.fail(undefined,{message:'Usage limit text without a typed code'});
+    assert.equal(f.timers.size,0,'Only the typed usage-limit code arms recovery');
+  }
+  for(const key of ['mcpTask','preflight','stopRequested']) {
+    const f=setup();f.s[key]=key==='preflight'?{enabled:true}:true;f.fail();assert.equal(f.timers.size,0);
+  }
+  {
+    const f=setup();f.context.activeConnection.provider.recoversUsageLimit=()=>{throw Error('Synthetic companion failure');};
+    f.fail();assert.equal(f.timers.size,0);assert.equal(f.s.busy,false);
+  }
+  {
+    // A parallel task that was already running succeeds; that does not disprove the limit.
+    const f=setup({recovers:false}),other={key:'synthetic-other-session',id:'synthetic-other-thread',busy:true,turnId:'synthetic-other-turn',
+      turnStartedAt:-1,prefs:{},items:[],followUps:[],attachments:[]};
+    f.context.sessions.set(other.key,other);f.fail();
+    f.context.limitRecovery.completed(other,{method:'turn/completed',params:{turn:{id:'synthetic-other-turn',status:'completed'}}});
+    await f.context.send(f.s,'Synthetic manual input',[]);
+    assert.equal(f.prepared[0].usageLimitReached,true);
+  }
+  {
+    // Alternating overload and limit failures share no reset: both budgets stay bounded.
+    const f=setup();f.context.capacityRecovery=require('../runtime/model-capacity.cjs').createCapacityRecovery(f.context);
+    const overload={message:'Synthetic overload',codexErrorInfo:'serverOverloaded'};
+    for(let round=0;round<6;round++){f.fail(f.s.lastStartedTurnId,round%2?overload:limitError);await f.advance(300000);}
+    assert.ok(f.starts().length<=MAX_CONTINUATIONS+3,'Automatic continuations stop');
+  }
+  for(const mutate of [f=>f.context.limitRecovery.cancel(f.s),f=>{f.context.activeConnection={...f.context.activeConnection,id:'synthetic-other'};},
+    f=>{f.s.id='synthetic-other';},f=>{f.s.model='synthetic-other';},f=>{f.context.sessions.delete(f.s.key);},
+    f=>{f.s.lastStartedTurnId='synthetic-newer';},f=>{f.s.panel=null;}]) {
+    const f=setup();f.fail();mutate(f);await f.advance(DELAY_MS);
+    assert.equal(f.starts().length,0,'Changed ownership cancels continuation');
+  }
+  {
+    const f=setup();f.fail();await f.context.send(f.s,'Synthetic manual input',[]);
+    await f.advance(1000000);assert.equal(f.starts().length,1,'Manual send replaces the pending continuation');
+    assert.deepEqual(f.starts()[0].params.input,[{type:'text',text:'Synthetic manual input'}]);
+  }
+  {
+    // Parallel tasks hit the same limit: switch only after every task is idle.
+    const f=setup(),other={key:'synthetic-other-session',sendingTask:true,prefs:{}};
+    f.context.sessions.set(other.key,other);f.fail();
+    await f.advance(DELAY_MS*3);assert.equal(f.starts().length,0);assert.equal(f.prepared.length,0);
+    other.sendingTask=false;await f.advance(DELAY_MS);assert.equal(f.starts().length,1);
+  }
+  {
+    // A running task refuses the account change itself; the continuation retries until it ends.
+    const f=setup(),other={key:'synthetic-other-session',busy:true,prefs:{}};
+    f.context.sessions.set(other.key,other);
+    f.decision=()=>{if(other.busy)throw Object.assign(Error('Synthetic active task'),{retryable:true});return null;};
+    f.fail();await f.advance(DELAY_MS*3);assert.equal(f.starts().length,0);
+    other.busy=false;await f.advance(60000);assert.equal(f.starts().length,1);
+  }
+  {
+    let refusals=2;
+    const f=setup();f.decision=()=>{if(refusals-->0)throw Object.assign(Error('Synthetic busy connection'),{retryable:true});return null;};
+    f.fail();await f.advance(DELAY_MS);assert.equal(f.starts().length,0);
+    assert.equal(f.s.limitRetry.attempt,1,'A refused preparation keeps waiting visibly');
+    await f.advance(DELAY_MS*3);assert.equal(f.starts().length,1);
+    assert.equal(f.prepared.filter(row=>row.usageLimitReached).length,1,'The limit is reported once across retries');
+  }
+  {
+    const f=setup();let waits=1;f.decision=()=>waits-->0?{waitUntil:1}:null;
+    f.fail();await f.advance(DELAY_MS);
+    assert.equal(f.waited,1);assert.equal(f.starts().length,1,'A chosen reset wait continues afterwards');
+  }
+  {
+    const f=setup();f.decision=()=>{throw Error('Synthetic cancelled choice');};
+    f.fail();await f.advance(DELAY_MS);await f.advance(1000000);
+    assert.equal(f.starts().length,0);assert.equal(f.s.error,'Synthetic cancelled choice');assert.equal(f.s.limitRetry,null);
+  }
+  {
+    const f=setup();f.fail();f.start(async()=>{throw uncertain();});await f.advance(DELAY_MS);await f.advance(1000000);
+    assert.equal(f.starts().length,1,'Ambiguous continuation never replays');
+  }
+}
+
 (async () => {
+  await limitChecks();
   {
     const f=fixture(),rows=[];
     f.context.account={type:'chatgpt',email:'synthetic@example.test'};

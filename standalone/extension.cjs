@@ -592,6 +592,7 @@ function activate(context) {
           usageStale: !!s.usageStale,
           error: s.error || null,
           capacityRetry:s.capacityRetry || null,
+          limitRetry:s.limitRetry || null,
           retrying:s.retrying===true,
           prefs: s.prefs,
           defaults: library.defaults,

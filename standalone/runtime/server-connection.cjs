@@ -182,6 +182,7 @@ function notifySessions(deps, message) {
             deps.turnLeases.delete(s.id);
             s.lastTurnStatus=message.params.turn.status;
             deps.capacityRecovery?.completed(s,message);
+            deps.limitRecovery?.completed(s,message);
             void deps.save(s);
             void deps.applyPendingMode(s).catch(error=>{s.error=error.message;deps.publish(s);});
             if(s.lastTurnStatus==='completed' && !s.stopRequested)void deps.drainFollowUps(s).catch(error=>{s.error=error.message;deps.publish(s);});

@@ -78,6 +78,7 @@ function createSessionCore(host) {
   Object.assign(deps, { pendingLogin, browserSignInMessage });
   const { connect, save } = operations;
   deps.capacityRecovery=require('./model-capacity.cjs').createCapacityRecovery(deps);
+  deps.limitRecovery=require('./limit-recovery.cjs').createLimitRecovery(deps);
   deps.turnDiagnostics=require('./turn-diagnostics.cjs').createTurnDiagnostics({now:()=>clock.now(),
     write:value=>host.turnDiagnostic?host.turnDiagnostic(value):host.logger('[turn diagnostic] '+JSON.stringify(value))});
   let nextDraft = 1;

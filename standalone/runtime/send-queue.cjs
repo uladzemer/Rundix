@@ -1,6 +1,7 @@
 // Host state is supplied explicitly; mutable values are read through deps.
 async function send(deps, s, text, attached=s.attachments, options={}) {
   deps.capacityRecovery?.beforeSend(s,options);
+  deps.limitRecovery?.beforeSend(s,options);
   const composerDraft=require('./composer-draft.cjs'),draft=composerDraft.snapshot(s);
   // retryable marks failures that happen before anything is sent and clear up by themselves; MCP tasks wait and retry.
   if (deps.authBusy) throw Object.assign(Error(deps.pendingLogin.current ? deps.browserSignInMessage() : deps.locale.t('Дождитесь переключения аккаунта.')),{notSent:true,retryable:true});
@@ -51,6 +52,8 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
     };
     const decision = await connection.provider.prepareTurn({
       limits: {...deps.limits},
+      ...(deps.limitRecovery?.takeEvidence(connection) ? {usageLimitReached:true} : {}),
+      ...(options.limitRecovery ? {automatic:true} : {}),
       assertCanChange,
       reconnect: async () => {
         assertCanChange();
@@ -185,6 +188,7 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
   deps.publish(s);
   try {
     if(options.capacityRecovery)deps.capacityRecovery.beforeSend(s,options);
+    if(options.limitRecovery)deps.limitRecovery.beforeSend(s,options);
     turnRequested=true;
     startParams = {
       threadId: s.id,

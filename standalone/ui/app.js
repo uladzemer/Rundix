@@ -2131,8 +2131,12 @@ function render() {
   if (state.error) {
     const error = el("div", state.error, "error");
     if(state.capacityRetry)error.append(el('p',WorkbenchI18n.t('Модель перегружена. Пауза перед автопродолжением: {0} с. Попытка {1}/3. Контекст и черновик сохранены.',state.capacityRetry.delaySeconds,state.capacityRetry.attempt)));
-    const retry = el("button", WorkbenchI18n.t(state.capacityRetry?'Отменить автопродолжение':"Переподключиться"));
-    retry.onclick = () => send(state.capacityRetry?'stop':"retry");
+    if(state.limitRetry)error.append(el('p',state.limitRetry.delaySeconds>0?
+      WorkbenchI18n.t('Лимит аккаунта исчерпан. Через {0} с подключение выберет другой аккаунт и продолжит задачу. Попытка {1}/{2}. Контекст и черновик сохранены.',state.limitRetry.delaySeconds,state.limitRetry.attempt,state.limitRetry.max):
+      WorkbenchI18n.t('Лимит аккаунта исчерпан. Подключение выбирает другой аккаунт, чтобы продолжить задачу. Попытка {0}/{1}. Контекст и черновик сохранены.',state.limitRetry.attempt,state.limitRetry.max)));
+    const pending=state.capacityRetry || state.limitRetry;
+    const retry = el("button", WorkbenchI18n.t(pending?'Отменить автопродолжение':"Переподключиться"));
+    retry.onclick = () => send(pending?'stop':"retry");
     error.append(retry);
     alerts.append(error);
   }

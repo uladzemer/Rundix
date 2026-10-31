@@ -8,7 +8,7 @@
   "По лимиту": "By limit",
   "По имени": "By name",
   "Подключение": "Connection",
-  "Подключить рабочий пул": "Connect working account pool",
+  "Подключить companion": "Connect companion connection",
   "Управление MCP для Claude Code": "MCP controls for Claude Code",
   "Мост запущен": "Bridge running",
   "Мост остановлен": "Bridge stopped",

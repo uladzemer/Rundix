@@ -11,7 +11,7 @@ Select and configure your installed companion connection in Rundix first. The pu
 ## Connect
 
 1. Open and trust the project in VS Code. Click the visible **MCP** button at the top of any Rundix chat. It opens the **Rundix · MCP** editor tab; no command palette is needed. The sidebar **Rundix → MCP tasks** remains available too.
-2. In the MCP tab click **Connect pool**, then **Start MCP** and **Claude configuration**.
+2. In the MCP tab click **Connect companion**, then **Start MCP** and **Claude configuration**.
 3. The configuration appears directly in that tab. Click **Copy configuration** to copy the `mcpServers` JSON into your Claude MCP configuration. If `rundix` is already registered in Claude Code, copying it again is unnecessary. For CLI setup, the same server script and bridge descriptor paths can be used in:
 
    ```powershell
@@ -28,9 +28,9 @@ In default window mode, only one Extension Host per extension storage/profile ow
 
 The **MCP** button in the chat shows a green dot while this Extension Host's bridge is running. Opening it preserves the current chat draft and does not switch the connection or start the bridge. The editor tab and sidebar share the same task service. Existing command-palette commands remain available for compatibility, but the normal controls and configuration copy are all in the UI.
 
-## Working pool and task panel
+## Companion connection and task panel
 
-**Connect pool** uses the existing selected companion. When local sign-in is selected, this explicit action activates installed extensions declaring a dependency on Rundix. It configures the sole registered companion, or asks you to choose when several are available. Registration and merely opening the panel never switch connections. If the companion needs interactive setup, complete its own prompt. No separate MCP pool or token import is created.
+**Connect companion** uses the existing selected companion. When local sign-in is selected, this explicit action activates installed extensions declaring a dependency on Rundix. It configures the sole registered companion, or asks you to choose when several are available. Registration and merely opening the panel never switch connections. If the companion needs interactive setup, complete its own prompt. No separate MCP pool or token import is created.
 
 The connection indicator is based on the existing CLI account/limit reads through the selected provider; it does not claim that a model request has passed. Every actual task still calls the companion's normal authorization and server limit preparation. Missing companions and local sign-in remain blocked for MCP submissions.
 

@@ -38,7 +38,7 @@
   "command.notifications": "Rundix: Уведомления и хуки",
   "view.mcpTasks": "Задачи MCP",
   "command.mcpPanel": "Rundix: Открыть задачи MCP",
-  "command.mcpConnectPool": "Rundix: Подключить MCP к пулу аккаунтов",
+  "command.mcpConnectPool": "Rundix: Подключить MCP к companion-подключению",
   "command.mcpStart": "Rundix: Запустить мост MCP и показать конфигурацию Claude",
   "command.mcpStop": "Rundix: Остановить мост MCP"
 }

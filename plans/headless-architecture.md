@@ -2,7 +2,7 @@
 
 > Исторический проектный документ от 20 октября 2026 года. Состояние реализации и результаты текущих проверок следует сверять с исходниками, CHANGELOG и документацией в standalone/docs; предложения ниже не означают уже работающие возможности.
 
-Исследование 2026-10-20: четыре read-only задачи Codex через Rundix MCP (Claude Code 2.1.296, Codex CLI 0.159.2 / upstream 0.163, Rundix HEAD 8228cb5, Extended HEAD 7b3b69e). Отмечено: **факт** (проверено опытом/кодом/доками) или **предложение**.
+Исследование 2026-10-20: четыре read-only задачи Codex через Rundix MCP (Claude Code 2.1.296, Codex CLI 0.159.2 / upstream 0.163, Rundix HEAD 8228cb5). Отмечено: **факт** (проверено опытом/кодом/доками) или **предложение**.
 
 ## 1. Как stdio MCP-сервер узнаёт свой проект
 
@@ -44,18 +44,15 @@
 
 Предложение: `createSessionCore(host)` с узким интерфейсом (paths, settings, KV, secrets, trust, события changed/sent/notify, openChat/closeChat, logger, clock). 8 шагов, каждый с зелёными тестами (~1.8–3k строк переноса суммарно, крупнейшие — connection/server lifecycle и send/queue). **Сервис — единственный владелец задач и исполнения; окно — клиент** (подписка на события/снимки), а не второй исполнитель над теми же JSON.
 
-## 4. Пул (приватный Extended) вне VS Code
+## 4. Companion-подключение вне VS Code
 
 Факты:
-- Пул живёт в **облачном broker** Extended (Cloudflare Worker + контейнер; refresh-токены зашифрованы там). Companion хранит в VS Code SecretStorage только маленькую запись (URL broker, device credential, выбранный аккаунт) и получает короткоживущие access-токены.
-- Ротация (pre-turn, порог ≤10 %, перебор кандидатов с проверкой лимитов) — в companion `provider.cjs` + приватные модули; CLI-владение, leases и лимиты — в публичном extension.cjs.
 - Connection API v1 — функции внутри Extension Host; через процессы не переносится.
-- SecretStorage недоступен вне VS Code; `keytar` архивирован (2022). `@napi-rs/keyring` 2.1.2 (живой, бинарники Win/macOS x64/ARM64) — Credential Manager / Keychain. Лимит Credential Manager 2560 байт — запись broker укладывается.
+- SecretStorage недоступен вне VS Code; `keytar` архивирован (2022). `@napi-rs/keyring` 2.1.2 (живой, бинарники Win/macOS x64/ARM64) — Credential Manager / Keychain.
 
 Предложение:
-- Публичный сервис ↔ **приватный provider-процесс** (дочерний, framed RPC по stdio, путь — из пользовательского конфига, не из workspace) ↔ broker. Контракт «provider v2 (service)»: `authenticate`, `handleRequest(refresh)`, `prepareTurn` → `ready | waitUntil | needsDecision | unavailable`, `cancelWait`, `dispose`; каждый вызов несёт generation/lease/revision. Нет provider → MCP-задачи не стартуют (fail closed, как сейчас).
-- Секрет broker — в ОС через `@napi-rs/keyring` внутри приватного provider; однократная миграция из SecretStorage делает companion (у него есть доступ), без файлов-экспортов.
-- Ротация и лимиты — общие для всех spaces.
+- Публичный сервис ↔ **внешний provider-процесс companion** (дочерний, framed RPC по stdio, путь — из пользовательского конфига, не из workspace). Контракт «provider v2 (service)»: `authenticate`, `handleRequest(refresh)`, `prepareTurn` → `ready | waitUntil | needsDecision | unavailable`, `cancelWait`, `dispose`; каждый вызов несёт generation/lease/revision. Нет provider → MCP-задачи не стартуют (fail closed, как сейчас).
+- Хранение секретов и выбор аккаунта — целиком на стороне companion; публичный сервис и репозиторий их не содержат.
 
 ## 5. Процесс сервиса
 
@@ -72,7 +69,7 @@
 ```
 Claude (проект A) ─stdio─ mcp-adapter ─┐            ┌─ app-server (аккаунт N)
 Claude (проект B) ─stdio─ mcp-adapter ─┼─ pipe ─ rundix-service ─┤
-VS Code окно A ───────── клиент space A┘   spaces A,B │           └─ provider (private) ─ broker
+VS Code окно A ───────── клиент space A┘   spaces A,B │           └─ provider (companion)
 VS Code окно B ───────── клиент space B               └─ store: sessions, mcp/tasks per space
 ```
 - Хранилище сервиса: `<userData>/rundix-service/` (вне VS Code storage), задачи с полем `space`; миграция существующих `mcp/tasks` → space по `projectDirectory`.
@@ -80,7 +77,7 @@ VS Code окно B ───────── клиент space B             
 
 ## 7. Главные риски
 1. Ядро сейчас вплетено в панели — перенос большой, нужен поэтапный.
-2. Новый контракт provider v2 и миграция секрета — затрагивает приватный Extended и broker-креды.
+2. Новый контракт provider v2 и миграция секрета — затрагивает companion и его секреты.
 3. Неоднозначные отправки при падении сервиса — сохранить текущие гарантии (не повторять).
 4. EnterWorktree/clear/resume в Claude не переподключают MCP — привязка по `CLAUDE_PROJECT_DIR` git-корня это переживает (worktree внутри репо).
 5. Windows: хвосты helper-процессов Codex, скрытая консоль, права на pipe.
@@ -94,5 +91,5 @@ VS Code окно B ───────── клиент space B             
 
 ## 9. Детальные дизайны (2026-10-20, 3 раунда ревью: Gemini 3.8 Flash + Claude Sonnet)
 - Публичный протокол сервиса: `plans/headless-protocol.md`.
-- Дизайн приватного провайдера хранится отдельно в `plans/headless-provider.md` приватного репозитория Extended и не входит в публичный проект.
-- Упрощения этапа 1: чистый Node (фиксированный pipe/socket, EADDRINUSE как singleton), idle-exit только без незавершённых задач, один app-server и один активный аккаунт пула (ротация только в простое), companion зеркалит запись broker в хранилище ОС (без миграции владения), waiting_limit не будит ожидание.
+- Дизайн провайдера companion ведётся вне публичного проекта.
+- Упрощения этапа 1: чистый Node (фиксированный pipe/socket, EADDRINUSE как singleton), idle-exit только без незавершённых задач, один app-server и один активный аккаунт на сервис (смена подключения только в простое), waiting_limit не будит ожидание.

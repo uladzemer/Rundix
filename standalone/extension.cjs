@@ -288,14 +288,14 @@ function activate(context) {
     if(connections.selection().id==='local') {
       await activateCompanions(vscode.extensions,'local-rundix-tools.rundix');
       const choices=connections.choices().filter(choice=>choice.id!=='local');
-      const choice=choices.length===1?choices[0]:await vscode.window.showQuickPick(choices.map(c=>({label:c.label,id:c.id})),{title:locale.t('Подключить рабочий пул')});
+      const choice=choices.length===1?choices[0]:await vscode.window.showQuickPick(choices.map(c=>({label:c.label,id:c.id})),{title:locale.t('Подключить companion')});
       if(!choice)throw Error('An installed companion connection is required.');
       await configureConnection(choice.id);
     }
     if(connections.selection().id==='local')throw Error('Select a companion connection.');
     await connections.resolve();
     await refreshAccountStatus();
-    if(!core.state.account || core.state.limits.error)throw Error('The selected pool connection is unavailable.');
+    if(!core.state.account || core.state.limits.error)throw Error('The selected companion connection is unavailable.');
   }
   function mcpPanelSnapshot() {
     if(serviceMode){

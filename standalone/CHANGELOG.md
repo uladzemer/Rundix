@@ -14,7 +14,7 @@
 
 ## 0.4.10 — 2026-10-22
 
-- Extended account handoffs now verify the saved thread has no active writer before reusing it, even when the provider reports the replacement account as ready.
+- Companion account handoffs now verify the saved thread has no active writer before reusing it, even when the provider reports the replacement account as ready.
 
 ## 0.4.9 — 2026-10-22
 
@@ -75,7 +75,7 @@ Install and update Rundix through [Microsoft Marketplace](https://marketplace.vi
 
 ## 0.3.1 — 2026-10-20
 
-- Fixed: after an MCP task continued (for example once the pool switched accounts on a usage limit), the delivered continuation could stay in the chat's input box. The composer now tracks who owns a draft, clears text the extension placed there once it is delivered, and never removes what you typed yourself.
+- Fixed: after an MCP task continued (for example once the companion connection switched accounts on a usage limit), the delivered continuation could stay in the chat's input box. The composer now tracks who owns a draft, clears text the extension placed there once it is delivered, and never removes what you typed yourself.
 - MCP: continuations that were definitely not sent are kept on the task and returned by `get_task` (full text) and shown in the MCP panel; other tool replies carry only `unsentInputCount`. A queued continuation cancelled with `cancel_task` stays recoverable.
 - Internal: the session core and MCP task hosting no longer depend on the VS Code API, in preparation for running MCP tasks with VS Code closed. Behaviour is unchanged.
 
@@ -101,7 +101,7 @@ Reliability and automation release. Highlights:
 - MCP reliability: replayed cancellations and failed approvals can no longer act on a later turn; a busy directory no longer stalls tasks for other directories; a stopped bridge never starts a pending turn; reports use only the task's own turn and flag incomplete evidence; directory leases cover the enclosing git worktree and are released even if the directory was deleted. `recoveryRequired` is reported only when no turn is executing.
 
 - Add a visible MCP button to the chat toolbar. It opens the MCP controls in an editor tab, with inline Claude configuration and a copy button, without requiring the command palette.
-- Add a bilingual MCP task panel with pool connection, task reports, chat navigation, continuation and cancellation. Explicit pool connection discovers installed companions and reuses the selected working provider.
+- Add a bilingual MCP task panel with companion connection, task reports, chat navigation, continuation and cancellation. Explicit companion connection discovers installed companions and reuses the selected working provider.
 - Add an opt-in local MCP bridge for Claude Code: asynchronous tasks, durable chat bindings and request deduplication, same-chat continuations, approval forwarding and cancellation.
 - Reuse the selected companion's existing executor and limit preparation; protect local IPC and serialize directory changes across Rundix chats. See `docs/mcp.md` for setup and recovery limits.
 

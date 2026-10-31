@@ -38,7 +38,7 @@
   "command.notifications": "Rundix: Notifications and hooks",
   "view.mcpTasks": "MCP tasks",
   "command.mcpPanel": "Rundix: Open MCP tasks",
-  "command.mcpConnectPool": "Rundix: Connect MCP to account pool",
+  "command.mcpConnectPool": "Rundix: Connect MCP to companion connection",
   "command.mcpStart": "Rundix: Start MCP bridge and show Claude configuration",
   "command.mcpStop": "Rundix: Stop MCP bridge"
 }

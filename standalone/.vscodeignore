@@ -58,6 +58,7 @@
 !runtime/mcp-server.cjs
 !runtime/mcp-delivery.cjs
 !runtime/task-directory.cjs
+!runtime/chat-worktrees.cjs
 !docs/mcp.md
 !runtime/connection-companions.cjs
 !runtime/mcp-panel.cjs

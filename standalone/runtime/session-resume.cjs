@@ -55,7 +55,7 @@ async function resumeThread(deps, s, id) {
   // Commit only a complete snapshot from the owning connection. A reset must
   // never leave a partially restored chat marked as loaded on its replacement.
   s.id = id;
-  s.cwd = result.thread.cwd || s.cwd;
+  s.cwd = s.cwdOverride || (s.worktree ? s.cwd : result.thread.cwd || s.cwd);
   s.parentId = result.thread.forkedFromId || s.parentId;
   s.model = result.model;
   s.turnModel = result.model;

@@ -34,6 +34,8 @@ assert.deepEqual(reference(items, "rich", "src/a.js#L12", cwd), {
 });
 assert.throws(() => reference(items, "rich", "src/injected.js", cwd));
 // Link forms agents emit: line ranges, columns and absolute Windows paths.
+// Markdown drops a backslash before punctuation, so the cwd avoids dot folders.
+const plain = path.resolve("/synthetic-project");
 const linked = (href) =>
   reference(
     [{ id: "l", type: "agentMessage", text: `[f](${href})` }],
@@ -43,17 +45,25 @@ const linked = (href) =>
       .find((t) => t.type === "inline")
       .children.find((t) => t.type === "link_open")
       .attrGet("href"),
-    cwd,
+    plain,
   );
 for (const [href, line] of [
   ["src/a.js#L12-L20", 12],
   ["src/a.js#L12C3", 12],
   ["src/a.js:12-20", 12],
   ["src/a.js:12:4", 12],
-  [path.join(cwd, "src/a.js").replace(/\//g, "\\") + ":7", 7],
-  ["/" + path.join(cwd, "src/a.js").replace(/\\/g, "/"), 1],
+  [path.join(plain, "src/a.js").replace(/\//g, "\\") + ":7", 7],
+  ["/" + path.join(plain, "src/a.js").replace(/\\/g, "/"), 1],
 ])
-  assert.deepEqual(linked(href), { path: path.join(cwd, "src/a.js"), line });
+  assert.deepEqual(linked(href), { path: path.join(plain, "src/a.js"), line });
+// A Windows drive path through a dot folder (Rundix worktrees) keeps its backslashes.
+{
+  const dotted = path.join(plain, ".rundix", "worktrees", "x", "src", "a.js");
+  const href = dotted.replace(/\//g, "\\") + ":7";
+  const text = `[f](${href})`;
+  const parsed = markdown.parse(text).find((t) => t.type === "inline").children.find((t) => t.type === "link_open").attrGet("href");
+  assert.deepEqual(reference([{ id: "d", type: "agentMessage", text }], "d", parsed, plain), { path: dotted, line: 7 });
+}
 assert.throws(() => linked("vscode:extension/x"));
 assert.throws(() => linked("%5C%5Cserver/share/a.js"));
 assert.throws(() =>

@@ -2,6 +2,7 @@ const fs=require('node:fs');const path=require('node:path');const assert=require
 const chromePath=[process.env.CHROME_PATH,'C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe','/Applications/Google Chrome.app/Contents/MacOS/Google Chrome','/usr/bin/google-chrome','/usr/bin/chromium'].find(file=>file&&fs.existsSync(file));
 if(!chromePath)throw Error('Set CHROME_PATH to an installed Chrome or Chromium executable.');
 (async()=>{const browser=await puppeteer.launch({executablePath:chromePath,headless:true,pipe:true});try{
+ await require('./chat-worktrees-browser.cjs')({browser});
  await require('./mcp-draft-sync-browser.cjs')({browser});
  await require('./model-capacity-browser.cjs')({browser});
  const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.setViewport({width:700,height:850});await page.setContent('<html><body><main id="app"></main></body></html>');

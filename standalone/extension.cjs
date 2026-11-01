@@ -578,6 +578,8 @@ function activate(context) {
           id: s.id,
           name: s.name,
           cwd: s.cwd || null,
+          worktree: s.worktree ? {branch:s.worktree.branch} : null,
+          worktreeBusy: !!s.worktreeBusy || !!s.sendingTask || !!s.followUpSending,
           parentId: s.parentId || null,
           model: s.model,
           effort: s.effort,
@@ -1113,7 +1115,15 @@ function activate(context) {
     if(msg.action==='mcpPanel'){openMcpEditor();return;}
     if (!msg || typeof msg.action !== "string") return;
     if (!["draft", "history"].includes(msg.action)) s.error = null;
-    if(msg.action==='preflight'){
+    if(msg.action==='mergeWorktree' || msg.action==='removeWorktree'){
+      await require('./runtime/chat-worktrees.cjs').operate({store,taskDirectory:require('./runtime/task-directory.cjs'),locale,save,publish,cwd,
+        info:message=>vscode.window.showInformationMessage(message),
+        confirmRemove:async message=>{
+          const label=locale.t('Удалить worktree');
+          return await vscode.window.showWarningMessage(message,{modal:true},label)===label;
+        },
+      },s,msg.action);
+    } else if(msg.action==='preflight'){
       if(s.id||s.busy||s.sendingTask||s.followUpSending||s.followUps?.length)throw Error(locale.t('Включайте подготовку перед первым сообщением нового чата.'));
       s.preflight=msg.enabled===true?preflight.begin():null;
       await save(s);publish(s);
@@ -1300,6 +1310,8 @@ function activate(context) {
           ),
         );
       await connect();
+      // A deleted worktree directory must not be inherited by the branch.
+      await require('./runtime/chat-worktrees.cjs').recover({save,publish,cwd},s);
       const item = msg.itemId
         ? s.items.find(
             (item) =>

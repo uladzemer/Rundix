@@ -109,7 +109,13 @@ class SessionStore {
  write(kind,key,value){const target=this.file(kind,key),temp=target+'.'+randomUUID()+'.tmp';try{fs.writeFileSync(temp,JSON.stringify(value),{flag:'wx',mode:0o600});fs.renameSync(temp,target);}finally{try{fs.unlinkSync(temp);}catch{}}return value;}
  session(key){return this.read('session',key);}
  saveSession(session,baseline){return withRecordLock(this.file('record-session',session.key),()=>{const previous=this.session(session.key),latest=previous||{},change={};for(const [key,value]of Object.entries(session))if(!previous||!baseline||JSON.stringify(value)!==JSON.stringify(baseline[key]))change[key]=value;return this.write('session',session.key,{...latest,...change,updatedAt:Date.now(),revision:randomUUID()});});}
- list(cwd){return fs.readdirSync(this.directory).filter(name=>/^session-[a-zA-Z0-9_-]+\.json$/.test(name)).map(name=>this.session(name.slice(8,-5))).filter(row=>row&&(!cwd||path.resolve(row.cwd||'')===path.resolve(cwd))).sort((a,b)=>b.updatedAt-a.updatedAt);}
+ list(cwd){
+  // A chat moved into a Rundix worktree still belongs to the workspace it came from.
+  const norm=p=>{const r=path.resolve(p||'');return process.platform==='win32'?r.toLowerCase():r;};
+  const workspace=cwd&&norm(cwd),prefix=cwd&&norm(path.join(cwd,'.rundix','worktrees'))+path.sep;
+  const belongs=row=>norm(row.cwd)===workspace||(row.worktree&&[row.worktree.mainCwd,row.worktree.mainPath].some(p=>p&&norm(p)===workspace))||(row.cwd&&norm(row.cwd).startsWith(prefix));
+  return fs.readdirSync(this.directory).filter(name=>/^session-[a-zA-Z0-9_-]+\.json$/.test(name)).map(name=>this.session(name.slice(8,-5))).filter(row=>row&&(!cwd||belongs(row))).sort((a,b)=>b.updatedAt-a.updatedAt);
+ }
  meta(id){return this.read('meta',id)||{};}
  updateMeta(id,change){return withRecordLock(this.file('record-meta',id),()=>this.write('meta',id,{...this.meta(id),...change}));}
  host(key){return this.read('host',key);}

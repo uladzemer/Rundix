@@ -103,6 +103,77 @@ async function transportChecks() {
 }
 
 async function sendChecks() {
+  // The move precedes every RPC; resumed threads cannot restore their old cwd.
+  {
+    const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'rundix-synthetic-send-worktree-'));
+    try {
+      const main=await require('./chat-worktrees.cjs').repo(root,'project');
+      const directories=require('../runtime/task-directory.cjs');
+      const {SessionStore}=require('../runtime/store.cjs');
+      const diskStore=new SessionStore(path.join(root,'store'));
+      for(const resume of [false,true,'new']) {
+        const f=fixture();f.s.cwd=main;f.s.name='Synthetic parallel chat';
+        f.context.taskDirectory=directories;f.context.store=diskStore;
+        const held=directories.acquire(diskStore,main);
+        if(resume===true){
+          f.s.loaded=false;
+          f.context.threadReleases=new Map();f.context.mcpThreadConfig=()=>null;
+          f.context.readItem=item=>item;f.context.questionRecords={restore(){}};
+          f.context.resume=(s,id)=>require('../runtime/session-resume.cjs').resumeThread(f.context,s,id);
+          const original=f.server.request;
+          f.server.request=async(method,params)=>{
+            if(method==='thread/resume')assert.equal(f.s.worktree,undefined,'Moves only after account and model checks');
+            if(method==='thread/resume')return {thread:{cwd:main,name:f.s.name,status:{type:'idle'}},model:'synthetic-model'};
+            if(['thread/turns/list','thread/items/list'].includes(method))return {data:[]};
+            return original(method,params);
+          };
+        }
+        if(resume==='new'){
+          f.s.id=null;f.s.customName=true;
+          f.context.library={migrate:async()=>{}};f.context.mcpThreadConfig=()=>null;
+          const original=f.server.request;
+          f.server.request=async(method,params)=>{
+            if(method==='thread/start'){
+              assert.equal(params.cwd,f.s.cwd);assert.notEqual(params.cwd,main);
+              return {thread:{id:'synthetic-new-thread',cwd:main},model:'synthetic-model'};
+            }
+            if(method==='thread/name/set')return {};
+            return original(method,params);
+          };
+        }
+        f.start(async()=>{f.emit('turn/started');f.emit('turn/completed');return {turn:{id:'synthetic-turn'}};});
+        try {
+          await f.context.send(f.s,'Synthetic input');
+          const start=f.calls.find(call=>call.method==='turn/start');
+          assert.ok(f.s.worktree);assert.equal(start.params.cwd,f.s.cwd);assert.notEqual(start.params.cwd,main);
+          assert.deepEqual(diskStore.session(f.s.key).worktree,f.s.worktree);
+          assert.equal(f.s.draft,'');
+        }finally{held();}
+      }
+      // A send that fails on the model leaves no worktree behind.
+      {
+        const f=fixture();f.s.cwd=main;f.context.taskDirectory=directories;f.context.store=diskStore;f.context.catalog=[];
+        const held=directories.acquire(diskStore,main);
+        try {
+          await assert.rejects(f.context.send(f.s,'Synthetic input'),error=>error.notSent);
+          assert.equal(f.s.worktree,undefined);assert.equal(f.s.cwd,main);
+          assert.equal(f.calls.length,0);
+        }finally{held();}
+      }
+      const plain=path.join(root,'plain');await fs.mkdir(plain);
+      const f=fixture();f.s.cwd=plain;f.context.taskDirectory=directories;f.context.store=diskStore;
+      const held=directories.acquire(diskStore,plain);
+      try {
+        await assert.rejects(f.context.send(f.s,'Synthetic input'),error=>error.notSent && /занята другим чатом/.test(error.message));
+        assert.equal(f.calls.length,0);assert.equal(f.s.draft,'Synthetic input');
+      }finally{held();}
+    }finally{
+      assert.equal(await fs.realpath(path.dirname(root)),await fs.realpath(os.tmpdir()));
+      assert.ok(path.basename(root).startsWith('rundix-synthetic-send-worktree-'));
+      await fs.rm(root,{recursive:true,force:true});
+    }
+  }
   // Local and cross-window credential guards explain how to finish browser sign-in.
   for(const language of ['ru','en']){
     const guard=fixture();guard.context.locale.language=language;guard.context.authBusy=true;

@@ -6,14 +6,22 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
   // retryable marks failures that happen before anything is sent and clear up by themselves; MCP tasks wait and retry.
   if (deps.authBusy) throw Object.assign(Error(deps.pendingLogin.current ? deps.browserSignInMessage() : deps.locale.t('Дождитесь переключения аккаунта.')),{notSent:true,retryable:true});
   if(s.sendingTask)throw Object.assign(Error(deps.locale.t('Дождитесь обработки уточнений перед согласованием.')),{notSent:true,retryable:true});
+  if(s.worktreeBusy)throw Object.assign(Error(deps.locale.t('Дождитесь завершения операции с worktree.')),{notSent:true,retryable:true});
   let accountLease;
   // Only a held lease is 'busy in another window'; file-system failures keep their own message and are not retried.
   try{accountLease = deps.store.acquire('account-credentials');}catch(error){if(error?.syscall)throw Object.assign(error,{notSent:true});throw Object.assign(Error(deps.browserSignInMessage(true)),{notSent:true,retryable:true});}
   let directoryLease=null, leasedDirectory=null;
-  const ensureDirectory=()=>{
+  // defer: a busy folder only notes that a move is needed; it happens once the send is otherwise valid.
+  const ensureDirectory=async(defer=false)=>{
+    const worktrees=require('./chat-worktrees.cjs');
+    if(!options.projectDirectory)await worktrees.recover(deps,s);
     const actual=deps.taskDirectory.canonical(s.cwd || deps.cwd());
     if(options.projectDirectory && actual!==options.projectDirectory)throw Error('MCP chat project directory changed.');
-    if(actual!==leasedDirectory){const next=deps.taskDirectory.acquire(deps.store,actual,options.taskId);directoryLease?.();directoryLease=next;leasedDirectory=actual;}
+    if(actual!==leasedDirectory){
+      const next=await worktrees.acquire(deps,s,actual,{...options,defer});
+      if(!next)return;
+      directoryLease?.();directoryLease=next;leasedDirectory=deps.taskDirectory.canonical(s.cwd || deps.cwd());
+    }
   };
   s.sendingTask=true;
   // Everything thrown before turn/start is requested provably sent nothing; callers may retry or re-answer.
@@ -28,7 +36,7 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
       deps.locale.t("Сначала разрешите доверие рабочему пространству VS Code."),
     );
   await deps.syncExternal(s);
-  ensureDirectory();
+  await ensureDirectory(true);
   await deps.applyPendingMode(s);
   const accountRevisionBeforeConnect=deps.accountReadRevision;
   await deps.connect();
@@ -82,7 +90,7 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
   deps.updateDraftModel(s);
   const selection={model:s.model,effort:s.effort,fast:s.prefs.fast,...options.modelSelection};
   if (s.id && !s.loaded) await deps.resume(s, s.id);
-  ensureDirectory();
+  await ensureDirectory(true);
   const selectedModel=deps.catalog.find(model=>model.model===selection.model);
   if (!selectedModel)
     throw Error(
@@ -92,6 +100,8 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
     );
   if(selection.effort && !selectedModel.supportedReasoningEfforts.some(option=>option.reasoningEffort===selection.effort))
     throw Error(deps.locale.t("Эта модель не поддерживает выбранную глубину."));
+  // Account and model are valid: only now may a busy folder be moved into a worktree.
+  await ensureDirectory();
   if(options.approvedTask && (!s.preflight?.enabled || deps.hasPendingQuestions(s)))
     throw Error(deps.locale.t('План изменился или ещё не готов к согласованию.'));
   if(s.preflight?.enabled){
@@ -116,7 +126,7 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
       ...(s.preflight?.enabled?{config:await deps.preparationConfig(s)}:deps.mcpThreadConfig(s)?{config:deps.mcpThreadConfig(s)}:{}),
     });
     s.id = result.thread.id;
-    s.cwd = result.thread.cwd || s.cwd;
+    s.cwd = s.cwdOverride || (s.worktree ? s.cwd : result.thread.cwd || s.cwd);
     await deps.library.migrate(s.key, s.id);
     s.loaded = true;
     s.model = result.model;
@@ -125,7 +135,7 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
     await deps.server.request("thread/name/set", { threadId: s.id, name: s.name });
     await deps.save(s);
   }
-  ensureDirectory();
+  await ensureDirectory();
   const input = deps.buildInput(text, attached, options.includeIde!==false && s.prefs.ide ? deps.editorSelection() : null);
   const sessionRelease = deps.store.acquire(s.id), releaseDirectory=directoryLease;
   const client=deps.server, connection=deps.activeConnection,

@@ -26,6 +26,15 @@ class WorkbenchTabs {
     this.mcp.setAttribute('aria-label',this.mcp.title);
     this.mcp.onclick=()=>{closeMenus();send('mcpPanel');};
     this.element.append(this.mcp);
+    this.worktree=document.createElement('div');this.worktree.className='session-worktree';
+    this.branch=document.createElement('span');this.branch.className='worktree-branch';
+    this.worktree.append(this.branch);
+    for(const [key,label] of [['mergeWorktree','Влить'],['removeWorktree','Удалить worktree']]){
+      const button=document.createElement('button');button.type='button';button.className=key;
+      button.onclick=()=>{closeMenus();send(key);};
+      this[key]=button;this.worktree.append(button);
+    }
+    this.element.append(this.worktree);
     this.bookmarks = action(
       WorkbenchI18n.t("Закладки ответов"),
       "bookmark",
@@ -52,6 +61,13 @@ class WorkbenchTabs {
   closeContext() {}
   update(state) {
     this.state = state;
+    this.worktree.hidden=!state.worktree;
+    this.branch.textContent=state.worktree?.branch || '';
+    this.branch.title=this.branch.textContent;
+    for(const [key,label] of [['mergeWorktree','Влить'],['removeWorktree','Удалить worktree']]){
+      this[key].textContent=WorkbenchI18n.t(label);
+      this[key].disabled=!!(state.busy || state.compacting || state.worktreeBusy);
+    }
     this.element.title = state.name || 'Rundix';
     this.mcp.classList.toggle('is-running',!!state.mcpBridgeRunning);
     this.mcp.title=WorkbenchI18n.t('Управление MCP для Claude Code')+' · '+WorkbenchI18n.t(state.mcpBridgeRunning?'Мост запущен':'Мост остановлен');

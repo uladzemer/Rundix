@@ -62,6 +62,15 @@ async function beforeRead(stage) {
 }
 
 (async () => {
+  // Removal returns to main even when the CLI's thread still remembers the deleted tree.
+  {
+    const s={id:'synthetic-removed-worktree',cwd:'synthetic-main/sub',cwdOverride:'synthetic-main/sub',worktree:null,prefs:{},items:[]};
+    const deps={threadReleases:new Map(),sessions:new Map(),limitsEpoch:1,connect:async()=>{},mcpThreadConfig:()=>null,
+      server:{request:async method=>method==='thread/resume'?{thread:{cwd:'synthetic-deleted-worktree/sub',status:{type:'idle'}},model:'synthetic-model'}:{data:[]}},
+      readItem:item=>item,questionRecords:{restore(){}},save:async()=>{},publish(){}};
+    await resumeThread(deps,s,s.id);
+    assert.equal(s.cwd,'synthetic-main/sub');assert.equal(s.loaded,true);
+  }
   for (const method of ['thread/resume', 'thread/turns/list', 'thread/items/list'])
     for (const change of ['server', 'account', 'chat']) await switchedDuring(method, change);
   await beforeRead('connect');

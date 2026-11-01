@@ -27,12 +27,9 @@ try {
   assert.throws(() => acquire(store, worktree), /reserved/);
   acquire(store, worktreeChild, 'synthetic-worktree')();
   release(store, repo, 'synthetic-parent');
-  const chatLease = acquire(store, child), parallelChat = acquire(store, repo);
-  assert.doesNotThrow(() => acquire(store, child)(), 'Ordinary chats share a project');
-  chatLease();parallelChat();
-  const taskLease = acquire(store, repo, 'synthetic-turn');
-  assert.throws(() => acquire(store, child, 'synthetic-other-turn'), /другом окне|another window/, 'MCP turns keep the project exclusive');
-  taskLease();
+  const chatLease = acquire(store, child);
+  assert.throws(() => reserve(store, repo, 'synthetic-parent'), 'Active subfolder chat blocks parent task');
+  chatLease();
   reserve(store, child, 'synthetic-child');
   assert.throws(() => acquire(store, repo), /reserved/, 'Nested task blocks parent chat');
   release(store, child, 'synthetic-child');

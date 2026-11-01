@@ -70,7 +70,7 @@ async function hostSendChecks(project,store) {
  assert.match(agentInstructions,/blocking request_user_input tool with concise options/);
  assert.match(agentInstructions,/recommended option first/);
  assert.match(agentInstructions,/Never use request_user_input_async and never wait for a human/);
- assert.throws(()=>acquire(store,project,'synthetic-other-task'), 'Accepted turn retains its directory lease after checkpoint failure');
+ assert.throws(()=>acquire(store,project), 'Accepted turn retains its directory lease after checkpoint failure');
  turnLeases.get(s.id)();turnLeases.delete(s.id);
  s.busy=false;complete=true;
  await send(s,'Synthetic directory-only routing',[],{projectDirectory:project,includeIde:false});

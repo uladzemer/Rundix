@@ -53,10 +53,7 @@ function release(store, directory, taskId) {
   }
 }
 function acquire(store, directory, taskId) {
-  const id = key(directory);
-  // Ordinary chats run side by side in one project; only MCP tasks hold it exclusively.
-  if (typeof taskId !== 'string') { assertAvailable(store, id, taskId); return () => {}; }
-  const unlock = store.acquire('directory-' + id);
+  const id = key(directory), unlock = store.acquire('directory-' + id);
   try { assertAvailable(store, id, taskId); return unlock; }
   catch (error) { unlock(); throw error; }
 }

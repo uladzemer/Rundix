@@ -230,7 +230,7 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
   async function chat(spaceId,id,folders,generation){
     const row=visible(spaceId,folders).find(row=>row.taskId===id);if(!row)throw failure('unknown_task');
     const saved=await read(row.file);if(digest(saved)!==row.recordHash)throw failure('migration_conflict');
-    return {generation,schemaVersion:1,viewRevision:0,spaceId,taskId:id,owner:'legacy',readOnly:true,chatId:row.task.chatId || null,
+    return {generation,schemaVersion:1,viewRevision:0,spaceId,taskId:id,owner:'legacy',readOnly:true,chatId:row.task.chatId || null,projectDirectory:row.projectDirectory,
       title:('MCP · '+row.task.description).slice(0,167),state:row.interrupted?'error':row.task.state,recoveryRequired:!!row.interrupted,progress:row.task.progress,closed:false,pendingRequests:[],
       ...projection.transcript(saved.session?.items || []),cursor:null};
   }

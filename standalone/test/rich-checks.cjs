@@ -33,6 +33,29 @@ assert.deepEqual(reference(items, "rich", "src/a.js#L12", cwd), {
   line: 12,
 });
 assert.throws(() => reference(items, "rich", "src/injected.js", cwd));
+// Link forms agents emit: line ranges, columns and absolute Windows paths.
+const linked = (href) =>
+  reference(
+    [{ id: "l", type: "agentMessage", text: `[f](${href})` }],
+    "l",
+    markdown
+      .parse(`[f](${href})`)
+      .find((t) => t.type === "inline")
+      .children.find((t) => t.type === "link_open")
+      .attrGet("href"),
+    cwd,
+  );
+for (const [href, line] of [
+  ["src/a.js#L12-L20", 12],
+  ["src/a.js#L12C3", 12],
+  ["src/a.js:12-20", 12],
+  ["src/a.js:12:4", 12],
+  [path.join(cwd, "src/a.js").replace(/\//g, "\\") + ":7", 7],
+  ["/" + path.join(cwd, "src/a.js").replace(/\\/g, "/"), 1],
+])
+  assert.deepEqual(linked(href), { path: path.join(cwd, "src/a.js"), line });
+assert.throws(() => linked("vscode:extension/x"));
+assert.throws(() => linked("%5C%5Cserver/share/a.js"));
 assert.throws(() =>
   reference(
     [{ id: "x", type: "agentMessage", text: "[escape](../private.txt)" }],

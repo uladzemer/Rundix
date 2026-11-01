@@ -1,37 +1,49 @@
 const path = require("node:path");
 const { parse } = require("../ui/markdown.js");
-function reference(items, itemId, href, cwd) {
+function links(items, itemId) {
   const item = items.find(
     (item) => item.id === itemId && item.type === "agentMessage",
   );
-  if (!item || typeof href !== "string" || href.length > 10000)
-    throw Error("Reference not found.");
-  const links = [];
+  const result = [];
   const walk = (tokens) => {
     for (const token of tokens) {
-      if (token.type === "link_open") links.push(token.attrGet("href"));
+      if (token.type === "link_open") result.push(token.attrGet("href"));
       if (token.children) walk(token.children);
     }
   };
-  walk(parse(item.text));
-  if (!links.includes(href)) throw Error("Reference not found.");
+  if (item) walk(parse(item.text));
+  return result;
+}
+function reference(items, itemId, href, cwd) {
+  if (typeof href !== "string" || href.length > 10000)
+    throw Error("Reference not found.");
+  if (!links(items, itemId).includes(href)) throw Error("Reference not found.");
   if (/^https?:\/\//i.test(href)) {
     const url = new URL(href);
     if (url.username || url.password) throw Error("Unsupported URL.");
     return { url: url.href };
   }
+  let file;
+  try {
+    file = decodeURIComponent(href);
+  } catch {
+    throw Error("Unsupported reference.");
+  }
+  // Drive letters (D:\ or D:/) are paths; any other scheme is not a file.
   if (
     !cwd ||
-    /^(?:[a-z][a-z\d+.-]*:)(?![\\/])/i.test(href) ||
-    href.startsWith("//")
+    /^(?:[a-z][a-z\d+.-]*:)(?![\\/])/i.test(file) ||
+    /^[\\/]{2}/.test(file)
   )
     throw Error("Unsupported reference.");
-  let file = decodeURIComponent(href);
   if (/^\/[a-z]:[\\/]/i.test(file)) file = file.slice(1);
   let line = 1;
-  const suffix = file.match(/(?:#L|:)(\d+)(?::\d+)?$/);
+  // file:12, file:12:3, file:12-20, file#L12, file#L12C3, file#L12-L20
+  const suffix = file.match(
+    /(?:#L(\d+)(?:C\d+)?(?:-L?\d+(?:C\d+)?)?|:(\d+)(?::\d+)?(?:-\d+)?)$/,
+  );
   if (suffix) {
-    line = Math.max(1, Number(suffix[1]));
+    line = Math.max(1, Number(suffix[1] || suffix[2]));
     file = file.slice(0, -suffix[0].length);
   }
   const absolute = path.resolve(cwd, file),

@@ -31,6 +31,15 @@ const { versions } = require("./runtime/diff.cjs");
 const asyncQuestions = require('./runtime/async-questions.cjs');
 const preflight = require('./runtime/task-preflight.cjs');
 const { reference } = require("./runtime/references.cjs");
+// vscode.open picks the editor (text, image, media), so binary links open too.
+function openFileReference(target) {
+  const line = target.line - 1;
+  return vscode.commands.executeCommand(
+    "vscode.open",
+    vscode.Uri.file(target.path),
+    { preview: true, selection: new vscode.Range(line, 0, line, 0) },
+  );
+}
 const { tabTitle } = require("./runtime/titles.cjs");
 const { CompletionNotifications } = require('./runtime/completion-notifications.cjs');
 const { NotificationSettings } = require('./runtime/notification-settings.cjs');
@@ -189,12 +198,18 @@ function activate(context) {
       await vscode.env.clipboard.writeText(message.text);return;
     }
     if(message.action==='openReference'){
-      const url=new URL(message.href);if(!['https:','http:'].includes(url.protocol))throw Error('Unsupported link');
-      await vscode.env.openExternal(vscode.Uri.parse(url.href));return;
+      // Only links from the shown transcript; files resolve inside the task's project directory.
+      const items=[...(record.snapshot?.items || []),...(record.historyItems || [])];
+      const target=reference(items,message.itemId,message.href,record.snapshot?.projectDirectory);
+      if(target.url){await vscode.env.openExternal(vscode.Uri.parse(target.url));return;}
+      await openFileReference(target);return;
     }
     if(message.action==='older'){
       const result=await client.chat(record.spaceId,'chat.history',{taskId:record.taskId,cursor:message.cursor});
-      if(client===serviceClient && !record.disposed)await record.panel.webview.postMessage({type:'chatHistory',data:result});return;
+      if(client===serviceClient && !record.disposed){
+        record.historyItems=[...(record.historyItems || []),...(result.items || [])].slice(-1000);
+        await record.panel.webview.postMessage({type:'chatHistory',data:result});
+      }return;
     }
     if(!['continue','answer','cancel'].includes(message.action) || typeof message.requestId!=='string' || !/^[\w-]{1,128}$/.test(message.requestId))throw Error('Invalid task chat action.');
     await client.call(record.spaceId,message.action==='cancel'?'cancel_task':'continue_task',{taskId:record.taskId,requestId:message.requestId,
@@ -1764,16 +1779,7 @@ function activate(context) {
       const target = reference(s.items, msg.itemId, msg.href, s.cwd || cwd());
       if (target.url)
         await vscode.env.openExternal(vscode.Uri.parse(target.url));
-      else {
-        const document = await vscode.workspace.openTextDocument(
-          vscode.Uri.file(target.path),
-        );
-        const line = Math.min(document.lineCount - 1, target.line - 1);
-        await vscode.window.showTextDocument(document, {
-          preview: true,
-          selection: new vscode.Range(line, 0, line, 0),
-        });
-      }
+      else await openFileReference(target);
     } else if (msg.action === "requestUrl") {
       const request = pendingRequests.get(String(msg.id));
       if (

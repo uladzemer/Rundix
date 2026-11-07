@@ -1,5 +1,11 @@
 # Changelog / История изменений
 
+## 0.4.15 — 2026-11-07
+
+- Chat continuation after a companion connection handoff treats an unset Fast option and Fast off as the same setting, so restoring an older chat no longer cancels automatic usage-limit recovery.
+- A transient active-writer snapshot refuses the send without leaving the chat permanently busy; automatic continuation can recheck it and Reconnect remains available.
+- Connection replacement waits up to five seconds for the retiring CLI to exit before launching another one, and a timed-out stop remains fenced on later attempts. Superseded connection attempts cannot replace or stop a newer one. Reconnect uses the shared credential lease, invalidates all loaded chats and awaits a usage-limit refresh, as does the companion reconnect hook. Drafts and queued input are preserved; original model input is never replayed.
+
 ## 0.4.14 — 2026-11-07
 
 - A chat that sends while its folder is busy with another chat or MCP task moves into its own git worktree (`<repo>/.rundix/worktrees/<name>`, branch `rundix/<name>`) with a copy of the folder's uncommitted changes. The chat shows the branch with Merge and Remove worktree buttons. Outside a git repository the send is refused and the draft is kept.

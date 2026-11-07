@@ -113,6 +113,20 @@ exports.run = async () => {
     immediateCompletion = true;
     await api.handle(session, {action:'account'});
     report.immediateLoginCompletionHandled = true;
+    const beforeReconnect=client;
+    session.sendingTask=true;
+    await assert.rejects(api.handle(session,{action:'retry'}));
+    assert.equal(client,beforeReconnect,'Reconnect cannot replace a CLI during send preparation');
+    session.sendingTask=false;
+    const releaseCredentials=api.store.acquire('account-credentials');
+    try{await assert.rejects(api.handle(session,{action:'retry'}));assert.equal(client,beforeReconnect);}
+    finally{releaseCredentials();}
+    const quotaReads=calls.filter(call=>call.method==='account/rateLimits/read').length;
+    await api.handle(session,{action:'retry'});
+    assert.notEqual(client,beforeReconnect);
+    assert(calls.filter(call=>call.method==='account/rateLimits/read').length>quotaReads);
+    assert.equal(session.draft,'Preserve my draft');
+    report.reconnectLeaseAndFreshLimits=true;
     await api.handle(session, {action: 'send', text: session.draft});
     assert.equal(calls.filter(call => call.method === 'turn/start').length, 1);
     assert.equal(calls.some(call => /logout|AuthStatus|refresh.*token/i.test(call.method)), false);

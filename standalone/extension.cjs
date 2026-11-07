@@ -1848,18 +1848,12 @@ function activate(context) {
         broadcast();
       });
     } else if (msg.action === "retry") {
-      if(core.state.authBusy)throw Error(locale.t('Дождитесь переключения аккаунта.'));
-      if ([...sessions.values()].some(session => session.busy || session.compacting))
-        throw Error(locale.t('Дождитесь завершения задач перед переподключением.'));
-      core.state.connecting = null;
-      core.state.server?.dispose();
-      await connect();
-      if (s.id) {
-        s.loaded = false;
-        await resume(s, s.id);
-      }
-      s.error = null;
-      publish(s);
+      await withLocalSignIn(async () => {
+        await resetConnection();
+        if (s.id) await resume(s, s.id);
+        s.error = null;
+        publish(s);
+      });
     }
   }
   function target(item) {

@@ -12,9 +12,13 @@ class AppServer extends EventEmitter {
  constructor({executable,spawnProcess=spawn,cwd,env=process.env,configArgs=[]}={}){super();this.executable=executable;this.spawnProcess=spawnProcess;this.cwd=cwd;this.env=env;this.configArgs=configArgs;this.pending=new Map();this.serverRequests=new Map();this.sequence=0;}
  async start(){
   if(this.starting)return this.starting;
+  const generation=this.generation=(this.generation || 0)+1;
   this.starting=(async()=>{
+   await this.waitForExit();
+   if(this.generation!==generation)throw Object.assign(Error(locale.t('Клиент закрыт.')),{notSent:true,deliveryUncertain:false});
    this.child=this.spawnProcess(this.executable||findCli(),['app-server','--listen','stdio://',...this.configArgs],{cwd:this.cwd,env:this.env,windowsHide:true,stdio:['pipe','pipe','pipe'],shell:false});
    const child=this.child;let failed=false,reason='';
+   this.exited=new Promise(resolve=>child.once('close',resolve));
    const failure=error=>{if(this.child!==child||failed)return;failed=true;this.child=null;this.fail(error);child.kill();};
    let buffer='';this.child.stdout.setEncoding('utf8');
    this.child.stdout.on('data',chunk=>{if(this.child!==child)return;buffer+=chunk;if(buffer.length>32*1024*1024){failure(Error(locale.t('Слишком большой ответ CLI.')));return;}let index;while((index=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,index);buffer=buffer.slice(index+1);if(!line.trim())continue;try{this.receive(JSON.parse(line));}catch{this.emit('protocolError',locale.t('CLI прислал некорректный JSON.'));}}});
@@ -30,7 +34,7 @@ class AppServer extends EventEmitter {
    this.child.on('close',(code,signal)=>failure(Error(locale.t('Codex CLI завершился ({0}). Нажмите «Переподключиться».',code??signal??'signal')+(reason?' '+reason:''))));
    const result=await this.request('initialize',{clientInfo:{name:'rundix_local',title:'Rundix',version:require('../package.json').version},capabilities:{experimentalApi:true}});
    this.write({method:'initialized',params:{}});return result;
-  })();return this.starting;
+  })().catch(error=>{if(this.generation===generation)this.starting=null;throw error;});return this.starting;
  }
  write(message){if(!this.child?.stdin.writable)throw Error(locale.t('Codex CLI не подключён.'));this.child.stdin.write(JSON.stringify(message)+'\n');}
  request(method,params={},timeout=30000){const id=++this.sequence;return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{this.pending.delete(id);reject(Object.assign(Error(locale.t("Нет ответа Codex: {0}",method)),{deliveryUncertain:true}));},timeout);this.pending.set(id,{resolve,reject,timer});try{this.write({id,method,params});}catch(error){clearTimeout(timer);this.pending.delete(id);reject(Object.assign(error,{deliveryUncertain:false}));}});}
@@ -40,6 +44,12 @@ class AppServer extends EventEmitter {
  }
  respond(id,result,error){if(!this.serverRequests.has(String(id)))return false;this.write(error?{id,error}:{id,result});this.serverRequests.delete(String(id));return true;}
  fail(error){for(const entry of this.pending.values()){clearTimeout(entry.timer);entry.reject(Object.assign(Error(error.message),{deliveryUncertain:true}));}this.pending.clear();this.serverRequests.clear();this.starting=null;this.emit('disconnected',error.message);}
- dispose(){const child=this.child;this.child=null;this.removeAllListeners();this.fail(Error(locale.t('Клиент закрыт.')));child?.kill();}
+ async waitForExit(timeout=5000){
+  if(!this.exited)return;
+  let timer;
+  try{await Promise.race([this.exited,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error(locale.language==='en'?'The previous Codex CLI has not exited. Retry reconnecting.':'Предыдущий Codex CLI ещё не завершился. Повторите переподключение.'),{code:'CLI_EXIT_PENDING',notSent:true,retryable:true})),timeout);})]);}
+  finally{clearTimeout(timer);}
+ }
+ dispose(){this.generation=(this.generation || 0)+1;const child=this.child;this.child=null;this.removeAllListeners();this.fail(Error(locale.t('Клиент закрыт.')));child?.kill();}
 }
 module.exports={AppServer,findCli};

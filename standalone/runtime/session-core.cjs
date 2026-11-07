@@ -30,6 +30,7 @@ function createSessionCore(host) {
   const library = new SessionLibrary(host.workspaceState, store);
   const connections = new Connections({ store, activateOwner: host.activateConnectionOwner });
   const providerClients = new WeakMap();
+  const retiringServers = new Set();
   const broadcast = () => host.events.changed();
   const publish = s => host.events.sessionChanged(s);
   const cwd = () => host.defaultDirectory();
@@ -55,7 +56,14 @@ function createSessionCore(host) {
     applyPendingMode: host.applyPendingMode, taskDirectory: require('./task-directory.cjs'),
     Date: { now: () => clock.now() }, setTimeout: (...args) => clock.setTimeout(...args),
     clearTimeout: (...args) => clock.clearTimeout(...args),
-    providerClient, refreshAccount, refreshLimits, refreshCatalog, resetConnection, updateDraftModel, preparationConfig,
+    providerClient, refreshAccount, refreshLimits, refreshCatalog, resetConnection, stopAccountServer, updateDraftModel, preparationConfig,
+    retireAccountServer: client => retiringServers.add(client),
+    async waitForAccountServerExit() {
+      for (const client of retiringServers) {
+        await client.waitForExit?.();
+        retiringServers.delete(client);
+      }
+    },
     onDeferredProviderRefresh:()=>host.onDeferredProviderRefresh?.(),
     deferProviderNotifications:host.deferProviderNotifications===true,
     asyncQuestions: require('./async-questions.cjs'), questionRecords: require('./question-records.cjs'),
@@ -164,7 +172,8 @@ function createSessionCore(host) {
     deps.turnDiagnostics.disconnect(state.server);
     deps.capacityRecovery.clear();
     pendingLogin.finish();
-    state.server?.removeAllListeners(); state.server?.dispose(); state.server = null; state.connecting = null;
+    if(state.server)retiringServers.add(state.server);
+    state.server?.removeAllListeners(); state.server?.dispose(); state.server = null; state.connecting = null; state.connectionStarting = false;
   }
   async function resetConnection() {
     for (const session of sessions.values()) { await save(session); session.loaded = false; }
@@ -173,7 +182,9 @@ function createSessionCore(host) {
     state.accountRequestEpoch++; state.limitsEpoch++; state.limitsRequest = null;
     state.limits = {buckets:[],loading:false,updatedAt:null,error:false};
     broadcast();
-    return connect();
+    const client = await connect();
+    await refreshLimits();
+    return client;
   }
   async function refreshLimits() {
     if (state.limitsRequest) return state.limitsRequest;

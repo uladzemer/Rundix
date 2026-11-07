@@ -20,7 +20,7 @@ function createLimitRecovery(deps) {
     // Server, account and limits are expected to change: that is the companion's job.
     if(records.get(s)!==row || row.cancelled || deps.disposed || deps.sessions.get(s.key)!==s ||
       s.id!==row.threadId || connectionId()!==row.connection || s.model!==row.model || s.effort!==row.effort ||
-      s.cwd!==row.cwd || s.prefs.access!==row.access || s.prefs.plan!==row.plan || s.prefs.fast!==row.fast ||
+      s.cwd!==row.cwd || s.prefs.access!==row.access || s.prefs.plan!==row.plan || (s.prefs.fast===true)!==row.fast ||
       s.stopRequested || s.mcpTask || s.preflight?.enabled || (s.lastStartedTurnId || null)!==row.turnId)
       throw Object.assign(Error(deps.locale.t('Автопродолжение отменено: состояние сессии изменилось.')),{notSent:true,deliveryUncertain:false});
   }
@@ -62,7 +62,7 @@ function createLimitRecovery(deps) {
     if(attempt>MAX_CONTINUATIONS)return;
     streaks.set(s,attempt);
     const row={attempt,turnId:turn.id,threadId:s.id,connection:connectionId(),model:s.model,effort:s.effort,
-      fast:s.prefs.fast,cwd:s.cwd,access:s.prefs.access,plan:s.prefs.plan,blockedSince:null};
+      fast:s.prefs.fast===true,cwd:s.cwd,access:s.prefs.access,plan:s.prefs.plan,blockedSince:null};
     records.set(s,row);
     s.limitRetry={attempt,max:MAX_CONTINUATIONS,delaySeconds:DELAY_MS/1000};
     // A running task elsewhere only refuses an account change (retryable below); after another

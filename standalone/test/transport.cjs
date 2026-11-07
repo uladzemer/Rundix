@@ -1,5 +1,28 @@
 const assert=require('node:assert/strict');const {spawn}=require('node:child_process');const path=require('node:path');
 const {AppServer}=require('../runtime/transport.cjs');const {notification}=require('../runtime/session.cjs');
+async function delayedExitChecks(){
+ const {EventEmitter}=require('node:events');const children=[];
+ const client=new AppServer({executable:process.execPath,spawnProcess:()=>{
+  const child=new EventEmitter();child.stdout=new EventEmitter();child.stdout.setEncoding=()=>{};child.stderr=new EventEmitter();
+  child.stdin=new EventEmitter();child.stdin.writable=true;child.stdin.write=text=>{
+   const message=JSON.parse(text);if(message.method==='initialize')queueMicrotask(()=>client.receive({id:message.id,result:{synthetic:true}}));
+  };
+  child.kill=()=>{child.stopRequested=true;};children.push(child);return child;
+ }});
+ try{
+  await client.start();client.dispose();assert.equal(children[0].stopRequested,true);
+  const restarting=client.start();await new Promise(setImmediate);
+  assert.equal(children.length,1,'Stop request alone cannot admit a replacement');
+  await assert.rejects(client.waitForExit(5),{code:'CLI_EXIT_PENDING',retryable:true,notSent:true});
+  children[0].emit('close',0);await restarting;assert.equal(children.length,2);
+  client.dispose();
+  const cancelled=assert.rejects(client.start(),{notSent:true,deliveryUncertain:false});
+  await new Promise(setImmediate);client.dispose();children[1].emit('close',0);await cancelled;
+  assert.equal(children.length,2,'Disposal during an exit wait prevents a late spawn');
+  await client.start();assert.equal(children.length,3);
+  client.dispose();children[2].emit('close',0);await client.waitForExit(5);
+ }finally{client.dispose();for(const child of children)child.emit('close',0);}
+}
 async function hostCwdChecks(){
  const fs=require('node:fs'),os=require('node:os');
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-server-cwd-synthetic-'));
@@ -48,6 +71,7 @@ async function hostCwdChecks(){
  }
 }
 (async()=>{
+ await delayedExitChecks();
  await hostCwdChecks();
  // The synthetic server must not resolve a user's CLI before calling the injected spawn.
  const s=new AppServer({executable:process.execPath,spawnProcess:()=>spawn(process.execPath,[path.join(__dirname,'fake-server.cjs')],{windowsHide:true,stdio:['pipe','pipe','pipe']})});

@@ -5,11 +5,24 @@ async function connect(deps) {
     return deps.connecting;
   }
   deps.connectionStarting = true;
-  deps.connecting = (async () => {
-    deps.activeConnection = await deps.connections.resolve();
+  let client;
+  const assertAttempt = () => {
+    if(deps.connecting!==attempt || (client && deps.server!==client))
+      throw Object.assign(Error('The connection attempt was replaced. Retry reconnecting.'),{notSent:true,deliveryUncertain:false});
+  };
+  const attempt = deps.connecting = (async () => {
+    // A stop request is not proof of exit, especially during a Windows handoff.
+    // Keep failed waits retryable without losing the retiring process fence.
+    await deps.waitForAccountServerExit?.();
+    assertAttempt();
+    const connection = await deps.connections.resolve();
+    assertAttempt();
+    deps.activeConnection = connection;
     if (deps.cwd()) deps.fs.mkdirSync(deps.storagePath, { recursive: true });
-    deps.server = new deps.AppServer({
-      executable: deps.path.resolve(await deps.resolveCli()),
+    const executable = deps.path.resolve(await deps.resolveCli());
+    assertAttempt();
+    deps.server = client = new deps.AppServer({
+      executable,
       // The shared server outlives turns. Its Windows cwd must not pin a worktree.
       // Chat/project directories are supplied by thread/start and turn/start.
       cwd: deps.cwd() ? deps.storagePath : undefined,
@@ -148,20 +161,30 @@ async function connect(deps) {
     });
     deps.server.on("disconnected", message => disconnect(deps, notificationServer, message));
     deps.server.on("protocolError", (message) => deps.output.appendLine(message));
-    await deps.server.start();
-    if (deps.activeConnection.provider) await deps.activeConnection.provider.authenticate(deps.providerClient(deps.server, deps.activeConnection));
-    deps.connections.assertCurrent(deps.activeConnection);
+    await client.start();
+    assertAttempt();
+    if (connection.provider) await connection.provider.authenticate(deps.providerClient(client, connection));
+    assertAttempt();
+    deps.connections.assertCurrent(connection);
     await deps.refreshAccount();
+    assertAttempt();
     await deps.refreshCatalog();
+    assertAttempt();
     if(deps.cliPrepared && deps.server.executable===deps.cliPrepared.executable){deps.cliUpdates.accept(deps.cliPrepared.channel,deps.cliPrepared);deps.cliPrepared=null;}
     if(!deps.cliCheckRequest) (deps.setTimeout || setTimeout)(()=>{if(!deps.disposed)void deps.checkCliUpdates();},0);
     return deps.server;
   })().catch((error) => {
-    deps.connecting = null;
-    deps.server?.dispose();
+    if(deps.connecting===attempt || (!deps.connecting && client && deps.server===client)){
+      deps.connecting = null;deps.connectionStarting = false;
+      if(deps.stopAccountServer)deps.stopAccountServer();
+      else client?.dispose();
+    }else if(client){
+      deps.retireAccountServer?.(client);
+      client.dispose();
+    }
     throw error;
-  }).finally(() => { deps.connectionStarting = false; });
-  return deps.connecting;
+  }).finally(() => { if(deps.connecting===attempt)deps.connectionStarting = false; });
+  return attempt;
 }
 
 function notifySessions(deps, message) {
@@ -198,10 +221,14 @@ function notifySessions(deps, message) {
 
 function disconnect(deps, notificationServer, message) {
       if (deps.server !== notificationServer) return;
+      // The transport may report failure before the child has actually closed.
+      // Fence it immediately, including a reconnect racing the startup catch.
+      deps.retireAccountServer?.(notificationServer);
       deps.turnDiagnostics?.disconnect(notificationServer);
       deps.capacityRecovery?.clear();
       if (deps.pendingLogin.current?.client === notificationServer) deps.pendingLogin.finish();
       deps.connecting = null;
+      deps.connectionStarting = false;
       deps.limitsEpoch++;
       deps.limitsRequest = null;
       deps.limits = { buckets: [], loading: false, updatedAt: null, error: true };

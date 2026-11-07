@@ -1,5 +1,12 @@
 # Changelog / История изменений
 
+## 0.4.14 — 2026-11-07
+
+- A chat that sends while its folder is busy with another chat or MCP task moves into its own git worktree (`<repo>/.rundix/worktrees/<name>`, branch `rundix/<name>`) with a copy of the folder's uncommitted changes. The chat shows the branch with Merge and Remove worktree buttons. Outside a git repository the send is refused and the draft is kept.
+- A chat in Plan mode runs in a read-only sandbox, so it shares a busy folder instead of waiting or moving to a worktree, and does not block a writing chat.
+- A chat in a window without an open folder says so instead of failing with "projectDirectory must be absolute."; it uses the folder once the window opens one.
+- When another window is starting its own turn, a chat waits up to 20 seconds for the shared account instead of failing at once.
+
 ## 0.4.13 — 2026-10-26
 
 - The headless service recovers on its own when Windows reuses a dead service's PID for another process (for example `svchost`). Previously the owner stayed "unverified": no new service was started, MCP `tools/list` timed out ("tools fetch failed"), and a stale `mcp-bridge` lease made every new service exit silently. The start time is now read via CIM when `Get-Process` cannot read it, a missing pipe with an unverifiable owner counts as dead (access denied still blocks, keeping the singleton), leases whose PID belongs to a process started after the lease was written are reaped (also when switching accounts), the descriptor is removed before the pipe closes, and a failed start is logged as `service_start_failed` with a safe error code. See `docs/service-ipc.md`.

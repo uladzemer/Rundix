@@ -199,9 +199,20 @@ async function sendChecks() {
     const guard=fixture();guard.context.locale.language=language;guard.context.authBusy=true;
     guard.context.pendingLogin.current={};
     await assert.rejects(guard.context.send(guard.s,'Synthetic input'),error=>error.retryable && (language==='en'?/account menu/:/меню аккаунта/).test(error.message));
-    guard.context.authBusy=false;guard.context.pendingLogin.current=null;guard.leases.add('account-credentials');
+    guard.context.authBusy=false;guard.context.pendingLogin.current=null;guard.leases.add('account-credentials');require('../runtime/send-queue.cjs').timing.accountWaitMs=0;
     await assert.rejects(guard.context.send(guard.s,'Synthetic input'),error=>error.retryable && (language==='en'?/another window.*account menu/:/другом окне.*меню аккаунта/).test(error.message));
+    require('../runtime/send-queue.cjs').timing.accountWaitMs=20000;
     assert.equal(guard.calls.length,0);assert.equal(guard.s.draft,'Synthetic input');
+  }
+  // A chat waits for another window that is only starting its own turn; a double send is refused meanwhile.
+  {
+    const f=fixture();f.leases.add('account-credentials');
+    f.start(async()=>{f.emit('turn/started');f.emit('turn/completed');return {turn:{id:'synthetic-turn'}};});
+    const sent=f.context.send(f.s,'Synthetic input');
+    await assert.rejects(f.context.send(f.s,'Synthetic input'),error=>error.notSent);
+    setTimeout(()=>f.leases.delete('account-credentials'),300);
+    await sent;
+    assert.equal(f.s.sendingTask,false);assert.ok(f.calls.some(call=>call.method==='turn/start'));
   }
   // Started notification already arrived when the reply times out.
   let f = fixture();

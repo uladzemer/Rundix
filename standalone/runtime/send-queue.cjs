@@ -1,4 +1,5 @@
 // Host state is supplied explicitly; mutable values are read through deps.
+const timing = { accountWaitMs: 20000 };
 async function send(deps, s, text, attached=s.attachments, options={}) {
   deps.capacityRecovery?.beforeSend(s,options);
   deps.limitRecovery?.beforeSend(s,options);
@@ -9,7 +10,19 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
   if(s.worktreeBusy)throw Object.assign(Error(deps.locale.t('Дождитесь завершения операции с worktree.')),{notSent:true,retryable:true});
   let accountLease;
   // Only a held lease is 'busy in another window'; file-system failures keep their own message and are not retried.
-  try{accountLease = deps.store.acquire('account-credentials');}catch(error){if(error?.syscall)throw Object.assign(error,{notSent:true});throw Object.assign(Error(deps.browserSignInMessage(true)),{notSent:true,retryable:true});}
+  // Another window usually holds it only while it starts its own turn: a chat waits briefly (MCP tasks retry on their own).
+  s.sendingTask=true;
+  try{
+    const deadline=Date.now()+(options.projectDirectory?0:timing.accountWaitMs);
+    for(;;){
+      try{accountLease = deps.store.acquire('account-credentials');break;}
+      catch(error){
+        if(error?.syscall)throw Object.assign(error,{notSent:true});
+        if(Date.now()>=deadline || deps.authBusy)throw Object.assign(Error(deps.browserSignInMessage(true)),{notSent:true,retryable:true});
+        await new Promise(resolve=>setTimeout(resolve,250));
+      }
+    }
+  }catch(error){s.sendingTask=false;throw error;}
   let directoryLease=null, leasedDirectory=null;
   // defer: a busy folder only notes that a move is needed; it happens once the send is otherwise valid.
   const ensureDirectory=async(defer=false)=>{
@@ -386,4 +399,4 @@ async function drainFollowUps(deps, s,{manual=false}={}){
     }
   } finally {releaseQueue();}
 }
-module.exports = { send, queueFollowUp, steer, drainFollowUps };
+module.exports = { send, queueFollowUp, steer, drainFollowUps, timing };

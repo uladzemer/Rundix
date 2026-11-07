@@ -17,6 +17,8 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
     if(!options.projectDirectory)await worktrees.recover(deps,s);
     const actual=deps.taskDirectory.canonical(s.cwd || deps.cwd());
     if(options.projectDirectory && actual!==options.projectDirectory)throw Error('MCP chat project directory changed.');
+    // A Plan chat runs in a read-only sandbox: it shares the folder instead of holding it or moving to a worktree.
+    if(!options.projectDirectory && !s.mcpTask && deps.modes.current(s.prefs)?.plan){directoryLease?.();directoryLease=null;leasedDirectory=null;return;}
     if(actual!==leasedDirectory){
       const next=await worktrees.acquire(deps,s,actual,{...options,defer});
       if(!next)return;

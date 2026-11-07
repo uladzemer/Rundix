@@ -162,6 +162,20 @@ async function sendChecks() {
         }finally{held();}
       }
       const plain=path.join(root,'plain');await fs.mkdir(plain);
+      // A read-only Plan chat shares a busy folder: no worktree, no lease, and a writer is not blocked by it.
+      for(const cwd of [main,plain]) {
+        const f=fixture();f.s.cwd=cwd;f.context.taskDirectory=directories;f.context.store=diskStore;
+        f.context.modes={current:()=>({id:'plan',plan:true}),policy:()=>({})};
+        const held=directories.acquire(diskStore,cwd);
+        let writerBlocked=null;
+        f.start(async()=>{
+          held();
+          try{directories.acquire(diskStore,cwd)();writerBlocked=false;}catch{writerBlocked=true;}
+          f.emit('turn/started');f.emit('turn/completed');return {turn:{id:'synthetic-turn'}};
+        });
+        await f.context.send(f.s,'Synthetic research');
+        assert.equal(f.s.worktree,undefined);assert.equal(f.s.cwd,cwd);assert.equal(writerBlocked,false);
+      }
       const f=fixture();f.s.cwd=plain;f.context.taskDirectory=directories;f.context.store=diskStore;
       const held=directories.acquire(diskStore,plain);
       try {

@@ -176,6 +176,12 @@ async function sendChecks() {
         await f.context.send(f.s,'Synthetic research');
         assert.equal(f.s.worktree,undefined);assert.equal(f.s.cwd,cwd);assert.equal(writerBlocked,false);
       }
+      // A window without a folder explains itself and keeps the draft.
+      {
+        const f=fixture();f.s.cwd=undefined;f.context.cwd=()=>undefined;f.context.taskDirectory=directories;f.context.store=diskStore;
+        await assert.rejects(f.context.send(f.s,'Synthetic input'),error=>error.notSent && /не открыта папка проекта/.test(error.message));
+        assert.equal(f.calls.length,0);assert.equal(f.s.draft,'Synthetic input');
+      }
       const f=fixture();f.s.cwd=plain;f.context.taskDirectory=directories;f.context.store=diskStore;
       const held=directories.acquire(diskStore,plain);
       try {

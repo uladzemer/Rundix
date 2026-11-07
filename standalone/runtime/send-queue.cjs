@@ -15,6 +15,8 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
   const ensureDirectory=async(defer=false)=>{
     const worktrees=require('./chat-worktrees.cjs');
     if(!options.projectDirectory)await worktrees.recover(deps,s);
+    // A chat created in a window without a folder has no project yet; it adopts one once the window opens a folder.
+    if(!s.cwd && !deps.cwd())throw Error(deps.locale.t('В этом окне не открыта папка проекта. Откройте папку и повторите. Черновик сохранён.'));
     const actual=deps.taskDirectory.canonical(s.cwd || deps.cwd());
     if(options.projectDirectory && actual!==options.projectDirectory)throw Error('MCP chat project directory changed.');
     // A Plan chat runs in a read-only sandbox: it shares the folder instead of holding it or moving to a worktree.

@@ -2223,7 +2223,11 @@ function activate(context) {
   });
   let lastCliCheck=0;
   const maintenanceTimer=setInterval(()=>{
-    if(core.state.disposed||!core.state.server?.child)return;
+    if(core.state.disposed)return;
+    if(connections.supportsRecovery() && core.sessions.size && !core.state.authBusy && !core.state.connectionStarting &&
+      ![...core.sessions.values()].some(session=>session.busy || session.compacting || session.sendingTask))
+      void refreshAccountStatus().catch(()=>{});
+    if(!core.state.server?.child)return;
     if(Date.now()-lastCliCheck>=3600000 || cliInfo.phase==='pending') {
       lastCliCheck=Date.now();void checkCliUpdates();
     }
@@ -2233,6 +2237,7 @@ function activate(context) {
     connections: {
       version: 1,
       menuVersion: 1,
+      recoveryVersion: 1,
       registerProvider(owner, provider) { const subscription = connections.register(owner, provider); broadcast(); return subscription; },
       configure: configureConnection,
       useLocal: () => configureConnection('local'),

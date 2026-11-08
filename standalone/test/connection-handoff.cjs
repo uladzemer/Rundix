@@ -100,6 +100,27 @@ async function main(){
   assert.equal(transports.length,6);assert.equal(core.state.server,transports[5]);
   assert.equal(transports[5].stopped,undefined);assert.equal(core.state.connectionStarting,false);
   assert.equal(await core.connect(),transports[5]);
+  // Idle status refresh performs provider recovery under the credential lease,
+  // replacing an already-authenticated CLI without reloading the window.
+  let recoveries=0;
+  provider.recoverConnection=async({assertCanChange})=>{
+    assert.equal(core.state.authBusy,true);
+    assertCanChange();recoveries++;account=3;return true;
+  };
+  const refresh=core.refreshAccountStatus();
+  await until(()=>transports[5].stopped);
+  transports[5].close();await refresh;
+  assert.equal(transports.length,7);assert.equal(recoveries,1);
+  assert.equal(core.state.account.email,'synthetic-3@example.test');
+  assert.equal(core.state.limits.error,false);assert.equal(core.state.limits.loading,false);
+  assert.equal(core.state.authBusy,false);assert.equal(s.draft,'Synthetic newer draft');
+  // A busy task still permits ordinary status reads, never account recovery.
+  s.busy=true;await core.refreshAccountStatus();s.busy=false;
+  assert.equal(recoveries,1);assert.equal(transports.length,7);
+  core.stopAccountServer();transports[6].close();core.state.activeConnection=null;
+  assert.equal(core.connections.supportsRecovery(),true,'Cold recovery depends on persisted selection, not an old CLI');
+  await core.refreshAccountStatus();
+  assert.equal(transports.length,8);assert.equal(recoveries,2);
   console.log('PASS handoff: confirmed exit, fresh quotas, transient writer retry, same-thread continuation, preserved draft/FIFO, stop deadline and startup failure recovery.');
  }finally{
   core?.stopAccountServer();for(const client of transports)client.close();

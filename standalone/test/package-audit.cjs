@@ -65,6 +65,7 @@ function audit(file) {
     'extension/runtime/session-core.cjs', 'extension/runtime/mcp-host.cjs', 'extension/runtime/session-actions.cjs',
     'extension/runtime/session-resume.cjs',
     'extension/runtime/server-connection.cjs',
+    'extension/runtime/connection-recovery.cjs',
     'extension/runtime/send-queue.cjs',
     'extension/runtime/question-policy.cjs',
     'extension/runtime/question-answer.cjs',

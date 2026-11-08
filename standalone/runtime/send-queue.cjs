@@ -56,6 +56,7 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
   await ensureDirectory(true);
   await deps.applyPendingMode(s);
   const accountRevisionBeforeConnect=deps.accountReadRevision;
+  await deps.recoverConnection?.(options.requiredConnection);
   await deps.connect();
   if(options.requiredConnection && (deps.activeConnection?.id!==options.requiredConnection.id || deps.activeConnection?.revision!==options.requiredConnection.revision || !deps.activeConnection?.provider))throw Error('MCP task connection changed.');
   deps.connections.assertCurrent(deps.activeConnection);

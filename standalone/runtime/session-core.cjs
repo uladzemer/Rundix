@@ -22,6 +22,7 @@ function createSessionCore(host) {
     limits: { buckets: [], loading: false, updatedAt: null, error: false },
     limitsEpoch: 0, limitsRequest: null, defaultModel: undefined, defaultEffort: undefined,
     authBusy: false, authOwner: null, activeConnection: null, connectionStarting: false,
+    connectionRecoveryPending: null,
     accountStatusRequest: null, cliPrepared: null, disposed: false,
     catalogRequest: null, catalogUpdatedAt: 0, accountReadRevision: 0, accountRequestEpoch: 0,
   };
@@ -78,7 +79,7 @@ function createSessionCore(host) {
     get: () => state[key], set: value => { state[key] = value; }, enumerable: true,
   });
   const operations = {};
-  const modules = ['server-connection', 'session-persistence', 'session-resume', 'send-queue', 'question-policy', 'question-answer', 'session-actions', 'mcp-access'];
+  const modules = ['server-connection', 'connection-recovery', 'session-persistence', 'session-resume', 'send-queue', 'question-policy', 'question-answer', 'session-actions', 'mcp-access'];
   for (const name of modules) for (const [key, operation] of Object.entries(require('./' + name + '.cjs')))
     operations[key] = deps[key] = (...args) => operation(deps, ...args);
   const browserSignInMessage = (...args) => require('./account-lifecycle.cjs').browserSignInMessage(deps, ...args);
@@ -161,11 +162,17 @@ function createSessionCore(host) {
   function refreshAccountStatus() {
     if (state.authBusy) return Promise.reject(Error('Wait for the connection change to finish.'));
     if (state.accountStatusRequest) return state.accountStatusRequest;
-    state.accountStatusRequest = (async () => {
+    const read = async () => {
       await connect();
       await refreshAccount();
       await Promise.all([refreshLimits(), refreshCatalog()]);
-    })().finally(() => { state.accountStatusRequest = null; broadcast(); });
+    };
+    const idle = !state.connectionStarting && ![...sessions.values()].some(session => session.busy || session.compacting || session.sendingTask);
+    const recover = connections.selection().id !== 'local' && idle;
+    state.accountStatusRequest = (recover ? withLocalSignIn(async () => {
+      await deps.recoverConnection();
+      await read();
+    }) : read()).finally(() => { state.accountStatusRequest = null; broadcast(); });
     return state.accountStatusRequest;
   }
   function stopAccountServer() {

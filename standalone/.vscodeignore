@@ -61,6 +61,7 @@
 !runtime/chat-worktrees.cjs
 !docs/mcp.md
 !runtime/connection-companions.cjs
+!runtime/connection-recovery.cjs
 !runtime/mcp-panel.cjs
 !runtime/server-connection.cjs
 !runtime/account-lifecycle.cjs

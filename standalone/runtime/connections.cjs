@@ -27,6 +27,7 @@ class Connections {
     if (!OWNER.test(owner) || !provider || !ID.test(provider.id || '') || provider.id === 'local' ||
         typeof provider.label !== 'string' || !provider.label.trim() || provider.label.length > 100 ||
         typeof provider.authenticate !== 'function' || typeof provider.configure !== 'function' ||
+        (provider.recoverConnection !== undefined && typeof provider.recoverConnection !== 'function') ||
         (provider.accountLabel !== undefined && (typeof provider.accountLabel !== 'string' || provider.accountLabel.length > 100)) ||
         ((provider.readMenu !== undefined || provider.runMenuAction !== undefined) &&
           (typeof provider.readMenu !== 'function' || typeof provider.runMenuAction !== 'function')) ||
@@ -40,6 +41,12 @@ class Connections {
   }
   choices() {
     return [{id: 'local', label: locale.t('Локальный Codex CLI')}, ...[...this.providers.values()].map(({provider}) => ({id: provider.id, label: provider.label}))];
+  }
+  supportsRecovery() {
+    try {
+      const selected = this.selection(), entry = this.providers.get(selected.id);
+      return selected.id !== 'local' && entry?.owner === selected.owner && typeof entry.provider.recoverConnection === 'function';
+    } catch { return false; }
   }
   async resolve() {
     const selected = this.selection();

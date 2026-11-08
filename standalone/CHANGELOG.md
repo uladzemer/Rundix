@@ -1,5 +1,9 @@
 # Changelog / История изменений
 
+## 0.4.17 — 2026-11-08
+
+- Connection menus accept bounded optional presentation ranks and a localized sort caption. Name sorting and menus without the new fields retain their previous behavior.
+
 ## 0.4.16 — 2026-11-08
 
 - Optional companion connections can reconcile an unavailable selection before sending and during idle status refresh, under the shared credential lease. Open chats retry about once a minute, including after a failed cold connection. A changed selection replaces the CLI and refreshes limits without reloading the window. Active tasks prevent switching; drafts and queued input are preserved and never replayed by recovery.

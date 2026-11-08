@@ -3,13 +3,15 @@ const text = (value, max) => typeof value === 'string' && value.length <= max;
 function project(value) {
   if (value === null) return null;
   if (!value || !text(value.title,100) || !Array.isArray(value.items) || value.items.length > 32) throw Error('Invalid connection menu.');
+  if (value.sortLabel !== undefined && (!text(value.sortLabel,64) || !value.sortLabel)) throw Error('Invalid connection menu.');
   const ids = new Set();
-  return {title:value.title,items:value.items.map(item => {
+  return {title:value.title,...(value.sortLabel !== undefined ? {sortLabel:value.sortLabel} : {}),items:value.items.map(item => {
     if (!item || !text(item.id,128) || !item.id || ids.has(item.id) || !text(item.label,256) || !item.label ||
       (item.detail !== undefined && !text(item.detail,256))) throw Error('Invalid connection menu.');
     ids.add(item.id);
+    if(item.order !== undefined && (!Number.isSafeInteger(item.order) || Math.abs(item.order)>1000000))throw Error('Invalid connection menu.');
     if (item.quota !== undefined && (!Array.isArray(item.quota) || item.quota.length > 4 || item.quota.some(quota => !quota || !text(quota.label,32) || !Number.isFinite(quota.remaining) || quota.remaining < 0 || quota.remaining > 100 || (quota.resetAt !== undefined && quota.resetAt !== null && (!Number.isFinite(quota.resetAt) || quota.resetAt <= 0 || quota.resetAt > 8640000000000))))) throw Error('Invalid connection menu.');
-    return {id:item.id,label:item.label,detail:item.detail || '',quota:item.quota?.map(quota=>({label:quota.label,remaining:quota.remaining,resetAt:quota.resetAt ?? null})),checked:item.checked === true,disabled:item.disabled === true};
+    return {id:item.id,label:item.label,detail:item.detail || '',...(item.order !== undefined ? {order:item.order} : {}),quota:item.quota?.map(quota=>({label:quota.label,remaining:quota.remaining,resetAt:quota.resetAt ?? null})),checked:item.checked === true,disabled:item.disabled === true};
   })};
 }
 function bounded(read, timeout) {

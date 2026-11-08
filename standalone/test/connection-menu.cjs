@@ -8,6 +8,14 @@ function fixture(readMenu) {
   return {menu:new ConnectionMenu(registry,20),change:()=>revision++,provider};
 }
 const value=()=>({title:'Synthetic choices',items:[{id:'one',label:'Synthetic item',secret:'synthetic-private'}],secret:'synthetic-private'});
+test('optional menu ordering projects bounded presentation without changing legacy menus',()=>{
+  const result=project({title:'Synthetic',sortLabel:'Synthetic priority',items:[{id:'one',label:'One',order:2,secret:'synthetic-private'}]});
+  assert.equal(result.sortLabel,'Synthetic priority');assert.equal(result.items[0].order,2);
+  assert.equal(JSON.stringify(result).includes('synthetic-private'),false);
+  for(const order of [NaN,Infinity,1.5,1000001,'1'])assert.throws(()=>project({title:'Bad',items:[{id:'one',label:'One',order}]}));
+  assert.throws(()=>project({title:'Bad',sortLabel:'x'.repeat(65),items:[]}));
+  assert.equal(Object.hasOwn(project(value()).items[0],'order'),false);
+});
 test('menu publishes only bounded presentation fields and actions reject stale/forged revisions',async()=>{
   const f=fixture(value);await f.menu.refresh();const menu=f.menu.snapshot();
   assert.equal(JSON.stringify(menu).includes('synthetic-private'),false);

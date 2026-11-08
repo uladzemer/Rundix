@@ -30,6 +30,8 @@ The provider supplies:
 
 Opening the account menu or refreshing status reads fresh presentation with a bounded wait. Failure removes previous rows and shows a generic retry message. Results and one-use action revisions are scoped to the selected provider instance and connection revision. Actions run under the existing idle credential lease; the provider must recheck its current policy and bound its own network operations. Returning `activate` reconnects the CLI, while `cancel` preserves it. Existing providers without menu methods retain the settings-only interface.
 
+Since Rundix 0.4.17, menus may provide an optional `sortLabel` (nonempty, at most 64 characters) and item `order` (integer from -1000000 to 1000000). The default menu sort uses these presentation ranks when supplied; name sorting remains available. Providers own the ranking and localized caption. Without these fields the previous quota-based presentation is preserved. These fields do not grant additional action capabilities.
+
 ## Legacy conversation metadata
 
 `api.connections.importHistory(ownerExtensionId, {sessions, metadata})` accepts a bounded snapshot from a registered owner. It copies session records, drafts, queued tasks and metadata into Rundix's store under an idle lease. Existing keys, duplicate thread IDs and damaged targets are preserved, not overwritten. The result includes imported/unchanged/conflict counts. It does not read the source extension's files or credentials and does not import every VS Code setting or native tab arrangement.

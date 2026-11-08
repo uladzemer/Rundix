@@ -1197,11 +1197,12 @@ function open(kind, refresh = true, changeItems = null) {
     if (connectionMenu?.error) target.append(el('p',WorkbenchI18n.t('Не удалось обновить меню подключения. Нажмите «Обновить статус».')));
     if (connectionMenu?.items?.length) {
       target.append(el('small',connectionMenu.title));
-      const score=item=>item.quota?.length ? Math.min(...item.quota.map(window=>window.remaining)) : Number.POSITIVE_INFINITY;
+      const score=item=>Number.isSafeInteger(item.order) ? item.order : item.quota?.length ? Math.min(...item.quota.map(window=>window.remaining)) : Number.POSITIVE_INFINITY;
       const items=[...connectionMenu.items].sort((left,right)=>accountSortMode==='name' ? left.label.localeCompare(right.label) : score(left)-score(right) || left.label.localeCompare(right.label));
       const rerender=()=>{close();open('account',false);};
-      row(target,WorkbenchI18n.t('Сортировка'),accountSortMode==='limit'?WorkbenchI18n.t('По лимиту'):WorkbenchI18n.t('По имени'),rerender,{disabled:state.busy || state.authBusy || state.compacting});
-      row(target,WorkbenchI18n.t('По лимиту'),'',()=>{accountSortMode='limit';persist();rerender();},{checked:accountSortMode==='limit',disabled:state.busy || state.authBusy || state.compacting});
+      const sortLabel=connectionMenu.sortLabel || WorkbenchI18n.t('По лимиту');
+      row(target,WorkbenchI18n.t('Сортировка'),accountSortMode==='limit'?sortLabel:WorkbenchI18n.t('По имени'),rerender,{disabled:state.busy || state.authBusy || state.compacting});
+      row(target,sortLabel,'',()=>{accountSortMode='limit';persist();rerender();},{checked:accountSortMode==='limit',disabled:state.busy || state.authBusy || state.compacting});
       row(target,WorkbenchI18n.t('По имени'),'',()=>{accountSortMode='name';persist();rerender();},{checked:accountSortMode==='name',disabled:state.busy || state.authBusy || state.compacting});
       for (const item of items) {
         const button=row(target,item.label,item.detail,

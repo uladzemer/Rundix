@@ -28,18 +28,23 @@ const chrome=process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Applicat
         for(const [key,value] of Object.entries({'editor-background':dark?'#181818':'#ffffff','sideBar-background':dark?'#181818':'#ffffff','input-background':dark?'#242424':'#f5f5f5','editorWidget-background':dark?'#242424':'#f5f5f5','foreground':dark?'#cccccc':'#242424','descriptionForeground':dark?'#a0a0a0':'#666666','widget-border':dark?'#383838':'#dddddd'}))document.documentElement.style.setProperty('--vscode-'+key,value);
         WorkbenchI18n.setLanguage(language);
         window.fixture.language=language;
-        window.fixture.connection.menu={title:'Synthetic choices '+language+' '+dark,revision:'synthetic-revision',items:[{id:'one',label:'one@example.test',detail:'plus',quota:[{label:'5ч',remaining:80,resetAt:Date.now()/1000+3600},{label:'Нед',remaining:20,resetAt:Date.now()/1000+7200}],checked:true},{id:'two',label:'two@example.test',detail:'pro'}]};window.update();
+        window.fixture.connection.menu={title:'Synthetic choices '+language+' '+dark,sortLabel:language==='ru'?'Порядок подключения':'Connection order',revision:'synthetic-revision',items:[{id:'one',order:2,label:'one@example.test',detail:'plus',quota:[{label:'5ч',remaining:80,resetAt:Date.now()/1000+3600},{label:'Нед',remaining:20,resetAt:Date.now()/1000+7200}],checked:true},{id:'two',order:1,label:'two@example.test',detail:'pro'}]};window.update();
       },{language,dark});
       await page.waitForFunction(()=>document.querySelector('.account-menu')?.textContent.includes('two@example.test'));
       await page.waitForFunction(()=>document.querySelector('.connection-quota-value'));
       assert.equal(await page.$eval('.account-menu .menu-row small',node=>getComputedStyle(node).whiteSpace),'normal');
       assert.equal(await page.$eval('.connection-quota-value.healthy',node=>node.textContent),'5ч 80%');
       assert.equal(await page.$eval('.connection-quota-value.warning',node=>node.textContent),'Нед 20%');
-      assert.equal(await page.$eval('.account-menu',node=>node.textContent.includes('По лимиту') || node.textContent.includes('By limit')),true);
+      assert.equal(await page.$eval('.account-menu',node=>node.textContent.includes('Порядок подключения') || node.textContent.includes('Connection order')),true);
+      assert.equal(await page.$$eval('.account-menu button',nodes=>nodes.filter(node=>node.textContent.includes('@example.test'))[0].textContent.includes('two@example.test')),true);
       await page.screenshot({path:path.join(__dirname,`../.verification/connection-menu-${language}-${dark?'dark':'light'}-${width}.png`)});
       const bounds=await page.$eval('.account-menu',node=>({scroll:node.scrollWidth,client:node.clientWidth}));
       assert.ok(bounds.scroll<=bounds.client+1,JSON.stringify({language,dark,width,...bounds}));
     }
+    await page.$$eval('.account-menu button',nodes=>nodes.find(node=>node.textContent==='By name').click());
+    assert.equal(await page.$$eval('.account-menu button',nodes=>nodes.filter(node=>node.textContent.includes('@example.test'))[0].textContent.includes('one@example.test')),true);
+    await page.evaluate(()=>{delete window.fixture.connection.menu.sortLabel;for(const item of window.fixture.connection.menu.items)delete item.order;window.update();});
+    assert.equal(await page.$eval('.account-menu',node=>node.textContent.includes('By limit')),true);
     await page.$$eval('.account-menu button',buttons=>buttons.find(button=>button.textContent.includes('two@example.test')).click());
     assert.ok(await page.evaluate(()=>window.calls.some(call=>call.action==='connectionMenuAction' && call.id==='two' && call.revision==='synthetic-revision')));
     await page.evaluate(()=>{window.fixture.busy=true;window.update();});

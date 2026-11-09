@@ -28,7 +28,7 @@ async function main(){
    if(method==='config/read')return {config:{model:model.model,model_reasoning_effort:'medium'}};
    if(method==='thread/turns/list')return {data:[writerBusy?{id:'synthetic-retiring-writer',status:'inProgress'}:latest]};
    if(method==='thread/items/list')return {data:[]};
-   if(method==='thread/resume')return {thread:{name:'Synthetic chat',cwd:root,status:{type:'idle'}},model:model.model,reasoningEffort:'medium'};
+   if(method==='thread/resume')return {thread:{name:'Synthetic chat',cwd:root,status:{type:'idle'}},model:'synthetic-historical-model',reasoningEffort:'low',serviceTier:'fast'};
    if(method==='turn/start'){
     const turn={id:'synthetic-continuation',status:'inProgress'};
     this.emit('notification',{method:'turn/started',params:{threadId:s.id,turn}});
@@ -70,6 +70,9 @@ async function main(){
   const priorRelease=releaseLimits;await until(()=>releaseLimits!==priorRelease);releaseLimits();await until(()=>{if(!s.limitRetry && s.error)throw Error(s.error);return starts().length===1 && !s.sendingTask;});
   assert.equal(starts()[0].server,2);assert.equal(starts()[0].params.threadId,'synthetic-thread');
   assert.deepEqual(starts()[0].params.input,[{type:'text',text:CONTINUE}]);
+  assert.equal(starts()[0].params.model,model.model,'Historical model must not replace the next-turn selection');
+  assert.equal(s.model,model.model);assert.equal(s.effort,'medium');
+  assert.notEqual(s.prefs.fast,true,'Historical tier must not enable Fast during recovery');
   assert.equal(s.draft,'Synthetic newer draft');assert.equal(s.followUps.length,1);assert.equal(s.limitRetry,null);
   latest={id:'synthetic-continuation',status:'completed'};
   // Prevent normal FIFO draining so this test isolates connection recovery.

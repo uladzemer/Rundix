@@ -107,7 +107,7 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
   }
   deps.updateDraftModel(s);
   const selection={model:s.model,effort:s.effort,fast:s.prefs.fast,...options.modelSelection};
-  if (s.id && !s.loaded) await deps.resume(s, s.id);
+  if (s.id && !s.loaded) await deps.resume(s, s.id, {preserveSelection:true});
   await ensureDirectory(true);
   const selectedModel=deps.catalog.find(model=>model.model===selection.model);
   if (!selectedModel)

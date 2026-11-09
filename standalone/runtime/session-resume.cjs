@@ -1,7 +1,7 @@
 // Host state is supplied explicitly; mutable values are read through deps.
-async function resume(deps, s, id) {
+async function resume(deps, s, id, options={}) {
   if (s.loading) return s.loading;
-  const loading = s.loading = deps.resumeThread(s, id);
+  const loading = s.loading = deps.resumeThread(s, id, options);
   try {
     return await loading;
   } catch (error) {
@@ -20,7 +20,7 @@ async function resumeOptions(deps,s,id) {
     ...(s.preflight?.enabled?{config:await deps.preparationConfig(s),...(deps.preflight.preparing(s.preflight)?{sandbox:'read-only',approvalPolicy:'never'}:{})}:deps.mcpThreadConfig(s)?{config:deps.mcpThreadConfig(s)}:{})};
 }
 
-async function resumeThread(deps, s, id) {
+async function resumeThread(deps, s, id, {preserveSelection=false}={}) {
   const originalId = s.id;
   // Serialize reloads with best-effort MCP cleanup, including a tab reopened while it is in flight.
   await deps.threadReleases.get(id)?.catch(()=>{});
@@ -57,10 +57,14 @@ async function resumeThread(deps, s, id) {
   s.id = id;
   s.cwd = s.cwdOverride || (s.worktree ? s.cwd : result.thread.cwd || s.cwd);
   s.parentId = result.thread.forkedFromId || s.parentId;
-  s.model = result.model;
   s.turnModel = result.model;
-  s.effort = result.reasoningEffort;
-  if(typeof s.prefs.fast!=='boolean')s.prefs.fast=['fast','priority'].includes(result.serviceTier);
+  // A send already selected its next turn. Historical defaults must not replace
+  // that choice or invalidate the recovery owner after a connection handoff.
+  if(!preserveSelection){
+    s.model = result.model;
+    s.effort = result.reasoningEffort;
+    if(typeof s.prefs.fast!=='boolean')s.prefs.fast=['fast','priority'].includes(result.serviceTier);
+  }
   s.name = result.thread.name || result.thread.preview || "Rundix";
   s.busy = result.thread.status?.type === "active";
   if(!s.busy&&s.preflight?.phase==='executing')s.preflight.phase='review';

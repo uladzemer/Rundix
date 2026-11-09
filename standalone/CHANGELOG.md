@@ -1,5 +1,9 @@
 # Changelog / История изменений
 
+## Unreleased
+
+- Restoring a chat before sending preserves its selected model, reasoning effort and Fast setting. Historical defaults returned after a companion connection handoff no longer cancel automatic usage-limit continuation.
+
 ## 0.4.17 — 2026-11-08
 
 - Connection menus accept bounded optional presentation ranks and a localized sort caption. Name sorting and menus without the new fields retain their previous behavior.

@@ -164,7 +164,33 @@ if(!chromePath)throw Error('Set CHROME_PATH to an installed Chrome or Chromium e
  await page.evaluate(()=>{window.fixture.models[0].supportedReasoningEfforts.push({reasoningEffort:'none'});window.fixture.error=null;window.update();window.dispatchEvent(new MessageEvent('message',{data:{type:'open',action:'commands'}}));});
  await page.$$eval('.menu-row',nodes=>nodes.find(n=>n.textContent.includes('Включить или выключить')).click());assert.ok(await page.evaluate(()=>window.calls.some(m=>m.action==='settings'&&m.effort==='none')));await page.keyboard.press('Escape');
  await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'open',action:'group'}})));await page.type('.menu form input','Architecture');await page.click('.menu form button');assert.ok(await page.evaluate(()=>window.calls.some(m=>m.action==='group'&&m.name==='Architecture')));
- await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'open',action:'defaults'}})));await page.click('.menu form button');assert.ok(await page.evaluate(()=>window.calls.some(m=>m.action==='defaults'&&m.model==='fixture')));
+ await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'open',action:'defaults'}})));
+ assert.equal(await page.$eval('.default-access-mode',node=>node.value),'');
+ await page.select('.default-access-mode','full');
+ const defaultsViewport=page.viewport();
+ const defaultsStyle=await page.$eval('html',node=>node.getAttribute('style'));
+ for(const language of ['ru','en'])for(const theme of ['dark','light'])for(const width of [340,1100]){
+  await page.keyboard.press('Escape');await page.setViewport({width,height:850});
+  await page.evaluate(({language,theme})=>{
+   window.fixture.language=language;
+   WorkbenchI18n.setLanguage(language);
+   const colors=theme==='light'?{'editor-background':'#ffffff',foreground:'#333333','descriptionForeground':'#616161','input-background':'#ffffff','input-foreground':'#333333','widget-border':'#cecece'}:{'editor-background':'#1e1e1e',foreground:'#cccccc','descriptionForeground':'#999999','input-background':'#313131','input-foreground':'#cccccc','widget-border':'#454545'};
+   for(const [key,value]of Object.entries(colors))document.documentElement.style.setProperty('--vscode-'+key,value);
+   document.documentElement.style.setProperty('--vscode-editorWidget-background',theme==='light'?'#f3f3f3':'#252526');
+   document.documentElement.style.setProperty('--vscode-editorWidget-foreground',theme==='light'?'#333333':'#cccccc');
+   document.documentElement.style.colorScheme=theme;
+   window.fixture.defaults={...window.fixture.defaults,mode:'full'};
+   window.update();
+   window.dispatchEvent(new MessageEvent('message',{data:{type:'open',action:'defaults'}}));
+  },{language,theme});
+  assert.equal(await page.$eval('.default-access-mode',node=>node.value),'full');
+  assert.equal(await page.$eval('.default-access-mode',node=>node.getAttribute('aria-label')),language==='ru'?'Доступ для новых сессий':'Permissions for new sessions');
+  assert.ok(await page.$eval('.menu',node=>{const bounds=node.getBoundingClientRect();return bounds.left>=0&&bounds.right<=innerWidth&&bounds.top>=0&&bounds.bottom<=innerHeight;}));
+  await (await page.$('.menu')).screenshot({path:path.join(__dirname,`../.verification/project-defaults-${language}-${theme}-${width}.png`)});
+ }
+ await page.evaluate(style=>{if(style===null)document.documentElement.removeAttribute('style');else document.documentElement.setAttribute('style',style);window.fixture.language='ru';WorkbenchI18n.setLanguage('ru');delete window.fixture.defaults;window.update();},defaultsStyle);
+ await page.setViewport(defaultsViewport);
+ await page.click('.menu form button');assert.ok(await page.evaluate(()=>window.calls.some(m=>m.action==='defaults'&&m.model==='fixture'&&m.mode==='full')));
  await page.click('button[aria-label="Добавить файлы"]');assert.equal(await page.$$eval('.menu-row',rows=>rows.length),5);await page.keyboard.press('Escape');
  await page.$eval('textarea',n=>{n.value='Explain @ser';n.setSelectionRange(n.value.length,n.value.length);n.dispatchEvent(new Event('input',{bubbles:true}));});await page.waitForSelector('.menu-row');await page.screenshot({path:path.join(__dirname,'../.verification/project-files.png')});await page.focus('textarea');await page.keyboard.press('Enter');await page.waitForSelector('.attachments button');assert.equal(await page.$eval('textarea',n=>n.value),'Explain ');assert.ok(await page.evaluate(()=>window.calls.some(m=>m.action==='attachProjectFile'&&m.id==='src-server')));
  await page.evaluate(()=>{window.fixture.items.push({id:'code-fixture',type:'agentMessage',turnId:'turn-fixture',phase:'final_answer',text:'Example\n```js\nconst answer = 42;\n```'});window.update();});await page.hover('[data-item-id="code-fixture"]');await page.screenshot({path:path.join(__dirname,'../.verification/message-actions.png')});await page.click('[data-item-id="code-fixture"] .code-copy');assert.ok(await page.evaluate(()=>window.calls.some(m=>m.action==='copyItem'&&m.itemId==='code-fixture'&&m.codeIndex===0)));await page.click('[data-item-id="code-fixture"] .message-actions button:last-child');assert.ok(await page.evaluate(()=>window.calls.some(m=>m.action==='fork'&&m.itemId==='code-fixture')));

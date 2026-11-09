@@ -92,12 +92,14 @@ function createSessionCore(host) {
     write:value=>host.turnDiagnostic?host.turnDiagnostic(value):host.logger('[turn diagnostic] '+JSON.stringify(value))});
   let nextDraft = 1;
   function createSession({ key = randomUUID(), saved = store.session(key) || host.workspaceState.get('session:' + key) || {}, inherited = {} } = {}) {
+    const defaultMode = !Object.keys(saved).length && deps.modes.modes.find(mode => mode.id === library.defaults.mode);
+    const defaultPrefs = defaultMode ? {mode: defaultMode.id, access: defaultMode.access, plan: !!defaultMode.plan} : {};
     const s = sessions.get(key) || {
       key, id: null, name: locale.t('Новая сессия {0}', nextDraft++),
       items: [], attachments: [], followUps: [], busy: false, cwd: cwd(),
       model: library.defaults.model, effort: library.defaults.effort,
       ...inherited, ...saved,
-      prefs: { focus: false, showThinking: true, ide: false, plan: false, access: 'workspace', ...inherited.prefs, ...saved.prefs },
+      prefs: { focus: false, showThinking: true, ide: false, plan: false, access: 'workspace', ...inherited.prefs, ...defaultPrefs, ...saved.prefs },
     };
     s.persistedRecord = saved;
     updateDraftModel(s);

@@ -947,7 +947,16 @@ function open(kind, refresh = true, changeItems = null) {
       ),
       form = el("form"),
       models = el("select"),
-      depth = el("select");
+      depth = el("select"),
+      defaultMode = el("select");
+    defaultMode.setAttribute('aria-label', WorkbenchI18n.t('Доступ для новых сессий'));
+    defaultMode.className = 'default-access-mode';
+    for (const mode of [{id:'',label:'Как в текущем чате'}, ...WorkbenchModes.modes]) {
+      const option = el('option', WorkbenchI18n.t(mode.label));
+      option.value = mode.id;
+      option.selected = mode.id === (state.defaults?.mode || '');
+      defaultMode.append(option);
+    }
     models.setAttribute(
       "aria-label",
       WorkbenchI18n.t("Модель для новых сессий"),
@@ -980,11 +989,14 @@ function open(kind, refresh = true, changeItems = null) {
       models,
       el("label", WorkbenchI18n.t("Глубина")),
       depth,
+      el('label', WorkbenchI18n.t('Доступ для новых сессий')),
+      defaultMode,
+      el('p', WorkbenchI18n.t('Полный доступ разрешает файлы и сеть вне проекта без запросов подтверждения.')),
       el("button", WorkbenchI18n.t("Сохранить"), "primary"),
     );
     form.onsubmit = (e) => {
       e.preventDefault();
-      send("defaults", { model: models.value, effort: depth.value });
+      send("defaults", { model: models.value, effort: depth.value, mode: defaultMode.value });
       close();
     };
     target.append(

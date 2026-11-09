@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- New session settings include a project-specific access mode, including Full access. The saved choice overrides mode inheritance for new chats; existing chats keep their own permissions.
+
 - Restoring a chat before sending preserves its selected model, reasoning effort and Fast setting. Historical defaults returned after a companion connection handoff no longer cancel automatic usage-limit continuation.
 
 ## 0.4.17 — 2026-11-08

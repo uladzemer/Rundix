@@ -41,6 +41,8 @@ The CLI manages local sign-in and credential storage. Rundix does not read or co
 
 ## Settings and optional features
 
+Open **New session defaults** in the chat command menu to save a model, reasoning effort and access mode for new tabs in this project. **Full access** allows files and network outside the project without approval requests. Existing chats keep their own permissions. Select **Same as the current chat** to restore mode inheritance.
+
 Find **Rundix** in VS Code Settings to change the language, chat width, context indicator, motion, CLI path, update channel and history scope.
 
 Completion sounds, Telegram notifications and local Stop scripts are optional. Telegram is off until configured; when enabled, it sends the final answer to the chat you select. Stop scripts run with your user permissions. Experimental task preparation asks for explicit approval before execution.
@@ -101,6 +103,8 @@ Rundix может установить и обновлять официальн�
 Входом и хранением учётных данных управляет CLI. Rundix не читает и не копирует файлы авторизации. Доступные модели, Fast и лимиты зависят от аккаунта и версии CLI. После внешней смены входа нажмите **Обновить статус** в меню аккаунта.
 
 ### Настройки и дополнительные возможности
+
+В меню команд чата откройте **Настройки новых сессий**, чтобы сохранить модель, глубину и режим доступа для новых вкладок этого проекта. **Полный доступ** разрешает файлы и сеть вне проекта без запросов подтверждения. Существующие чаты сохраняют свои разрешения. Выберите **Как в текущем чате**, чтобы вернуть наследование режима.
 
 В настройках VS Code найдите **Rundix**: там доступны язык, ширина чата, индикатор контекста, анимация, путь к CLI, канал обновлений и область истории.
 

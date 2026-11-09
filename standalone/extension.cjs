@@ -1438,7 +1438,9 @@ function activate(context) {
       )
         throw Error(locale.t("Эта модель не поддерживает выбранную глубину."));
       if (msg.action === "defaults") {
-        await library.setDefaults({ model: model.model, effort });
+        if (msg.mode !== undefined && msg.mode !== '' && !modes.modes.some(mode => mode.id === msg.mode))
+          throw Error(locale.t('Неизвестный режим работы.'));
+        await library.setDefaults({ model: model.model, effort, ...(msg.mode !== undefined ? {mode: msg.mode} : {}) });
         broadcast();
         return;
       }

@@ -1,6 +1,8 @@
 # Changelog / История изменений
 
-## Unreleased
+## 0.4.18 — 2026-11-09
+
+- Automatic usage-limit continuation retains the terminal turn identity after restoring an already running chat and accepts equivalent spellings of the same project directory. Cancellation messages include a fixed guard reason without session data or paths.
 
 - New session settings include a project-specific access mode, including Full access. The saved choice overrides mode inheritance for new chats; existing chats keep their own permissions.
 

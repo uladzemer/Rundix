@@ -18,11 +18,21 @@ function createLimitRecovery(deps) {
   }
   function assertCurrent(s,row) {
     // Server, account and limits are expected to change: that is the companion's job.
-    if(records.get(s)!==row || row.cancelled || deps.disposed || deps.sessions.get(s.key)!==s ||
-      s.id!==row.threadId || connectionId()!==row.connection || s.model!==row.model || s.effort!==row.effort ||
-      s.cwd!==row.cwd || s.prefs.access!==row.access || s.prefs.plan!==row.plan || (s.prefs.fast===true)!==row.fast ||
-      s.stopRequested || s.mcpTask || s.preflight?.enabled || (s.lastStartedTurnId || null)!==row.turnId)
-      throw Object.assign(Error(deps.locale.t('Автопродолжение отменено: состояние сессии изменилось.')),{notSent:true,deliveryUncertain:false});
+    let sameDirectory=s.cwd===row.cwd;
+    if(!sameDirectory){
+      try{sameDirectory=deps.taskDirectory.canonical(s.cwd)===deps.taskDirectory.canonical(row.cwd);}catch{ /* Unavailable paths fail closed. */ }
+    }
+    // Fixed reason codes identify the changed guard without exposing chat data,
+    // account information, model names or local paths.
+    const reason=records.get(s)!==row || row.cancelled ? 'recovery' : deps.disposed ? 'disposed' :
+      deps.sessions.get(s.key)!==s ? 'session' : s.id!==row.threadId ? 'thread' :
+      connectionId()!==row.connection ? 'connection' : s.model!==row.model ? 'model' :
+      s.effort!==row.effort ? 'effort' : !sameDirectory ? 'directory' :
+      s.prefs.access!==row.access ? 'access' : s.prefs.plan!==row.plan ? 'plan' :
+      (s.prefs.fast===true)!==row.fast ? 'fast' : s.stopRequested ? 'stopped' :
+      s.mcpTask || s.preflight?.enabled ? 'workflow' : (s.lastStartedTurnId || null)!==row.turnId ? 'turn' : null;
+    if(reason)throw Object.assign(Error(deps.locale.t('Автопродолжение отменено: состояние сессии изменилось.')+' ['+reason+']'),
+      {code:'AUTO_CONTINUE_STATE_CHANGED',reason,notSent:true,deliveryUncertain:false});
   }
   function beforeSend(s,options) {
     if(options.limitRecovery)return assertCurrent(s,options.limitRecovery);

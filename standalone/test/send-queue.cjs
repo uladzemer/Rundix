@@ -603,6 +603,17 @@ async function limitChecks() {
     assert.equal(f.s.limitRetry.attempt,1,'A successful turn resets the budget');
   }
   {
+    const f=setup();delete f.s.lastStartedTurnId;f.s.turnId='synthetic-original';f.s.busy=true;
+    f.fail();await f.advance(DELAY_MS);
+    assert.equal(f.starts().length,1,'A restored running turn continues without observing its start event');
+  }
+  {
+    const f=setup();f.context.taskDirectory.canonical=value=>value.toLowerCase();
+    f.decision=()=>{f.s.cwd=f.s.cwd.toUpperCase();};
+    f.fail();await f.advance(DELAY_MS);
+    assert.equal(f.starts().length,1,'Equivalent directory spelling after a handoff preserves ownership');
+  }
+  {
     const f=setup({recovers:false});f.fail();assert.equal(f.timers.size,0,'No continuation without a companion that can switch');
     await f.context.send(f.s,'Synthetic manual input',[]);
     assert.equal(f.prepared[0].usageLimitReached,true,'Manual send still reports the limit once');
@@ -656,6 +667,13 @@ async function limitChecks() {
     f=>{f.s.lastStartedTurnId='synthetic-newer';},f=>{f.s.panel=null;}]) {
     const f=setup();f.fail();mutate(f);await f.advance(DELAY_MS);
     assert.equal(f.starts().length,0,'Changed ownership cancels continuation');
+  }
+  for(const [field,reason,value] of [['cwd','directory','synthetic-other-project'],['model','model','synthetic-other-model'],
+    ['lastStartedTurnId','turn','synthetic-newer-turn']]) {
+    const f=setup();f.fail();f.s[field]=value;await f.advance(DELAY_MS);
+    assert.equal(f.starts().length,0,'A genuinely different owner still cancels');
+    assert.ok(f.s.error.endsWith('['+reason+']'),'Only a fixed guard name is displayed');
+    assert.ok(!f.s.error.includes(value),'Changed values never enter the error');
   }
   {
     const f=setup();f.fail();await f.context.send(f.s,'Synthetic manual input',[]);

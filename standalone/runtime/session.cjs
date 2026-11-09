@@ -114,6 +114,9 @@ function notification(session, message, {serviceMode=false}={}) {
   } else if (message.method === "turn/completed") {
     const expected=session.turnId || session.lastStartedTurnId;
     if(expected && p.turn?.id && p.turn.id!==expected)return false;
+    // A restored running turn may finish without this host seeing turn/started.
+    // Retain the accepted terminal owner before clearing the active turn ID.
+    session.lastStartedTurnId = p.turn?.id || expected;
     session.busy = false;
     session.retrying = false;
     session.compacting = false;

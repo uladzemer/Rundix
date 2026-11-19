@@ -38,6 +38,13 @@ const queuedDrafts = new Map(previous.queuedDrafts || []);
 const approvalDrafts = new Map();
 const pendingSends = new Map();
 const pendingPreviews = new Map();
+// Keep host attachments recoverable until delivery, but move their previews out
+// of the composer immediately, including while later host snapshots arrive.
+const submittedAttachments = new Map();
+function composerAttachments() {
+  const submitted=submittedAttachments.get(state.key);
+  return (state.attachments || []).filter(file=>!submitted?.has(file.id));
+}
 // Submitted text stays in the textarea for draft reconciliation, but is hidden
 // while it is in flight; typing over it replaces it (see `beforeinput`).
 const parkedSends = new Map();
@@ -331,7 +338,7 @@ ide.className = "quiet-button";
 model.className = "model-button dropdown";
 submit.className = "icon-button submit-button";
 function updateSubmitState() {
-  submit.disabled = sending || composerParked() || !!pendingModel || !!pendingEffort || pendingClipboardImages.size>0 || (!input.value.trim() && !state.attachments?.some(file=>file.kind==='image'));
+  submit.disabled = sending || !!submittedAttachments.get(state.key)?.size || composerParked() || !!pendingModel || !!pendingEffort || pendingClipboardImages.size>0 || (!input.value.trim() && !composerAttachments().some(file=>file.kind==='image'));
   enqueue.disabled=submit.disabled;enqueue.hidden=true;
   stop.hidden=!state.busy;
   submit.replaceChildren(icon('send'));
@@ -1857,7 +1864,8 @@ function renderHistory() {
   query.focus();
 }
 function submitText(action='send') {
-  if ((!input.value.trim() && !state.attachments?.some(file=>file.kind==='image')) || sending || composerParked() || pendingModel || pendingEffort || pendingClipboardImages.size) return;
+  if ((!input.value.trim() && !composerAttachments().some(file=>file.kind==='image')) || sending || submittedAttachments.get(state.key)?.size || composerParked() || pendingModel || pendingEffort || pendingClipboardImages.size) return;
+  submittedAttachments.set(state.key,new Set((state.attachments || []).map(file=>file.id)));
   sending = true;
   state.error=null;
   pendingSends.set(state.key, input.value);
@@ -2096,7 +2104,7 @@ function render() {
     WorkbenchI18n.t(activeMode.description);
   if(state.prefs.pendingMode)access.title+=' · '+WorkbenchI18n.t('Изменение режима применится после завершения текущего ответа.');
   attachments.replaceChildren();
-  for (const file of state.attachments || []) {
+  for (const file of composerAttachments()) {
     if(file.preview && file.kind==='image'){
       const wrapper=el('div',undefined,'image-attachment');
       const previewButton=el('button',undefined,'image-preview');previewButton.type='button';previewButton.title=WorkbenchI18n.t('Открыть изображение');previewButton.setAttribute('aria-label',previewButton.title);
@@ -2328,10 +2336,13 @@ window.addEventListener("message", (event) => {
     if (!historyScope) historyScope = msg.data.historyScope === "all" ? "all" : "workspace";
     hydrated = true;
     state = { ...state, ...msg.data };
+    const submittedFiles=submittedAttachments.get(state.key);
+    if(submittedFiles && !(state.attachments || []).some(file=>submittedFiles.has(file.id)))submittedAttachments.delete(state.key);
     document.documentElement.dataset.controlMotion =
       ['on', 'off'].includes(state.controlMotion) ? state.controlMotion : 'auto';
     document.documentElement.dataset.chatWidth=state.chatWidth==='compact'?'compact':'wide';
     if (state.error) {
+      submittedAttachments.delete(state.key);
       sending = false;pendingPreviews.delete(state.key);pendingSends.delete(state.key);parkedSends.delete(state.key);
       // The failed text was typed over while hidden: give it back next to the new draft.
       const displaced=displacedSends.get(state.key);

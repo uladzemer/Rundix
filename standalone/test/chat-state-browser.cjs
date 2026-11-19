@@ -80,6 +80,45 @@ module.exports=async({browser})=>{
   assert.equal(await page.$eval('.quiz-option',node=>node.getAttribute('aria-checked')),'true');
   await page.evaluate(()=>{window.fixture.requests=[];window.fixture.followUps=[];window.update();});
   assert.equal(await page.evaluate(()=>window.saved.quizDrafts.length),0);
+  // Enter moves the image into the pending chat message before host delivery.
+  const prepareImage=async(text)=>{
+   await page.evaluate(text=>{
+    Object.assign(window.fixture,{error:null,busy:false,items:[],draft:text,attachments:[{id:'synthetic-image',kind:'image',name:'Synthetic image',preview:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII='}]});
+    window.update();const field=document.querySelector('.composer textarea');field.value=text;field.dispatchEvent(new Event('input',{bubbles:true}));
+   },text);
+   await page.focus('.composer textarea');await page.keyboard.press('Enter');
+  };
+  for(const text of ['Synthetic image message','']){
+   await prepareImage(text);
+   assert.equal(await page.$$('.attachments .image-attachment').then(nodes=>nodes.length),0,'Submitted image immediately leaves composer');
+   assert.equal(await page.$$('.pending-send .message-image img').then(nodes=>nodes.length),1,'Submitted image immediately appears in chat');
+   await page.evaluate(()=>window.update());
+   assert.equal(await page.$$('.attachments .image-attachment').then(nodes=>nodes.length),0,'In-flight host snapshots keep submitted image hidden');
+   await page.evaluate(()=>{window.fixture.key='synthetic-other';window.update();});
+   assert.equal(await page.$$('.attachments .image-attachment').then(nodes=>nodes.length),1,'Another session owns its attachments even with the same ID');
+   await page.evaluate(()=>{window.fixture.key='synthetic-session';window.update();});
+   assert.equal(await page.$$('.attachments .image-attachment').then(nodes=>nodes.length),0);
+   await page.evaluate(()=>{window.fixture.error='Synthetic send refusal';window.update();});
+   assert.equal(await page.$$('.attachments .image-attachment').then(nodes=>nodes.length),1,'Send failure restores attachment');
+   assert.equal(await page.$eval('.composer textarea',node=>node.value),text,'Send failure preserves text');
+  }
+  await prepareImage('');
+  const sends=await page.evaluate(()=>window.calls.filter(message=>message.action==='send').length);
+  await page.evaluate(()=>{window.fixture.key='synthetic-other';window.update();window.fixture.key='synthetic-session';window.update();});
+  await page.type('.composer textarea','Synthetic new draft');
+  await page.keyboard.press('Enter');
+  assert.equal(await page.evaluate(()=>window.calls.filter(message=>message.action==='send').length),sends,'An in-flight attachment cannot travel with a new message after tab switching');
+  await page.evaluate(()=>{window.fixture.error='Synthetic send refusal';window.update();});
+  assert.equal(await page.$$('.attachments .image-attachment').then(nodes=>nodes.length),1);
+  assert.equal(await page.$eval('.composer textarea',node=>node.value),'Synthetic new draft');
+  await prepareImage('Synthetic confirmed message');
+  await page.evaluate(()=>{
+   window.fixture.attachments=[];window.fixture.draft='';window.fixture.items=[{id:'synthetic-delivered',type:'userMessage',text:'Synthetic confirmed message',images:[{preview:null}]}];window.update();
+   window.dispatchEvent(new MessageEvent('message',{data:{type:'sent',key:window.fixture.key,text:'Synthetic confirmed message'}}));
+  });
+  assert.equal(await page.$$('.pending-send').then(nodes=>nodes.length),0,'Confirmed message replaces optimistic preview');
+  assert.equal(await page.$$('.attachments .image-attachment').then(nodes=>nodes.length),0);
+  assert.equal(await page.$eval('.composer textarea',node=>node.value),'');
   assert.deepEqual(errors,[]);await page.close();
  }
  console.log('PASS: synthetic RU/EN light/dark narrow/wide draft recreation, history default scope and focus retention.');

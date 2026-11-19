@@ -1,5 +1,9 @@
 # Changelog / История изменений
 
+## 0.4.20 — 2026-11-19
+
+- Submitted attachments leave the composer immediately and return if sending fails. This release also includes the MCP model and reasoning defaults from 0.4.19.
+
 ## 0.4.19 — 2026-11-19
 
 - New MCP tasks prefer GPT-6.2 Sol at Medium when the connection offers it. User settings can change the default model and effort for both window and background task execution.

@@ -7,10 +7,11 @@ const Module=require('node:module'), originalLoad=Module._load;
 Module._load=function(name,...args){assert.notEqual(name,'vscode');return originalLoad.call(this,name,...args);};
 const {createSessionCore}=require('../runtime/session-core.cjs');
 const {createMcpHost}=require('../runtime/mcp-host.cjs');
+const {preferredModel,resolveSelection}=require('../runtime/mcp-model.cjs');
 const {SessionStore}=require('../runtime/store.cjs');
 async function main(){
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-mcp-host-synthetic-'));
-  const visible=new Set(), values=new Map(), calls=[];
+  const visible=new Set(), values=new Map(), calls=[], turns=[];
   const noop=()=>{};
   const timers=new Map(), uiEvents=[], settings=new Map();
   let reloads=0, savedTabKey;
@@ -29,13 +30,14 @@ async function main(){
       calls.push(method);
       if(method==='account/read')return {account:{type:'chatgpt',email:'synthetic@example.test',planType:'plus'}};
       if(method==='account/rateLimits/read')return {rateLimits:{primary:{usedPercent:10,windowDurationMins:300,resetsAt:Date.now()/1000+3600}}};
-      if(method==='model/list')return {data:[{model:'synthetic-model',isDefault:true,defaultReasoningEffort:'medium',supportedReasoningEfforts:[{reasoningEffort:'medium'}]}]};
+      if(method==='model/list')return {data:[{model:'synthetic-model',isDefault:true,defaultReasoningEffort:'low',supportedReasoningEfforts:[{reasoningEffort:'low'}]},
+        {model:preferredModel,defaultReasoningEffort:'high',supportedReasoningEfforts:['medium','high'].map(reasoningEffort=>({reasoningEffort}))}]};
       if(method==='config/read')return {config:{model:'synthetic-model',model_reasoning_effort:'medium'}};
-      if(method==='thread/start')return {thread:{id:'synthetic-chat',cwd:p.cwd},model:'synthetic-model',reasoningEffort:'medium'};
-      if(method==='thread/resume')return {thread:{id:p.threadId,cwd:root},model:'synthetic-model',reasoningEffort:'medium'};
-      if(method==='thread/turns/list')return {data:[{id:'synthetic-turn',status:'completed'}]};
+      if(method==='thread/start')return {thread:{id:'synthetic-chat-'+turns.length,cwd:p.cwd},model:p.model,reasoningEffort:'high'};
+      if(method==='thread/resume')return {thread:{id:p.threadId,cwd:root},model:'synthetic-model',reasoningEffort:'low'};
+      if(method==='thread/turns/list')return {data:[{id:'synthetic-turn-'+turns.length,status:'completed'}]};
       if(method==='thread/items/list')return {data:[...core.sessions.values()].find(s=>s.id===p.threadId)?.items || []};
-      if(method==='turn/start')return {turn:{id:'synthetic-turn'}};
+      if(method==='turn/start'){turns.push(p);return {turn:{id:'synthetic-turn-'+turns.length}};}
       return {};
     }
   }
@@ -81,6 +83,7 @@ async function main(){
     assert.equal(submitted.state,'queued');assert.equal(host.tasks.tasks.get(submitted.taskId).space,undefined);
     await host.tasks.tick();await host.tasks.idle();
     assert.equal(call('get_task',{taskId:submitted.taskId}).state,'running');
+    assert.equal(turns[0].model,preferredModel);assert.equal(turns[0].effort,'medium');
     assert(calls.includes('turn/start'));
     await assert.rejects(host.stop(),/Cancel active MCP tasks/);
     const s=core.sessions.values().next().value, liveTask=host.tasks.tasks.get(submitted.taskId);
@@ -105,11 +108,29 @@ async function main(){
     assert(calls.includes('turn/steer'));
     const models=await call('list_models',{});assert.equal(models.models[0].model,'synthetic-model');
     const catalog=core.state.catalog, connect=core.connect, refreshCatalog=core.refreshCatalog;
+    const chatSelection={model:'synthetic-model',effort:'low',fast:false};
+    assert.deepEqual(resolveSelection(chatSelection,undefined,{},[catalog[0]]),chatSelection,'An account without the preferred model keeps chat defaults');
+    assert.deepEqual(resolveSelection(chatSelection,undefined,{model:''},catalog),chatSelection,'An empty setting opts out of the built-in model');
+    assert.deepEqual(resolveSelection(chatSelection,{effort:'high'},{effort:'medium'},catalog),{model:preferredModel,effort:'high',fast:false});
     core.state.catalog=[];core.connect=async()=>{};core.refreshCatalog=()=>new Promise(()=>{});
     try{
       const timedOut=assert.rejects(call('list_models',{}),{code:'connection_unavailable'});
       fireTimer(9000);await timedOut;assert.equal(timers.size,0);
     }finally{core.state.catalog=catalog;core.connect=connect;core.refreshCatalog=refreshCatalog;}
+    const owner=core.state.activeConnection;
+    core.state.activeConnection={...owner,revision:'synthetic-stale-revision'};
+    try{await assert.rejects(call('list_models',{}),{code:'connection_unavailable'});}
+    finally{core.state.activeConnection=owner;}
+    core.state.connectionStarting=true;
+    let finishConnect;
+    core.connect=()=>new Promise(resolve=>{finishConnect=resolve;});
+    core.refreshCatalog=async()=>{core.state.catalog=[catalog[1]];};
+    try{
+      const pendingModels=call('list_models',{});
+      assert.equal(typeof finishConnect,'function','A new server cannot expose the previous catalog during startup');
+      core.state.connectionStarting=false;finishConnect();
+      assert.deepEqual((await pendingModels).models.map(model=>model.model),[preferredModel]);
+    }finally{core.state.connectionStarting=false;core.state.catalog=catalog;core.connect=connect;core.refreshCatalog=refreshCatalog;}
     core.state.server.emit('notification',{method:'item/completed',params:{threadId:s.id,turnId:s.turnId,item:{id:'synthetic-report',type:'agentMessage',text:JSON.stringify({result:'Synthetic success',changedFiles:['synthetic.cjs'],checks:['Synthetic check'],remainingIssues:[]})}}});
     const waiting=call('wait_task',{taskId:submitted.taskId,waitSeconds:2});
     core.state.server.emit('notification',{method:'turn/completed',params:{threadId:s.id,turn:{id:s.turnId,status:'completed'}}});
@@ -165,6 +186,32 @@ async function main(){
     competing.acquire('mcp-bridge')();failServe=false;
     await host.start();assert.equal(call('get_task',{taskId:task.taskId}).state,'completed');
     assert.equal(host.tasks.tasks.get(task.taskId).space,'synthetic-space');
+    settings.set('mcpDefaultModel','synthetic-model');
+    settings.set('mcpDefaultEffort','low');
+    await call('continue_task',{taskId:task.taskId,requestId:'synthetic-continue',clarification:'Synthetic follow-up'});
+    await host.tasks.tick();await host.tasks.idle();
+    assert.equal(turns[1].threadId,completed.chatId);
+    assert.equal(turns[1].model,preferredModel);assert.equal(turns[1].effort,'medium');
+    core.state.server.emit('notification',{method:'turn/completed',params:{threadId:turns[1].threadId,turn:{id:'synthetic-turn-2',status:'completed'}}});
+    await host.tasks.tick();await host.tasks.idle();
+    const queue=overrides=>call('submit_task',{requestId:'synthetic-'+(turns.length+1),description:'Synthetic next task',
+      acceptanceCriteria:'Synthetic checks',projectDirectory:root,...overrides});
+    const custom=await queue({});
+    settings.set('mcpDefaultModel','synthetic-unavailable');
+    assert.equal((await queue({})).taskId,custom.taskId,'A request retry retains the captured settings');
+    await host.tasks.tick();await host.tasks.idle();
+    assert.equal(turns[2].model,'synthetic-model');assert.equal(turns[2].effort,'low');
+    assert.equal(host.tasks.tasks.get(custom.taskId).modelDefaults.model,'synthetic-model');
+    core.state.server.emit('notification',{method:'turn/completed',params:{threadId:turns[2].threadId,turn:{id:'synthetic-turn-3',status:'completed'}}});
+    await host.tasks.tick();await host.tasks.idle();
+    const bad=await queue({});await host.tasks.tick();await host.tasks.idle();
+    assert.equal(call('get_task',{taskId:bad.taskId}).state,'error');assert.equal(turns.length,3);
+    assert.match(core.sessions.get(host.tasks.get(bad.taskId).sessionKey).draft,/^Synthetic next task\n[\s\S]*Synthetic checks/);
+    const override=await queue({requestId:'synthetic-explicit',model:preferredModel});
+    await host.tasks.tick();await host.tasks.idle();
+    assert.equal(turns[3].model,preferredModel);assert.equal(turns[3].effort,'high');
+    core.state.server.emit('notification',{method:'turn/completed',params:{threadId:turns[3].threadId,turn:{id:'synthetic-turn-4',status:'completed'}}});
+    await host.tasks.tick();await host.tasks.idle();assert.equal(call('get_task',{taskId:override.taskId}).state,'completed');
     await host.stop();assert.deepEqual(uiEvents.slice(4),[['enabled',true],['changed'],['enabled',false],['changed']]);
     host=createMcpHost({core,storageRoot:root,version:'synthetic-version',transport,trusted:()=>true,clock});
     await host.start();assert.throws(()=>call('reload_window',{}),{code:'unsupported'});

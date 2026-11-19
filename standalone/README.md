@@ -65,6 +65,7 @@ Useful user settings (read only from your user settings, never from a repository
 
 - `rundix.mcpAccessMode` — access mode of task chats: `workspace` (default), `manual`, `auto` or `full` (no approval requests; Codex can change files and use the network outside the project).
 - `rundix.mcpMaxParallelTasks` — how many tasks run at once (default 3).
+- `rundix.mcpDefaultModel` and `rundix.mcpDefaultEffort` — model and reasoning effort for new MCP tasks. By default, Rundix prefers GPT-6.2 Sol at Medium when available. Set them in VS Code User Settings.
 - `rundix.mcpThreadConfig` — Codex config overrides for task chats only, for example to disable browser or computer-use helpers that unattended tasks do not need and that keep task folders in use on Windows.
 - `"workbench.editor.tabSizing": "fixed"` — keeps tabs narrow while hovering a task tab shows its description.
 - `rundix.mcpService` — experimental: `"service"` runs MCP tasks in a per-user background service instead of a VS Code window. Tasks keep running with VS Code closed, and each project (Git root of the Claude session) sees only its own tasks; every window shows its project's tasks and chats. Requires an installed companion that provides a background connection; see [background service](https://github.com/uladzemer/Rundix/blob/main/standalone/docs/mcp.md).
@@ -126,6 +127,7 @@ Rundix может установить и обновлять официальн�
 
 - `rundix.mcpAccessMode` — режим доступа чатов задач: `workspace` (по умолчанию), `manual`, `auto` или `full` (без запросов разрешений; Codex может менять файлы и пользоваться сетью вне проекта).
 - `rundix.mcpMaxParallelTasks` — сколько задач выполняется одновременно (по умолчанию 3).
+- `rundix.mcpDefaultModel` и `rundix.mcpDefaultEffort` — модель и глубина рассуждений для новых MCP-задач. По умолчанию Rundix предпочитает GPT-6.2 Sol с глубиной Medium, когда она доступна. Параметры находятся в пользовательских настройках VS Code.
 - `rundix.mcpThreadConfig` — переопределения конфигурации Codex только для чатов задач, например отключение браузерных и computer-use помощников, которые не нужны автоматическим задачам и на Windows держат папки задач.
 - `"workbench.editor.tabSizing": "fixed"` — вкладки остаются узкими, а при наведении на вкладку задачи видно её описание.
 - `rundix.mcpService` — экспериментально: `"service"` выполняет MCP-задачи в фоновом сервисе пользователя, а не в окне VS Code. Задачи продолжаются при закрытом VS Code, и каждый проект (Git-корень сессии Claude) видит только свои задачи; каждое окно показывает задачи и чаты своего проекта. Нужно установленное дополнение, которое даёт фоновое подключение; см. [фоновый сервис](https://github.com/uladzemer/Rundix/blob/main/standalone/docs/mcp.md).

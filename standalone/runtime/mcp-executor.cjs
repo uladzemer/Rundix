@@ -33,8 +33,9 @@ function taskTitle(description) {
   const points=Array.from(line), short=points.length>TITLE_POINTS?points.slice(0,TITLE_POINTS-1).join('').trimEnd()+'…':line;
   return short?'MCP · '+short:'MCP task';
 }
-function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,client=()=>null,releases=new Map(),closeTab=async()=>{},closeSavedTab=async()=>false,models=async()=>[],reloadWindow,accessMode=()=>'workspace',retainTurn=()=>{},sent=()=>{},hasChat=s=>!!s.panel}) {
+function executor({connections,sessions,store,create,send,resume,handle,pending,save,alive,client=()=>null,releases=new Map(),closeTab=async()=>{},closeSavedTab=async()=>false,models=async()=>[],modelDefaults,reloadWindow,accessMode=()=>'workspace',retainTurn=()=>{},sent=()=>{},hasChat=s=>!!s.panel}) {
   const turnOptions=task=>({includeIde:false,taskId:task.taskId,projectDirectory:task.projectDirectory,requiredConnection:task.connection,outputSchema:reportSchema,
+    ...(task.modelDefaults?{mcpModelDefaults:task.modelDefaults}:{}),
     ...(task.model?{modelSelection:{model:task.model,effort:task.effort,fast:false}}:task.effort?{modelSelection:{effort:task.effort}}:{})});
   // Only questions from the task's current run count; older unanswered quizzes in the chat are history.
   function asyncPending(s,task) {
@@ -75,6 +76,7 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
     },
     chatId:task=>sessions.get(task.sessionKey)?.id || task.chatId,
     models,
+    modelDefaults,
     reloadWindow,
     // Closes the editor tab of a finished task; the saved chat stays and a continuation reopens it.
     async closeChat(task) {

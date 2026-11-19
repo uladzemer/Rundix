@@ -102,11 +102,21 @@ function withRecordLock(target,operation){
  const deadline=Date.now()+recordLockTimeoutMs;
  for(;;){const release=tryLock(target,recordLockMaxAgeMs);if(release){try{return operation();}finally{release();}}if(Date.now()>=deadline)throw Error('Local record is busy; retry saving.');Atomics.wait(pause,0,0,10);}
 }
+function replaceRecord(temp,target){
+ // Windows file sharing can briefly block replacement while another process has the file open.
+ for(let delay=5;;delay*=2){
+  try{fs.renameSync(temp,target);return;}
+  catch(error){
+   if(process.platform!=='win32' || !['EPERM','EBUSY','EACCES'].includes(error.code) || delay>80)throw error;
+   Atomics.wait(pause,0,0,delay);
+  }
+ }
+}
 class SessionStore {
  constructor(directory){this.directory=directory;fs.mkdirSync(directory,{recursive:true,mode:0o700});}
  file(kind,key){if(!/^[a-zA-Z0-9_-]{1,128}$/.test(key))throw Error('Invalid local record key');return path.join(this.directory,kind+'-'+key+'.json');}
  read(kind,key){try{return JSON.parse(fs.readFileSync(this.file(kind,key),'utf8'));}catch(error){if(error.code==='ENOENT'||error instanceof SyntaxError)return null;throw error;}}
- write(kind,key,value){const target=this.file(kind,key),temp=target+'.'+randomUUID()+'.tmp';try{fs.writeFileSync(temp,JSON.stringify(value),{flag:'wx',mode:0o600});fs.renameSync(temp,target);}finally{try{fs.unlinkSync(temp);}catch{}}return value;}
+ write(kind,key,value){const target=this.file(kind,key),temp=target+'.'+randomUUID()+'.tmp';try{fs.writeFileSync(temp,JSON.stringify(value),{flag:'wx',mode:0o600});replaceRecord(temp,target);}finally{try{fs.unlinkSync(temp);}catch{}}return value;}
  session(key){return this.read('session',key);}
  saveSession(session,baseline){return withRecordLock(this.file('record-session',session.key),()=>{const previous=this.session(session.key),latest=previous||{},change={};for(const [key,value]of Object.entries(session))if(!previous||!baseline||JSON.stringify(value)!==JSON.stringify(baseline[key]))change[key]=value;return this.write('session',session.key,{...latest,...change,updatedAt:Date.now(),revision:randomUUID()});});}
  list(cwd){

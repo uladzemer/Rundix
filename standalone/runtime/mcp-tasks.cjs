@@ -250,6 +250,7 @@ class McpTasks {
       const task = {taskId:randomUUID(), sessionKey:randomUUID(), state:'queued', progress:'Queued',
         projectDirectory, description:args.description,
         acceptanceCriteria:args.acceptanceCriteria, model:args.model, effort:args.effort,
+        modelDefaults:this.adapter.modelDefaults?.(),
         ...(this.scope ? {space:this.scope()} : {}), connection:connection || this.adapter.connection(), operations:[op], createdAt:Date.now()};
       this.save(task); this.tasks.set(task.taskId, task); this.schedule(); return this.view(task);
       };

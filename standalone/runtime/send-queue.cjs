@@ -106,7 +106,10 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
     throw Error(date?deps.locale.t('Лимиты аккаунта закончились. Дождитесь сброса: {0}. Запрос сохранён.',date):deps.locale.t('Лимиты аккаунта закончились. Дождитесь сброса лимитов. Запрос сохранён.'));
   }
   deps.updateDraftModel(s);
-  const selection={model:s.model,effort:s.effort,fast:s.prefs.fast,...options.modelSelection};
+  const draftSelection={model:s.model,effort:s.effort,fast:s.prefs.fast,...options.modelSelection};
+  const useMcpDefaults = options.mcpModelDefaults && (!s.id || options.modelSelection?.model);
+  const selection=useMcpDefaults ? require('./mcp-model.cjs').resolveSelection(
+    draftSelection,options.modelSelection,options.mcpModelDefaults,deps.catalog) : draftSelection;
   if (s.id && !s.loaded) await deps.resume(s, s.id, {preserveSelection:true});
   await ensureDirectory(true);
   const selectedModel=deps.catalog.find(model=>model.model===selection.model);
@@ -148,7 +151,7 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
     await deps.library.migrate(s.key, s.id);
     s.loaded = true;
     s.model = result.model;
-    s.effort = s.effort || result.reasoningEffort;
+    s.effort = (useMcpDefaults ? selection.effort : s.effort) || result.reasoningEffort;
     if (!s.customName) s.name = text.trim().replace(/\s+/g, " ").slice(0, 64) || deps.locale.t('Изображение');
     await deps.server.request("thread/name/set", { threadId: s.id, name: s.name });
     await deps.save(s);

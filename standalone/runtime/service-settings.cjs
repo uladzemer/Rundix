@@ -2,6 +2,8 @@ const fs=require('node:fs'),path=require('node:path');
 const {randomUUID}=require('node:crypto');
 const {parseStrict}=require('./service-json.cjs');
 const {boundedRead,actionRequired}=require('./service-provider-config.cjs');
+const {normalizeModel,normalizeEffort}=require('./mcp-model.cjs');
+const KEYS=['mcpAccessMode','mcpThreadConfig','mcpMaxParallelTasks','mcpDefaultModel','mcpDefaultEffort','cliPath'];
 function readSettings(root) {
   let value;
   try {
@@ -11,10 +13,11 @@ function readSettings(root) {
     }
   }
   catch { throw Object.assign(Error('Service settings are unavailable.'), {code:'storage_unavailable'}); }
-  const allowed = ['mcpAccessMode', 'mcpMaxParallelTasks', 'mcpThreadConfig', 'cliPath'];
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !allowed.includes(key)) ||
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !KEYS.includes(key)) ||
       (value.mcpAccessMode !== undefined && !['manual', 'workspace', 'auto', 'full'].includes(value.mcpAccessMode)) ||
       (value.mcpMaxParallelTasks !== undefined && (!Number.isInteger(value.mcpMaxParallelTasks) || value.mcpMaxParallelTasks < 1 || value.mcpMaxParallelTasks > 5)) ||
+      (value.mcpDefaultModel !== undefined && normalizeModel(value.mcpDefaultModel) !== value.mcpDefaultModel) ||
+      (value.mcpDefaultEffort !== undefined && !normalizeEffort(value.mcpDefaultEffort)) ||
       (value.cliPath !== undefined && (typeof value.cliPath !== 'string' || !path.isAbsolute(value.cliPath))) ||
       (value.mcpThreadConfig !== undefined && (!value.mcpThreadConfig || typeof value.mcpThreadConfig !== 'object' || Array.isArray(value.mcpThreadConfig))))
     throw Object.assign(Error('Service settings are invalid.'), {code:'storage_unavailable'});
@@ -23,10 +26,12 @@ function readSettings(root) {
 function plainSettings(root) {
   let last=null;
   const refresh=()=>{try{last=readSettings(root);}catch{};return last;};
-  const assertValid=()=>{if(!refresh())throw actionRequired('SETTINGS_INVALID');};
+  const assertValid=()=>{const value=refresh();if(!value)throw actionRequired('SETTINGS_INVALID');return value;};
   refresh();
   const settings=(key,fallback)=>{const value=refresh();if(!value && KEYS.includes(key))throw actionRequired('SETTINGS_INVALID');return value?.[key] ?? fallback;};
-  settings.assertValid=assertValid;return settings;
+  settings.assertValid=assertValid;
+  settings.modelDefaults=()=>{const value=assertValid();return {model:value.mcpDefaultModel,effort:value.mcpDefaultEffort};};
+  return settings;
 }
 function normalizeSettings(inspect) {
   const value={};
@@ -34,6 +39,10 @@ function normalizeSettings(inspect) {
     const raw=inspect(key)?.globalValue;if(raw==null)continue;
     if(key==='mcpAccessMode' && ['manual','workspace','auto','full'].includes(raw))value[key]=raw;
     if(key==='mcpThreadConfig' && raw && typeof raw==='object' && !Array.isArray(raw) && Object.keys(raw).length)value[key]=raw;
+    if(key==='mcpDefaultModel'){
+      const model=normalizeModel(raw);if(model!==undefined)value[key]=model;
+    }
+    if(key==='mcpDefaultEffort' && normalizeEffort(raw))value[key]=raw;
     if(key==='cliPath' && typeof raw==='string' && path.isAbsolute(raw) && !raw.includes('\0'))value[key]=raw;
     if(key==='mcpMaxParallelTasks'){const number=Number(raw);value[key]=Number.isInteger(number) && number>=1?Math.min(number,5):1;}
   }
@@ -42,7 +51,6 @@ function normalizeSettings(inspect) {
   return value;
 }
 
-const KEYS=['mcpAccessMode','mcpThreadConfig','mcpMaxParallelTasks','cliPath'];
 async function writeServiceSettings(root, inspect) {
   const value=normalizeSettings(inspect);
   const {Worker}=require('node:worker_threads');

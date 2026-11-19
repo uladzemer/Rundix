@@ -70,6 +70,7 @@ function audit(file) {
     'extension/runtime/question-policy.cjs',
     'extension/runtime/question-answer.cjs',
     'extension/runtime/mcp-access.cjs',
+    'extension/runtime/mcp-model.cjs',
     'extension/runtime/mcp-executor.cjs', 'extension/runtime/composer-draft.cjs', 'extension/runtime/mcp-input-recovery.cjs',
     'extension/runtime/task-directory.cjs', 'extension/docs/mcp.md',
     'extension/runtime/connection-companions.cjs', 'extension/runtime/mcp-panel.cjs',

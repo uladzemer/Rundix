@@ -1,5 +1,11 @@
 # Changelog / История изменений
 
+## 0.4.19 — 2026-11-19
+
+- New MCP tasks prefer GPT-6.2 Sol at Medium when the connection offers it. User settings can change the default model and effort for both window and background task execution.
+- MCP model listing verifies the active connection before returning cached models. Restoring an MCP task chat preserves its saved model and reasoning effort.
+- On Windows, saving a local record retries briefly when file sharing blocks atomic replacement.
+
 ## 0.4.18 — 2026-11-09
 
 - Automatic usage-limit continuation retains the terminal turn identity after restoring an already running chat and accepts equivalent spellings of the same project directory. Cancellation messages include a fixed guard reason without session data or paths.

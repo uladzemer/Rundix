@@ -75,6 +75,7 @@
 !runtime/question-answer.cjs
 !runtime/session-core.cjs
 !runtime/mcp-host.cjs
+!runtime/mcp-model.cjs
 !runtime/session-actions.cjs
 !runtime/service-endpoint.cjs
 !runtime/service-ipc.cjs

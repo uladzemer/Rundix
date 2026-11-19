@@ -2,6 +2,7 @@
 const {SessionStore} = require('./store.cjs');
 const {McpTasks} = require('./mcp-tasks.cjs');
 const {executor} = require('./mcp-executor.cjs');
+const {readDefaults} = require('./mcp-model.cjs');
 const directories = require('./task-directory.cjs');
 const bridgeTransport = require('./mcp-bridge.cjs');
 
@@ -9,7 +10,8 @@ const bridgeTransport = require('./mcp-bridge.cjs');
 // session data only; storageRoot is the existing global storage directory.
 function createMcpHost({core, storageRoot, settings=()=>undefined, trusted=()=>false,
   clock={setTimeout, clearTimeout}, ui={}, version, transport=bridgeTransport,
-  spaceOf=task=>task.space, taskFilter=()=>true, taskOptions={}, decorateAdapter=adapter=>adapter}) {
+  spaceOf=task=>task.space, taskFilter=()=>true, taskOptions={}, decorateAdapter=adapter=>adapter,
+  modelDefaults=()=>readDefaults(settings)}) {
   const {sessions, store, connections, threadReleases, turnLeases} = core;
   let tasks=null, bridge=null, lease=null, starting=null, launcher=null;
   const adapter=executor({connections,sessions,store,
@@ -32,6 +34,7 @@ function createMcpHost({core, storageRoot, settings=()=>undefined, trusted=()=>f
       connections.assertCurrent(core.state.activeConnection);return core.state.server;
     },
     accessMode:()=>settings('mcpAccessMode') || 'workspace', sent:ui.sent,
+    modelDefaults,
     retainTurn(s,task){
       if(turnLeases.has(s.id))return;
       const unlockDirectory=directories.acquire(store,s.cwd,task.taskId);
@@ -47,14 +50,20 @@ function createMcpHost({core, storageRoot, settings=()=>undefined, trusted=()=>f
       clock.setTimeout(()=>ui.reloadWindow(),300);
     },
     async models(){
+      const hasCurrentCatalog=()=>{
+        const {server,activeConnection,catalog,connectionStarting}=core.state;
+        if(!server || !activeConnection || !catalog.length || connectionStarting)return false;
+        try{connections.assertCurrent(activeConnection);return true;}catch{return false;}
+      };
       // Bound catalog loading by the existing bridge request budget.
-      if(!core.state.catalog.length){
+      if(!hasCurrentCatalog()){
         let timer;
         const load=(async()=>{await core.connect();await core.refreshCatalog();})();
         try{await Promise.race([load,new Promise((_,reject)=>{timer=clock.setTimeout(()=>reject(Error('timeout')),9000);})]);}
         catch{throw Object.assign(Error('The model catalog is not available yet. Check the Codex connection in Rundix and retry.'),{code:'connection_unavailable'});}
         finally{clock.clearTimeout(timer);load.catch(()=>{});}
       }
+      if(!hasCurrentCatalog())throw Object.assign(Error('The selected connection has no current model catalog. Reconnect in Rundix and retry.'),{code:'connection_unavailable'});
       return core.state.catalog.map(model=>({model:model.model,displayName:model.displayName || model.model,isDefault:!!model.isDefault,
         defaultEffort:model.defaultReasoningEffort || null,efforts:(model.supportedReasoningEfforts || []).map(effort=>effort.reasoningEffort).filter(Boolean)}));
     },

@@ -72,6 +72,25 @@ async function concurrentMerge(directory,kind){
  // A failed write releases its lock and leaves the previous draft intact.
  const write=a.write;a.write=()=>{throw Error('Synthetic write failure');};try{assert.throws(()=>a.saveSession({...baseline,draft:'Synthetic failed draft'},baseline),/Synthetic write failure/);}finally{a.write=write;}
  assert.equal(b.session('draft-a').draft,'From another process');b.saveSession({...baseline,name:'Recovered'},baseline);
+ if(process.platform==='win32'){
+  const target=a.file('session','draft-a'),rename=fs.renameSync;let attempts=0;
+  const sharingError=Object.assign(Error('Synthetic file sharing violation'),{code:'EPERM'});
+  try{
+   fs.renameSync=(source,destination)=>{
+    if(destination===target && ++attempts<=2)throw sharingError;
+    return rename(source,destination);
+   };
+   a.saveSession({key:'draft-a',draft:'Synthetic recovered draft'});
+   assert.equal(attempts,3);assert.equal(b.session('draft-a').draft,'Synthetic recovered draft');
+   attempts=0;
+   fs.renameSync=(source,destination)=>{
+    if(destination===target){attempts++;throw sharingError;}
+    return rename(source,destination);
+   };
+   assert.throws(()=>a.saveSession({key:'draft-a',draft:'Synthetic uncommitted draft'}),{code:'EPERM'});
+   assert.equal(attempts,6);assert.equal(b.session('draft-a').draft,'Synthetic recovered draft');
+  }finally{fs.renameSync=rename;}
+ }
  const busy=a.file('record-meta','busy-fixture');fs.writeFileSync(busy,JSON.stringify({pid:process.pid,nonce:'synthetic-busy'}));
  const started=Date.now();try{assert.throws(()=>b.updateMeta('busy-fixture',{unread:true}),/busy/);assert.ok(Date.now()-started<5000);assert.deepEqual(a.meta('busy-fixture'),{});}finally{fs.unlinkSync(busy);}
  assert.ok(!fs.readdirSync(directory).some(name=>name.startsWith('record-')||name.endsWith('.reap')));

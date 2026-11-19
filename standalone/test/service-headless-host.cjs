@@ -27,9 +27,12 @@ async function main() {
     fs.writeFileSync(path.join(root,'settings.json'),'{');assert.equal(liveSettings('mcpAccessMode'),'manual','Read failure keeps last valid safety snapshot');
     fs.writeFileSync(path.join(root,'settings.json'),JSON.stringify({mcpMaxParallelTasks:1,mcpAccessMode:'manual'}));
     const invalidSettingsRoot=path.join(root,'synthetic-invalid-settings');
-    await settingsModule.writeServiceSettings(invalidSettingsRoot,key=>({globalValue:{mcpAccessMode:'invalid',mcpMaxParallelTasks:99,mcpThreadConfig:[],cliPath:42}[key]}));
+    await settingsModule.writeServiceSettings(invalidSettingsRoot,key=>({globalValue:{mcpAccessMode:'invalid',mcpMaxParallelTasks:99,mcpThreadConfig:[],
+      mcpDefaultModel:' synthetic-model ',mcpDefaultEffort:'medium',cliPath:42}[key]}));
     assert.equal(plainSettings(invalidSettingsRoot)('mcpMaxParallelTasks'),5);
     assert.equal(plainSettings(invalidSettingsRoot)('mcpAccessMode','workspace'),'workspace');
+    assert.equal(plainSettings(invalidSettingsRoot)('mcpDefaultModel'),'synthetic-model');
+    assert.equal(plainSettings(invalidSettingsRoot)('mcpDefaultEffort'),'medium');
     fs.writeFileSync(path.join(root,'settings.json'),JSON.stringify({mcpMaxParallelTasks:1,mcpAccessMode:'auto'}));
     const originalFstat=fs.fstatSync;let raced=false;
     try{fs.fstatSync=function(fd){const stat=originalFstat(fd);if(!raced){raced=true;return {...stat,ino:stat.ino+1};}return stat;};assert.equal(liveSettings('mcpAccessMode'),'auto','Atomic replacement race retries instead of using stale snapshot');assert(raced);}
@@ -40,6 +43,8 @@ async function main() {
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(invalidSettingsRoot,'settings.json'))),{mcpAccessMode:'manual'});
     assert.equal(plainSettings(invalidSettingsRoot)('mcpAccessMode'),'manual');
     const installed = install(root);
+    await settingsModule.writeServiceSettings(root,key=>({globalValue:{mcpMaxParallelTasks:1,mcpAccessMode:'manual',
+      mcpDefaultModel:'synthetic-model',mcpDefaultEffort:'medium'}[key]}));
     host = await createHeadlessHost({root, generation:'synthetic-service', resolveCli:async () => process.execPath,
       providerOptions:{configPath:installed.configPath, verifyPrivate:() => {}, spawnProcess:launch,
         createCli:options => {
@@ -63,6 +68,7 @@ async function main() {
         }}});
     assert.equal(children.length, 0, 'Provider/CLI start lazily');
     const submit = await host.mcp.tasks.call('submit_task', {requestId:'synthetic-submit', description:'Synthetic task', acceptanceCriteria:'Synthetic check', projectDirectory:project});
+    assert.deepEqual(host.mcp.tasks.get(submit.taskId).modelDefaults,{model:'synthetic-model',effort:'medium'});
     await host.mcp.tasks.tick(); await host.mcp.tasks.idle();
     assert.equal(children.length, 2); assert(host.provider.cli.authenticated); assert(host.busy());
     const completed = await host.mcp.tasks.call('wait_task', {taskId:submit.taskId, waitSeconds:2});

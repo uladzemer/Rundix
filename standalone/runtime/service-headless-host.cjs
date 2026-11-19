@@ -265,7 +265,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       // The scheduler may idle without a snapshot; every task admission stays gated.
       if(key==='mcpMaxParallelTasks'){try{return settings(key,fallback);}catch{return 1;}}
       return settings(key,fallback);
-    }, clock, transport,
+    }, clock, transport, modelDefaults:settings.modelDefaults,
     ui:{hasChat:() => false}, taskOptions:{now:()=>clock.now(),...taskOptions,archiveLog:logger}, decorateAdapter:adapter => {
       const start=adapter.start;
       adapter.readinessBudget=true;

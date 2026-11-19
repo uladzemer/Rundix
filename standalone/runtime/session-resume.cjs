@@ -20,7 +20,7 @@ async function resumeOptions(deps,s,id) {
     ...(s.preflight?.enabled?{config:await deps.preparationConfig(s),...(deps.preflight.preparing(s.preflight)?{sandbox:'read-only',approvalPolicy:'never'}:{})}:deps.mcpThreadConfig(s)?{config:deps.mcpThreadConfig(s)}:{})};
 }
 
-async function resumeThread(deps, s, id, {preserveSelection=false}={}) {
+async function resumeThread(deps, s, id, {preserveSelection=s.mcpTask === true && !!s.model}={}) {
   const originalId = s.id;
   // Serialize reloads with best-effort MCP cleanup, including a tab reopened while it is in flight.
   await deps.threadReleases.get(id)?.catch(()=>{});

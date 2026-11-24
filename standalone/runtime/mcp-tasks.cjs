@@ -85,6 +85,11 @@ class McpTasks {
   limit() { const value = Number(this.maxParallel()); return Number.isInteger(value) && value >= 1 ? Math.min(value, MAX_PARALLEL) : 1; }
   visible(task) { return (!this.scope || this.scope() === this.spaceOf(task)) && this.taskFilter(this.spaceOf(task), task); }
   get(id) { const task = this.tasks.get(id) || this.archive?.get(id); if (!task || !this.visible(task)) throw fail('unknown_task', 'Unknown taskId'); return task; }
+  recordSelection(session) {
+    const task=[...this.tasks.values()].find(task=>task.sessionKey===session.key);
+    if(!task || !session.lastSelection || task.chatId && task.chatId!==session.id)return;
+    task.lastSelection={...session.lastSelection};this.save(task);
+  }
   view(task, brief = false, unsentAfter, fullRecovery=false) {
     const report = task.report;
     const reportFields = brief ? {reportSummary:report ? {
@@ -94,7 +99,7 @@ class McpTasks {
     } : null} : {report:report || null};
     return JSON.parse(JSON.stringify({taskId:task.taskId, state:task.state, progress:task.progress,
       chatId:task.chatId || null, projectDirectory:task.projectDirectory, createdAt:task.createdAt,
-      updatedAt:task.updatedAt, revision:task.revision || 0, accessMode:task.accessMode || null, ...reportFields, error:task.error || null,
+      lastSelection:task.lastSelection || null, updatedAt:task.updatedAt, revision:task.revision || 0, accessMode:task.accessMode || null, ...reportFields, error:task.error || null,
       ...(this.scope || task.waitingLimit ? {waitingLimit:task.state === 'waiting_limit' ? task.waitingLimit : null} : {}),
       queuedContinuations:task.continuations?.length || 0,
       ...(fullRecovery?inputRecovery.page(task,unsentAfter):{unsentInputCount:task.unsentInputs?.length || 0}),
@@ -103,7 +108,7 @@ class McpTasks {
   summary(task) {
     return JSON.parse(JSON.stringify({taskId:task.taskId, title:(task.description || '').slice(0,160), state:task.state,
       progress:task.progress, chatId:task.chatId || null, projectDirectory:task.projectDirectory, createdAt:task.createdAt,
-      updatedAt:task.updatedAt, revision:task.revision || 0, hasReport:!!task.report, error:task.error || null,
+      lastSelection:task.lastSelection || null, updatedAt:task.updatedAt, revision:task.revision || 0, hasReport:!!task.report, error:task.error || null,
       ...(this.scope || task.waitingLimit ? {waitingLimit:task.state === 'waiting_limit' ? task.waitingLimit : null} : {}),
       unsentInputCount:task.unsentInputs?.length || 0,
       recoveryRequired:recoveryRequired(task), pendingRequests:this.adapter.pending(task).length}));

@@ -27,6 +27,27 @@ if(!chromePath)throw Error('Set CHROME_PATH to an installed Chrome or Chromium e
  await page.evaluate(()=>{window.fixture.prefs.fast=false;window.fixture.models[0].serviceTiers=[{id:'priority',name:'Fast'}];window.update();});
  await page.screenshot({path:path.join(__dirname,'../.verification/fast-mode.png')});await page.keyboard.press('Escape');
  await require('./control-motion-browser.cjs')({page});
+ assert.equal(await page.$('.last-turn-selection'),null,'Ordinary chats have no last-turn label');
+ await page.evaluate(()=>{window.fixture.lastSelection={model:'synthetic-mcp-model',displayName:'Synthetic MCP display',effort:'medium',turnId:'synthetic-mcp-turn'};window.update();});
+ assert.match(await page.$eval('.last-turn-selection',node=>node.textContent),/Последний ход: Synthetic MCP display · Среднее/);
+ assert.equal(await page.$eval('.model-button',node=>node.textContent.includes('Synthetic MCP display')),false,'The picker remains the next-turn selection');
+ const selectionViewport=page.viewport(),selectionStyle=await page.$eval('html',node=>node.getAttribute('style'));
+ for(const language of ['ru','en'])for(const theme of ['dark','light'])for(const width of [320,900]){
+  await page.setViewport({width,height:850});
+  await page.evaluate(({language,theme})=>{
+   window.fixture.language=language;WorkbenchI18n.setLanguage(language);
+   const colors=theme==='light'?{'editor-background':'#fff','sideBar-background':'#fff',foreground:'#333','descriptionForeground':'#616161','input-background':'#fff','input-foreground':'#333','editorWidget-background':'#f3f3f3'}:{'editor-background':'#1e1e1e','sideBar-background':'#1e1e1e',foreground:'#ccc','descriptionForeground':'#999','input-background':'#313131','input-foreground':'#ccc','editorWidget-background':'#252526'};
+   for(const [key,value]of Object.entries(colors))document.documentElement.style.setProperty('--vscode-'+key,value);
+   window.update();
+  },{language,theme});
+  assert.equal(await page.$eval('.last-turn-selection',node=>node.textContent),(language==='ru'?'Последний ход: ':'Last turn: ')+'Synthetic MCP display · '+(language==='ru'?'Среднее':'Medium'));
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'Last-turn label fits the task chat');
+  if(process.env.RUNDIX_BROWSER_ARTIFACT_DIR)await page.screenshot({path:path.join(process.env.RUNDIX_BROWSER_ARTIFACT_DIR,`window-model-selection-${language}-${theme}-${width}.png`),fullPage:true});
+ }
+ await page.setViewport(selectionViewport);
+ await page.evaluate(style=>{if(style===null)document.documentElement.removeAttribute('style');else document.documentElement.setAttribute('style',style);window.fixture.language='ru';WorkbenchI18n.setLanguage('ru');},selectionStyle);
+ await page.evaluate(()=>{delete window.fixture.lastSelection;window.update();});
+ assert.equal(await page.$('.last-turn-selection'),null);
  await require('./mcp-entry-browser.cjs')({page});
  await require('./toggle-response-browser.cjs')({page});
  await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'open',action:'commands'}})));

@@ -39,6 +39,38 @@ exports.run=async()=>{
   await vscode.workspace.getConfiguration('rundix').update('mcpThreadConfig',{mcp_servers:{synthetic_helper:{enabled:false}}},vscode.ConfigurationTarget.Global);
   descriptor=await api.mcp.start();
   await api.mcp.connectPool();assert.equal(api.mcp.panelSnapshot().connected,true);
+  await api.mcp.panelAction({action:'setModelDefaults',model:'synthetic-model',effort:'auto'});
+  assert.equal(vscode.workspace.getConfiguration('rundix').inspect('mcpDefaultModel').globalValue,'synthetic-model');
+  assert.equal(vscode.workspace.getConfiguration('rundix').inspect('mcpDefaultEffort').globalValue,undefined);
+  await api.mcp.panelAction({action:'setModelDefaults',model:null,effort:'auto'});
+  assert.equal(vscode.workspace.getConfiguration('rundix').inspect('mcpDefaultModel').globalValue,undefined);
+  await api.mcp.panelAction({action:'setModelDefaults',model:'synthetic-model',effort:'medium'});
+  assert.equal(vscode.workspace.getConfiguration('rundix').inspect('mcpDefaultEffort').globalValue,'medium');
+  await api.mcp.panelAction({action:'setModelDefaults',model:null,effort:'auto'});
+  const adapter=api.mcp.tasks().adapter,originalModels=adapter.models;
+  let finishModels,modelLoads=0;
+  adapter.models=()=>{modelLoads++;return new Promise(resolve=>{finishModels=resolve;});};
+  await api.mcp.panelAction({action:'refresh'});
+  assert.equal(api.mcp.panelSnapshot().models.status,'loading','Catalog loading does not block the panel action');
+  await api.mcp.panelAction({action:'setModelDefaults',model:null,effort:'auto'});
+  await api.mcp.stop();
+  finishModels([{model:'synthetic-stale',efforts:['medium']}]);await new Promise(resolve=>setImmediate(resolve));
+  assert(!api.mcp.panelSnapshot().models.list.some(entry=>entry.model==='synthetic-stale'),'A stopped bridge drops late catalog results');
+  await api.mcp.panelAction({action:'refresh'});assert.equal(modelLoads,1,'Stopped refresh never loads a catalog');
+  adapter.models=originalModels;descriptor=await api.mcp.start();
+  adapter.models=async()=>{modelLoads++;throw Error('Synthetic unavailable catalog');};
+  await api.mcp.panelAction({action:'refresh'});
+  await wait(()=>api.mcp.panelSnapshot().models.status==='unavailable');
+  assert.equal(modelLoads,2);await new Promise(resolve=>setTimeout(resolve,50));assert.equal(modelLoads,2,'Catalog failures do not auto-retry');
+  adapter.models=originalModels;await api.mcp.panelAction({action:'refresh'});
+  await wait(()=>api.mcp.panelSnapshot().models.status==='ready');
+  await assert.rejects(api.mcp.panelAction({action:'setModelDefaults',model:'synthetic-missing',effort:'auto'}),{code:'invalid_selection'});
+  const originalRequest=AppServer.prototype.request;
+  try {
+    AppServer.prototype.request=async function(method,...rest){return method==='model/list'?{data:[{model:'synthetic-new-catalog',supportedReasoningEfforts:[{reasoningEffort:'medium'}]}]}:originalRequest.call(this,method,...rest);};
+    await api.refreshCatalog();
+    assert.equal(api.mcp.panelSnapshot().models.list[0].model,'synthetic-new-catalog','A refreshed account catalog replaces the panel cache');
+  }finally{AppServer.prototype.request=originalRequest;await api.refreshCatalog();}
   const args={requestId:'synthetic-host-submit',description:'Synthetic task',projectDirectory:vscode.workspace.workspaceFolders[0].uri.fsPath,acceptanceCriteria:'Synthetic checks pass'};
   assert.deepEqual((await request(descriptor,'list_models',{})).models.map(m=>m.model),['synthetic-model'],'list_models reads the real catalog');
   const first=await request(descriptor,'submit_task',args);assert.equal(first.state,'queued');

@@ -63,6 +63,7 @@
 !runtime/connection-companions.cjs
 !runtime/connection-recovery.cjs
 !runtime/mcp-panel.cjs
+!runtime/mcp-panel-models.cjs
 !runtime/server-connection.cjs
 !runtime/account-lifecycle.cjs
 !runtime/session-persistence.cjs

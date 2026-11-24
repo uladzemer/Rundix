@@ -27,7 +27,7 @@ class TaskArchive {
   persist(){this.store.write('view','index',{schemaVersion:1,rows:[...this.index.values()]});}
   entry(task){
     const stat=fs.statSync(this.store.file('mcp-task',task.taskId));
-    const summary={taskId:task.taskId,space:task.space,description:(task.description || '').slice(0,160),state:task.state,progress:(task.progress || '').slice(0,2000),
+    const summary={lastSelection:task.lastSelection || null,taskId:task.taskId,space:task.space,description:(task.description || '').slice(0,160),state:task.state,progress:(task.progress || '').slice(0,2000),
       chatId:task.chatId || null,projectDirectory:task.projectDirectory,createdAt:task.createdAt,updatedAt:task.updatedAt,revision:task.revision || 0,closedAt:task.closedAt,
       report:require('./service-projection.cjs').report(task.report),error:(task.error || '').slice(0,1000) || null,unsentInputCount:task.unsentInputs?.length || 0};
     return {taskId:task.taskId,space:task.space,createdAt:task.createdAt || 0,size:stat.size,mtimeMs:stat.mtimeMs,summary};

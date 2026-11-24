@@ -119,6 +119,7 @@ function activate(context) {
       tasks: { values: () => mcpHost.tasks.tasks.values() },
       adapter: { pending: task => mcpHost.tasks.adapter.pending(task) },
       call: (...args) => mcpHost.tasks.call(...args),
+      recordSelection: s => mcpHost.tasks.recordSelection(s),
     }),
   });
   const { sessions, store, library, connections, pendingLogin, pendingRequests, turnLeases } = core;
@@ -220,7 +221,7 @@ function activate(context) {
     panel.webview.options={enableScripts:true,localResourceRoots:[vscode.Uri.joinPath(context.extensionUri,'ui')]};
     panel.iconPath=vscode.Uri.joinPath(context.extensionUri,'resources','extension-icon.png');
     const nonce=randomBytes(18).toString('base64'),uri=file=>panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri,'ui',file));
-    const scripts=['translations.js','i18n.js','forms.js','questions.js','markdown.js','markdown-view.js','task-report.js','service-chat.js'];
+    const scripts=['translations.js','i18n.js','controls.js','forms.js','questions.js','markdown.js','markdown-view.js','task-report.js','service-chat.js'];
     panel.webview.html=`<!doctype html><html lang="${locale.language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${panel.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('mcp-panel.css')}"><link rel="stylesheet" href="${uri('service-chat.css')}"></head><body><main id="app"></main>${scripts.map(file=>`<script nonce="${nonce}" src="${uri(file)}"></script>`).join('')}</body></html>`;
     panel.webview.onDidReceiveMessage(async message=>{
       try{await serviceChatAction(record,message);await panel.webview.postMessage({type:'chatResult',ok:true,action:message.action,requestId:message.requestId});}
@@ -296,6 +297,40 @@ function activate(context) {
       void syncServiceSettings().catch(()=>vscode.window.showErrorMessage('Background service settings could not be saved. Start MCP again before submitting tasks.'));
   }));
   let mcpEditor=null, mcpPanelBusy=false;
+  const panelModels=require('./runtime/mcp-panel-models.cjs');
+  let modelCatalog=null;
+  function panelSpace() {return serviceClient?.spaces.some(space=>space.spaceId===serviceSpaceId)?serviceSpaceId:serviceClient?.spaces[0]?.spaceId;}
+  function currentPanelModels() {
+    if(modelCatalog && !modelCatalog.current())modelCatalog=null;
+    if(modelCatalog)return modelCatalog.value;
+    if(!serviceMode && mcpHost.hasCurrentCatalog())return {status:'ready',list:panelModels.catalogView(core.state.catalog)};
+    return {status:'idle',list:[]};
+  }
+  function loadPanelModels() {
+    if(!vscode.workspace.isTrusted)return;
+    const client=serviceClient,peer=client?.peer,spaceId=panelSpace(),bridge=mcpHost.bridge,tasks=mcpHost.tasks;
+    if(serviceMode?(!peer || peer.closed || !spaceId):!bridge)return;
+    const connection=JSON.stringify(connections.selection());
+    const server=core.state.server,epoch=core.state.limitsEpoch;
+    let catalogOwner=null;
+    const current=()=>vscode.workspace.isTrusted && (serviceMode?
+      serviceClient===client && client.peer===peer && !peer.closed && panelSpace()===spaceId:
+      mcpHost.bridge===bridge && mcpHost.tasks===tasks && JSON.stringify(connections.selection())===connection &&
+      (catalogOwner?mcpHost.hasCurrentCatalog() && core.state.server===catalogOwner.server && core.state.limitsEpoch===catalogOwner.epoch && core.state.catalog===catalogOwner.catalog:
+        !server || core.state.server===server && core.state.limitsEpoch===epoch));
+    if(modelCatalog?.current() && modelCatalog.value.status==='loading')return;
+    const record={current,value:{status:'loading',list:[]}};modelCatalog=record;publishMcpPanel(true);
+    // Deliberately outside the panel action gate. Refresh is the only retry.
+    Promise.resolve().then(()=>serviceMode?client.call(spaceId,'list_models',{}):tasks.adapter.models()).then(value=>{
+      if(modelCatalog!==record || !current())return;
+      if(!serviceMode){
+        if(!mcpHost.hasCurrentCatalog()){record.value={status:'unavailable',list:[]};return;}
+        catalogOwner={server:core.state.server,epoch:core.state.limitsEpoch,catalog:core.state.catalog};
+      }
+      record.value={status:'ready',list:panelModels.catalogView(serviceMode?value.models:value)};
+    }).catch(()=>{if(modelCatalog===record && current())record.value={status:'unavailable',list:[]};})
+      .finally(()=>{if(modelCatalog===record && current())publishMcpPanel(true);});
+  }
   const mcpRecords=()=>serviceMode?[]:mcpHost.tasks?[...mcpHost.tasks.tasks.values()]:mcpPanelState.readRecords(path.join(context.globalStorageUri.fsPath,'mcp','tasks'));
   async function connectMcpPool() {
     if(serviceMode)throw Object.assign(Error('Configure the installed background service provider.'),{code:'unsupported'});
@@ -313,15 +348,16 @@ function activate(context) {
     if(!core.state.account || core.state.limits.error)throw Error('The selected companion connection is unavailable.');
   }
   function mcpPanelSnapshot() {
+    const modelDefaults=panelModels.panelDefaults(key=>vscode.workspace.getConfiguration('rundix').inspect(key)),models=currentPanelModels();
     if(serviceMode){
       if(!vscode.workspace.isTrusted && serviceClient)closeServiceClient();
       return mcpPanelState.serviceSnapshot({client:serviceClient,language:locale.language,installed:serviceInstallation,
-        selectedSpaceId:serviceSpaceId,error:serviceError,taskChatsAvailable:true});
+        selectedSpaceId:serviceSpaceId,error:serviceError,taskChatsAvailable:true,modelDefaults,models});
     }
     let connected=false;
     try{if(core.state.activeConnection?.provider && core.state.account && !core.state.limits.error){connections.assertCurrent(core.state.activeConnection);connected=true;}}catch{}
     return mcpPanelState.snapshot({records:mcpRecords(),language:locale.language,connection:connections.display(),connected,bridgeRunning:!!mcpHost.bridge,
-      pending:task=>mcpHost.tasks?.adapter.pending(task) || []});
+      pending:task=>mcpHost.tasks?.adapter.pending(task) || [],modelDefaults,models});
   }
   function publishMcpPanel(force=false) {
     if(![...mcpViews.keys()].some(view=>view.visible))return;
@@ -339,15 +375,36 @@ function activate(context) {
   }
   async function handleMcpPanel(message) {
     if(!message || typeof message.action!=='string')throw Error('Invalid MCP panel action.');
+    if(message.action==='setModelDefaults') {
+      if(!vscode.workspace.isTrusted)throw Object.assign(Error('Workspace trust is required.'),{code:'workspace_untrusted'});
+      panelModels.validateDefaults(message.model,message.effort,currentPanelModels());
+      const config=vscode.workspace.getConfiguration('rundix');
+      const previous=['mcpDefaultModel','mcpDefaultEffort'].map(key=>config.inspect(key)?.globalValue);
+      try {
+        await config.update('mcpDefaultModel',message.model===null?undefined:message.model,vscode.ConfigurationTarget.Global);
+        await config.update('mcpDefaultEffort',message.effort==='auto'?undefined:message.effort,vscode.ConfigurationTarget.Global);
+        if(serviceMode)await syncServiceSettings();
+      } catch {
+        try {
+          await config.update('mcpDefaultModel',previous[0],vscode.ConfigurationTarget.Global);
+          await config.update('mcpDefaultEffort',previous[1],vscode.ConfigurationTarget.Global);
+          if(serviceMode)await syncServiceSettings();
+        } catch {}
+        publishMcpPanel(true);
+        throw Object.assign(Error('Model settings could not be saved.'),{code:'settings_write_failed'});
+      }
+      publishMcpPanel(true);return;
+    }
     if(serviceMode && message.action==='selectSpace') {
       if(!vscode.workspace.isTrusted || !serviceClient?.spaces.some(space=>space.spaceId===message.spaceId))throw Error('Unknown space');
-      serviceSpaceId=message.spaceId;publishMcpPanel(true);return;
+      serviceSpaceId=message.spaceId;publishMcpPanel(true);loadPanelModels();return;
     }
     if(message.action==='ready' || message.action==='refresh'){
+      publishMcpPanel(true);
       if(serviceMode && !serviceStopped)serviceWanted=true;
       if(serviceMode && !serviceStopped && serviceWanted && !serviceClient && vscode.workspace.isTrusted)await startMcp();
       if(serviceMode && message.action==='refresh' && serviceClient)await Promise.all(serviceClient.spaces.map(space=>serviceClient.refresh(space.spaceId)));
-      publishMcpPanel(true);return;
+      publishMcpPanel(true);loadPanelModels();return;
     }
     if(serviceMode && ['openChat','cancel','continue','close'].includes(message.action)) {
       if(!vscode.workspace.isTrusted || !serviceClient)throw Object.assign(Error('Service connection is unavailable.'),{code:'service_unavailable'});
@@ -384,12 +441,13 @@ function activate(context) {
       }
     }else throw Error('Unknown MCP panel action.');
     publishMcpPanel(true);
+    if(message.action==='start')loadPanelModels();
   }
   function attachMcpView(view,onVisible) {
       mcpViews.set(view,{signature:''});
       view.webview.options={enableScripts:true,localResourceRoots:[vscode.Uri.joinPath(context.extensionUri,'ui')]};
       const nonce=randomBytes(18).toString('base64'), uri=file=>view.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri,'ui',file));
-      view.webview.html=`<!doctype html><html lang="${locale.language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('mcp-panel.css')}"></head><body><main id="app"></main><script nonce="${nonce}" src="${uri('mcp-panel.js')}"></script></body></html>`;
+      view.webview.html=`<!doctype html><html lang="${locale.language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('mcp-panel.css')}"></head><body><main id="app"></main>${['translations.js','i18n.js','controls.js','mcp-panel.js'].map(file=>`<script nonce="${nonce}" src="${uri(file)}"></script>`).join('')}</body></html>`;
       const listener=view.webview.onDidReceiveMessage(async message=>{
         if(mcpPanelBusy){await view.webview.postMessage({type:'mcpResult',ok:false,requestId:message?.requestId});return;}
         mcpPanelBusy=true;
@@ -583,6 +641,7 @@ function activate(context) {
           parentId: s.parentId || null,
           model: s.model,
           effort: s.effort,
+          ...(s.mcpTask?{lastSelection:s.lastSelection || null}:{}),
           models: core.state.catalog,
           cli: {...cliInfo, channel:cliChannel(),autoUpdate:vscode.workspace.getConfiguration('rundix').get('cliAutoUpdate',true),custom:!!configuredCliPath()},
           modelsUpdatedAt: core.state.catalogUpdatedAt,

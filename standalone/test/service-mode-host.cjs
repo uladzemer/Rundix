@@ -69,6 +69,21 @@ exports.run = async () => {
     report.windowServicePanel=true;report.sameChatContinuation=true;report.cancelAndCloseRouted=true;
     await api.mcp.start(); assert.equal(installs, 1);
     const settingsFile=path.join(root,'settings.json');
+    await api.mcp.panelAction({action:'setModelDefaults',model:'synthetic-model',effort:'medium'});
+    assert.equal(vscode.workspace.getConfiguration('rundix').inspect('mcpDefaultModel').globalValue,'synthetic-model');
+    assert.equal(vscode.workspace.getConfiguration('rundix').inspect('mcpDefaultEffort').globalValue,'medium');
+    const modelSettings=JSON.parse(fs.readFileSync(settingsFile,'utf8'));
+    assert.equal(modelSettings.mcpDefaultModel,'synthetic-model');assert.equal(modelSettings.mcpDefaultEffort,'medium');
+    await api.mcp.panelAction({action:'setModelDefaults',model:null,effort:'auto'});
+    const resetSettings=JSON.parse(fs.readFileSync(settingsFile,'utf8'));
+    assert.equal(resetSettings.mcpDefaultModel,undefined);assert.equal(resetSettings.mcpDefaultEffort,undefined);
+    const settingsModule=require('../runtime/service-settings.cjs'),originalWrite=settingsModule.writeServiceSettings;
+    try {
+      settingsModule.writeServiceSettings=async()=>{throw Error('Synthetic settings sync failure');};
+      await assert.rejects(api.mcp.panelAction({action:'setModelDefaults',model:'synthetic-model',effort:'medium'}),{code:'settings_write_failed'});
+      assert.equal(vscode.workspace.getConfiguration('rundix').inspect('mcpDefaultModel').globalValue,undefined,'Failed sync restores the prior user model');
+      assert.equal(vscode.workspace.getConfiguration('rundix').inspect('mcpDefaultEffort').globalValue,undefined,'Failed sync restores the prior user effort');
+    }finally{settingsModule.writeServiceSettings=originalWrite;await api.mcp.panelAction({action:'setModelDefaults',model:null,effort:'auto'});}
     await vscode.workspace.getConfiguration('rundix').update('mcpAccessMode','manual',vscode.ConfigurationTarget.Global);
     await vscode.workspace.getConfiguration('rundix').update('mcpThreadConfig',{model:'synthetic-model'},vscode.ConfigurationTarget.Global);
     await vscode.workspace.getConfiguration('rundix').update('cliPath',process.execPath,vscode.ConfigurationTarget.Global);

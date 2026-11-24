@@ -14,6 +14,11 @@ function createMcpHost({core, storageRoot, settings=()=>undefined, trusted=()=>f
   modelDefaults=()=>readDefaults(settings)}) {
   const {sessions, store, connections, threadReleases, turnLeases} = core;
   let tasks=null, bridge=null, lease=null, starting=null, launcher=null;
+  const hasCurrentCatalog=()=>{
+    const {server,activeConnection,catalog,connectionStarting}=core.state;
+    if(!server || !activeConnection || !catalog.length || connectionStarting)return false;
+    try{connections.assertCurrent(activeConnection);return true;}catch{return false;}
+  };
   const adapter=executor({connections,sessions,store,
     create:saved=>ui.openChat ? ui.openChat(saved) : core.createSession({key:saved.key,saved}),
     hasChat:ui.hasChat || (()=>false), closeTab:ui.closeTab, closeSavedTab:ui.closeSavedTab,
@@ -50,11 +55,6 @@ function createMcpHost({core, storageRoot, settings=()=>undefined, trusted=()=>f
       clock.setTimeout(()=>ui.reloadWindow(),300);
     },
     async models(){
-      const hasCurrentCatalog=()=>{
-        const {server,activeConnection,catalog,connectionStarting}=core.state;
-        if(!server || !activeConnection || !catalog.length || connectionStarting)return false;
-        try{connections.assertCurrent(activeConnection);return true;}catch{return false;}
-      };
       // Bound catalog loading by the existing bridge request budget.
       if(!hasCurrentCatalog()){
         let timer;
@@ -102,6 +102,6 @@ function createMcpHost({core, storageRoot, settings=()=>undefined, trusted=()=>f
       throw Error('Cancel active MCP tasks and wait for confirmation before stopping the bridge.');
     dispose();await ui.enabled?.(false);ui.changed?.();
   }
-  return {start,stop,dispose,get tasks(){return tasks;},get bridge(){return bridge;},get launcher(){return launcher;}};
+  return {start,stop,dispose,hasCurrentCatalog,get tasks(){return tasks;},get bridge(){return bridge;},get launcher(){return launcher;}};
 }
 module.exports={createMcpHost};

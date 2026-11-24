@@ -20,8 +20,14 @@ fs.mkdirSync(artifacts,{recursive:true});
         window.update=()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'serviceChat',data:window.fixture}}));
         window.ack=ok=>{const last=window.calls.findLast(message=>message.requestId);window.dispatchEvent(new MessageEvent('message',{data:{type:'chatResult',ok,action:last.action,requestId:last.requestId}}));};
       },{language,theme});
-      for(const file of ['translations.js','i18n.js','forms.js','questions.js','markdown.js','markdown-view.js','task-report.js','service-chat.js'])await page.addScriptTag({content:fs.readFileSync(path.join(__dirname,'../ui',file),'utf8')});
+      for(const file of ['translations.js','i18n.js','controls.js','forms.js','questions.js','markdown.js','markdown-view.js','task-report.js','service-chat.js'])await page.addScriptTag({content:fs.readFileSync(path.join(__dirname,'../ui',file),'utf8')});
       await page.evaluate(()=>window.update());assert.deepEqual(errors,[]);
+      await page.evaluate(()=>{window.fixture.lastSelection={model:'synthetic-model',displayName:'Synthetic <model>',effort:'medium',turnId:'synthetic-turn'};window.update();});
+      assert.equal(await page.$eval('.last-selection',node=>node.textContent),(language==='ru'?'Модель: ':'Model: ')+'Synthetic <model> · '+(language==='ru'?'Среднее':'Medium'));
+      await page.screenshot({path:path.join(artifacts,`service-model-selection-${language}-${theme}-${width}.png`),fullPage:true});
+      await page.evaluate(()=>{window.fixture.lastSelection.effort=null;window.update();});
+      assert(!await page.$eval('.last-selection',node=>node.textContent.includes(' · ')));
+      assert.equal(await page.$eval('#service-draft',node=>node.value),'Synthetic restored host draft');
       const rawReport=JSON.stringify({result:'Synthetic **readable** report\n\n```js\nconst reportSynthetic = 2;\n```',changedFiles:['synthetic-'+ 'x'.repeat(120)+'.txt'],checks:['Synthetic passed'],remainingIssues:['Synthetic follow-up <img src=x onerror="window.injected=true">']});
       await page.evaluate(raw=>{
         window.fixture.items.push({id:'synthetic-report',type:'agentMessage',text:raw},{id:'synthetic-user-json',type:'userMessage',text:raw},

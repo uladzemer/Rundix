@@ -1,4 +1,4 @@
-/* global acquireVsCodeApi, WorkbenchI18n, WorkbenchQuestions, WorkbenchMarkdownView, WorkbenchMarkdown, WorkbenchTaskReport */
+/* global WorkbenchControls, acquireVsCodeApi, WorkbenchI18n, WorkbenchQuestions, WorkbenchMarkdownView, WorkbenchMarkdown, WorkbenchTaskReport */
 (()=>{
   const api=acquireVsCodeApi(),root=document.getElementById('app');
   let saved=api.getState() || {},state=null,initialized=false,pending=null,version=0;
@@ -8,12 +8,13 @@
   const el=(tag,text,cls)=>{const node=document.createElement(tag);if(text!=null)node.textContent=text;if(cls)node.className=cls;return node;};
   const tr=(en,ru)=>state?.language==='ru'?ru:en;
   const title=el('h1','Rundix'),owner=el('p',null,'service-note'),status=el('p'),notice=el('p',null,'notice'),error=el('p',null,'alert');
+  const selection=el('p',null,'last-selection muted');
   const transcript=el('section',null,'transcript'),questions=el('section',null,'requests'),composer=el('form',null,'composer');
   const input=el('textarea'),send=el('button'),cancel=el('button'),refresh=el('button'),older=el('button');
   input.id='service-draft';input.maxLength=100000;input.value=draft;send.type='submit';cancel.type=refresh.type=older.type='button';
   const label=el('label');label.htmlFor=input.id;composer.append(label,input,send);
   const controls=el('div',null,'actions');controls.append(refresh,cancel,older);
-  root.append(title,owner,status,notice,error,controls,transcript,questions,composer);
+  root.append(title,owner,status,selection,notice,error,controls,transcript,questions,composer);
   const markdown=new WorkbenchMarkdownView({icon:()=>el('span','⧉'),send:(action,payload)=>{
     if(action==='copyItem'){
       const item=items.get(payload.itemId)?.item;if(!item)return;
@@ -104,6 +105,8 @@
     persist();title.textContent=state.title;owner.textContent=state.readOnly?tr('Legacy history · read only','История старой версии · только чтение'):tr('Service-owned task · Rundix','Задача фонового сервиса · Rundix');
     const labels={queued:tr('Queued','В очереди'),running:tr('Running','Выполняется'),waiting_approval:tr('Waiting for approval','Ожидает подтверждения'),waiting_limit:tr('Waiting for limits','Ожидает лимитов'),completed:tr('Completed','Завершена'),error:tr('Error','Ошибка'),cancelled:tr('Cancelled','Отменена')};
     status.textContent=(labels[state.state] || state.state)+(state.progress?' · '+state.progress:'');
+    selection.hidden=!state.lastSelection;
+    selection.textContent=state.lastSelection?tr('Model: ','Модель: ')+(state.lastSelection.displayName || state.lastSelection.model)+(state.lastSelection.effort?' · '+WorkbenchControls.label(state.lastSelection.effort):''):'';
     notice.hidden=!state.historyTruncated && !state.itemsTruncated;notice.textContent=tr('Showing a bounded transcript. Large items are shortened.','Показан ограниченный фрагмент истории. Большие элементы сокращены.');
     error.textContent=state.error || '';label.textContent=tr('Continue in this task','Продолжить задачу');send.textContent=tr('Send continuation','Отправить уточнение');cancel.textContent=tr('Cancel task','Отменить задачу');refresh.textContent=tr('Refresh','Обновить');older.textContent=tr('Earlier messages','Ранние сообщения');older.hidden=!traversal.cursor;older.disabled=historyPending;
     showItems(state.items || []);

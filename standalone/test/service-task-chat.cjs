@@ -16,6 +16,7 @@ async function scenario(kind){
     const task=await wa.call(sa,'submit_task',{requestId:'synthetic-chat-submit',description:'Synthetic chat task',acceptanceCriteria:'Synthetic checks',projectDirectory:a});
     const pending=await wa.call(sa,'wait_task',{taskId:task.taskId,waitSeconds:5});assert.equal(pending.state,'waiting_approval');
     const chat=await wa.chat(sa,'chat.open',{taskId:task.taskId});await wa2.chat(sa,'chat.open',{taskId:task.taskId});
+    assert.deepEqual(chat.lastSelection,(await wa.call(sa,'get_task',{taskId:task.taskId})).lastSelection);assert(chat.lastSelection?.turnId);
     assert.equal(chat.owner,'service');assert(chat.items.some(item=>item.type==='userMessage'));assert.equal(chat.pendingRequests.length,1);
     await assert.rejects(wb.chat(sb,'chat.open',{taskId:task.taskId}),{code:'unknown_task'});
     let changes=0;wa.on('chatChanged',()=>changes++);

@@ -1,9 +1,9 @@
-/* global acquireVsCodeApi */
+/* global acquireVsCodeApi, WorkbenchI18n, WorkbenchControls */
 (()=>{
   const api=acquireVsCodeApi(), root=document.getElementById('app');
   let saved=api.getState() || {}, drafts=saved.drafts || {}, selected=saved.selected || null, state=null, pending=false, error='', submission=null, requestId=null;
   const versions={}, attempts=saved.attempts || {};
-  let configuration=null,copied=false;
+  let configuration=null,copied=false,settingsFocus=null;
   const configurationText={ru:{title:'Подключение Claude Code',hint:'Эти настройки связывают Claude Code с Rundix. Если сервер rundix уже добавлен, перезапустите сессию Claude Code и проверьте /mcp. VS Code должен оставаться открытым.',copy:'Скопировать настройки',copied:'Настройки скопированы'},en:{title:'Connect Claude Code',hint:'These settings connect Claude Code to Rundix. If rundix is already registered, restart your Claude Code session and check /mcp. VS Code must remain open.',copy:'Copy configuration',copied:'Configuration copied'}};
   const words={
     en:{unsent:'Unsent inputs: recover full text with get_task',title:'MCP tasks',subtitle:'Claude Code → Codex',pool:'Connection',local:'Select a companion connection',ready:'Connected',unchecked:'Not checked',bridgeOn:'MCP bridge running',bridgeOff:'MCP bridge stopped',connect:'Connect companion',start:'Start MCP',stop:'Stop MCP',config:'Claude configuration',refresh:'Refresh',empty:'No MCP tasks yet. Start the bridge and submit a task from Claude Code.',open:'Open chat',cancel:'Cancel task',follow:'Continue in the same chat',placeholder:'Clarification or next step…',send:'Send continuation',report:'Final report',result:'Result',files:'Changed files',checks:'Checks performed',issues:'Remaining issues',none:'None reported',approval:'Approval required — open the chat to review the request, or answer in Claude Code.',recovery:'Execution requires verification. Inspect the chat before continuing.',offline:'Tasks are paused while the bridge is stopped.',failed:'Action failed. Check the selected connection, workspace trust and task state.',queued:'Queued',running:'Running',waiting_approval:'Waiting for approval',completed:'Completed',error:'Error',cancelled:'Cancelled',working:'Working…',copy:'Task ID',context:'VS Code must remain open. Tasks use the selected companion and its server limits.'},
@@ -11,11 +11,14 @@
   };
   Object.assign(words.en,{space:'Project space',waiting_limit:'Waiting for limits',reset:'Reset at',resetUnknown:'Reset time unknown',actionRequired:'Connection action required',close:'Close task',unsentCount:'Unsent inputs',low_remaining:'Low remaining quota',exhausted:'Quota exhausted',limits_unknown:'Limits unknown',reset_unknown:'Reset time unknown',active_turns:'Waiting for active turns',action_required:'Connection action required',connection_changed:'Connection changed'});
   Object.assign(words.ru,{space:'Пространство проекта',waiting_limit:'Ожидает лимитов',reset:'Сброс лимитов',resetUnknown:'Время сброса неизвестно',actionRequired:'Требуется действие с подключением',close:'Закрыть задачу',unsentCount:'Неотправленные сообщения',low_remaining:'Осталось мало лимитов',exhausted:'Лимиты исчерпаны',limits_unknown:'Лимиты неизвестны',reset_unknown:'Время сброса неизвестно',active_turns:'Ожидает завершения активных задач',action_required:'Требуется действие с подключением',connection_changed:'Подключение изменилось'});
+  Object.assign(words.en,{modelSettings:'Model for new tasks',model:'Model',effort:'Reasoning effort',automatic:'Automatic (GPT-6.2 Sol · Medium when available)',regular:'Same as regular chat',auto:'Auto',unavailable:'unavailable',modelsIdle:'Start MCP to load the model list',modelsLoading:'Loading models…',modelsUnavailable:'Models unavailable, press Refresh',newTasks:'Applies to new tasks only. A model passed in submit_task wins.'});
+  Object.assign(words.ru,{modelSettings:'Модель для новых задач',model:'Модель',effort:'Глубина размышления',automatic:'Автоматически (GPT-6.2 Sol · Medium, если доступна)',regular:'Как в обычном чате',auto:'Авто',unavailable:'недоступна',modelsIdle:'Запустите MCP, чтобы загрузить список моделей',modelsLoading:'Загрузка моделей…',modelsUnavailable:'Модели недоступны, нажмите «Обновить»',newTasks:'Применяется только к новым задачам. Модель, переданная в submit_task, имеет приоритет.'});
   const t=key=>(words[state?.language==='ru'?'ru':'en'][key] || key);
   function element(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;}
   function persist(){api.setState({selected,drafts,attempts});}
   function action(name,extra={}){
     if(pending)return;
+    if(name==='setModelDefaults')settingsFocus=document.activeElement?.id || null;
     pending=true;error='';submission=name==='continue'?{taskId:extra.taskId,version:versions[extra.taskId] || 0}:null;
     const bytes=crypto.getRandomValues(new Uint8Array(16));requestId=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
     const payload={action:name,...(state.serviceMode?{spaceId:state.spaceId}:{}),...extra};
@@ -25,10 +28,35 @@
     persist();render();api.postMessage({...payload,requestId});
   }
   function button(text,name,extra,disabled=false){const b=element('button',text);b.type='button';b.disabled=pending || disabled;b.addEventListener('click',()=>action(name,extra));return b;}
+  const selectionText=value=>(value.displayName || value.model)+(value.effort?' · '+WorkbenchControls.label(value.effort):'');
+  function modelSettings() {
+    const defaults=state.modelDefaults || {model:null,effort:'auto'},catalog=state.models || {status:'idle',list:[]};
+    const section=element('section',undefined,'model-settings'),model=element('select'),effort=element('select');
+    section.append(element('h2',t('modelSettings')));model.id='mcp-model';effort.id='mcp-effort';
+    const option=(select,value,text,selected)=>{const row=element('option',text);row.value=value;row.selected=selected;select.append(row);};
+    // JSON values distinguish null, the empty string, and arbitrary catalog IDs.
+    option(model,'null',t('automatic'),defaults.model===null);option(model,'""',t('regular'),defaults.model==='');
+    for(const entry of catalog.list)option(model,JSON.stringify(entry.model),entry.displayName,defaults.model===entry.model);
+    if(defaults.model && !catalog.list.some(entry=>entry.model===defaults.model))option(model,JSON.stringify(defaults.model),defaults.model+(catalog.status==='ready'?' ('+t('unavailable')+')':''),true);
+    const supported=value=>value===''?[...new Set(catalog.list.flatMap(entry=>entry.efforts))]:catalog.list.find(entry=>entry.model===(value===null?'gpt-6.2-sol':value))?.efforts || [];
+    option(effort,'auto',t('auto'),defaults.effort==='auto');
+    const efforts=[...supported(defaults.model)];if(defaults.effort!=='auto' && !efforts.includes(defaults.effort))efforts.push(defaults.effort);
+    for(const value of efforts)option(effort,value,WorkbenchControls.label(value),defaults.effort===value);
+    for(const [control,key]of [[model,'model'],[effort,'effort']]){const label=element('label',t(key));label.htmlFor=control.id;section.append(label,control);control.disabled=pending || catalog.status!=='ready';}
+    model.addEventListener('change',()=>{const value=JSON.parse(model.value);action('setModelDefaults',{model:value,effort:defaults.effort==='auto' || supported(value).includes(defaults.effort)?defaults.effort:'auto'});});
+    effort.addEventListener('change',()=>action('setModelDefaults',{model:defaults.model,effort:effort.value}));
+    if(catalog.status!=='ready')section.append(element('p',(defaults.model===null?t('automatic'):defaults.model===''?t('regular'):defaults.model)+' · '+(defaults.effort==='auto'?t('auto'):WorkbenchControls.label(defaults.effort)),'muted'),element('p',t(({loading:'modelsLoading',unavailable:'modelsUnavailable'})[catalog.status] || 'modelsIdle'),'models-hint muted'));
+    section.append(element('p',t('newTasks'),'muted'));root.append(section);
+  }
   function render(){
     if(!state)return;
-    const focused=document.activeElement?.id, start=document.activeElement?.selectionStart, end=document.activeElement?.selectionEnd, scroll=window.scrollY;
-    root.replaceChildren();document.documentElement.lang=state.language;
+    const focused=document.activeElement?.id || settingsFocus, start=document.activeElement?.selectionStart, end=document.activeElement?.selectionEnd, scroll=window.scrollY;
+    const restore=()=>{
+      const control=focused && document.getElementById(focused);
+      if(control && !control.disabled){control.focus({preventScroll:true});if(focused==='clarification')control.setSelectionRange(start,end);settingsFocus=null;}
+      window.scrollTo(0,scroll);
+    };
+    root.replaceChildren();document.documentElement.lang=state.language;WorkbenchI18n.setLanguage(state.language);
     const header=element('header');header.append(element('h1',t('title')),element('p',t('subtitle'),'eyebrow'));root.append(header);
     if(state.serviceMode){
       root.append(element('p',state.language==='ru'?'Задачи выполняются в фоновом сервисе. Закрытие окна не останавливает их.':'Tasks run in the background service. Closing this window leaves them running.','service-note'));
@@ -51,13 +79,14 @@
     const controls=element('div',undefined,'actions');controls.append(button(t('connect'),'connectPool'),button(t('start'),'start',{},state.bridgeRunning),button(t('stop'),'stop',{},!state.bridgeRunning),button(t('config'),'configuration',{},!state.bridgeRunning),button(t('refresh'),'refresh'));
     connection.append(controls,element('p',t('context'),'muted'));root.append(connection);
     }
+    modelSettings();
     if(configuration){
       const labels=configurationText[state.language==='ru'?'ru':'en'],section=element('section',undefined,'claude-configuration');
       section.append(element('h2',labels.title),element('p',state.serviceMode?(state.language==='ru'?'Замените запись Rundix MCP и перезапустите Claude MCP.':'Replace the Rundix MCP entry and restart Claude MCP.'):labels.hint,'muted'),element('pre',JSON.stringify(configuration,null,2),'configuration-json'),button(copied?labels.copied:labels.copy,'copyConfiguration',{},!(state.serviceMode?state.configurationAvailable:state.bridgeRunning)));root.append(section);
     }
     if(error || pending){const alert=element('p',pending?t('working'):error==='failed'?t('failed'):t('failed')+' '+error,'alert');alert.setAttribute('role','status');root.append(alert);}
     const tasks=state.tasks || [];
-    if(!tasks.length){root.append(element('p',t('empty'),'empty'));return;}
+    if(!tasks.length){root.append(element('p',t('empty'),'empty'));restore();return;}
     if(!tasks.some(task=>task.taskId===selected)){selected=tasks[0].taskId;persist();}
     const list=element('nav',undefined,'task-list');list.setAttribute('aria-label',t('title'));
     for(const task of tasks){
@@ -68,6 +97,7 @@
     root.append(list);
     const task=tasks.find(task=>task.taskId===selected), detail=element('section',undefined,'task-detail');
     detail.append(element('h2',task.title || task.taskId),element('p',t(task.state),'state state-'+task.state),element('code',task.taskId),element('p',task.projectDirectory,'directory'));
+    if(task.lastSelection)detail.append(element('p',t('model')+': '+selectionText(task.lastSelection),'last-selection muted'));
     if(task.waitingLimit){
       detail.append(element('p',t(task.waitingLimit.reason),'notice'));
       detail.append(element('p',task.waitingLimit.resetAt?t('reset')+': '+new Date(task.waitingLimit.resetAt).toLocaleString(state.language==='ru'?'ru-RU':'en-US'):t('resetUnknown'),'limit-reset'));
@@ -104,8 +134,7 @@
     const submit=element('button',t('send'));submit.type='submit';submit.disabled=pending || task.readOnly || !state.bridgeRunning || !input.value.trim();
     form.addEventListener('submit',event=>{event.preventDefault();if(!submit.disabled)action('continue',{taskId:task.taskId,clarification:input.value});});
     form.append(label,input,submit);detail.append(form);root.append(detail);
-    if(focused==='clarification'){input.focus({preventScroll:true});input.setSelectionRange(start,end);}
-    window.scrollTo(0,scroll);
+    restore();
   }
   window.addEventListener('message',event=>{
     const message=event.data;

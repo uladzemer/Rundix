@@ -1,5 +1,10 @@
 # Changelog / История изменений
 
+## 0.4.21 — 2026-11-24
+
+- The MCP panel offers catalog-backed model and reasoning-effort dropdowns for new tasks, saving the existing user settings in window and background service modes.
+- Task snapshots and task chat headers show the host-selected model and effort of the last confirmed turn. The selection survives chat restore and task archiving; rejected or uncertain starts retain the previous value.
+
 ## 0.4.20 — 2026-11-19
 
 - Submitted attachments leave the composer immediately and return if sending fails. This release also includes the MCP model and reasoning defaults from 0.4.19.

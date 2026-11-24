@@ -347,6 +347,7 @@ function updateSubmitState() {
 }
 left.append(access);
 right.replaceChildren(model, contextButton, ide, enqueue, stop, submit);
+const lastTurnSelection=el('small',undefined,'last-turn-selection');
 ide.replaceChildren(
   icon("code"),
   el("span", WorkbenchI18n.t("Контекст IDE"), "ide-label"),
@@ -2054,6 +2055,12 @@ function render() {
     "is-empty",
     !state.items.length && !state.requests.length && !state.error && !state.busy && !sending && !pendingPreviews.has(state.key),
   );
+  if(state.lastSelection){
+    const value=state.lastSelection;
+    lastTurnSelection.textContent=WorkbenchI18n.t('Последний ход: ')+(value.displayName || value.model)+(value.effort?' · '+WorkbenchControls.label(value.effort):'');
+    lastTurnSelection.title=lastTurnSelection.textContent;
+    footer.after(lastTurnSelection);
+  }else lastTurnSelection.remove();
   model.replaceChildren(
     el(
       "span",
@@ -2335,7 +2342,7 @@ window.addEventListener("message", (event) => {
     }
     if (!historyScope) historyScope = msg.data.historyScope === "all" ? "all" : "workspace";
     hydrated = true;
-    state = { ...state, ...msg.data };
+    state = { ...state, lastSelection:null, ...msg.data };
     const submittedFiles=submittedAttachments.get(state.key);
     if(submittedFiles && !(state.attachments || []).some(file=>submittedFiles.has(file.id)))submittedAttachments.delete(state.key);
     document.documentElement.dataset.controlMotion =

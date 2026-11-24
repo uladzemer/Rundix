@@ -7,6 +7,7 @@ async function save(deps, s) {
     customName: s.customName,
     model: s.model,
     effort: s.effort,
+    lastSelection: s.lastSelection || null,
     prefs: s.prefs,
     draft: s.draft || "",
     draftRevision:s.draftRevision || null,

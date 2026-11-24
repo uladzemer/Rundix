@@ -70,7 +70,7 @@ async function main(){
     try{
       service=await require('../runtime/service-main.cjs').runService({root:serviceRoot,hostOptions:data.hostOptions});
       for(const folder of [a,b]){const client=new ServiceWindowClient({root:serviceRoot,legacyRoot:source,trusted:true,workspaceFolders:[pathToFileURL(folder).href]});clients.push(client);await client.start();assert.equal(client.legacyStatus.state,'ready');}
-      const [wa,wb]=clients;assert.equal(wa.snapshots.get(sa).tasks[0].readOnly,true);assert.equal(wb.snapshots.get(sb).tasks.length,1);
+      const [wa,wb]=clients;assert.equal(wa.snapshots.get(sa).tasks[0].lastSelection,null);assert.equal(wa.snapshots.get(sa).tasks[0].readOnly,true);assert.equal(wb.snapshots.get(sb).tasks.length,1);
       wa.peer.close();const reconnectedBy=Date.now()+5000;while(!wa.peer || !wa.snapshots.has(sa)){assert(Date.now()<reconnectedBy,'Synthetic ready-root reconnect deadline');await new Promise(resolve=>setTimeout(resolve,20));}assert.equal(wa.legacyStatus.state,'ready');assert.equal(wb.legacyStatus.state,'ready');
       const open=fs.promises.open;let transcriptReads=0;
       try{

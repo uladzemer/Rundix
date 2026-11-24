@@ -1,4 +1,5 @@
 (function(root){const strings={
+  'Последний ход: ': 'Last turn: ',
   "Влить": "Merge",
   "Удалить worktree": "Remove worktree",
   "Удалить worktree?": "Remove worktree?",

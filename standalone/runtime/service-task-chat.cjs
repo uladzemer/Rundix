@@ -13,6 +13,7 @@ function snapshot({core,tasks,task,generation,revision}) {
     return bytes<=32768 && pendingBytes<=128*1024?request:{id:request.id,method:request.method,displayOnly:true};
   });
   const result={generation,schemaVersion:1,spaceId:task.space,taskId:task.taskId,viewRevision:revision,
+    lastSelection:task.lastSelection || null,
     owner:'service',chatId:task.chatId || null,projectDirectory:task.projectDirectory,title:('MCP · '+task.description).slice(0,167),state:task.state,
     progress:task.progress,closed:!!task.closedAt,error:task.error || null,recoveryRequired:!!task.recoveryRequired,
     pendingRequests,...projection.transcript(session?.items || []),cursor:null};

@@ -44,6 +44,8 @@ async function hostSendChecks(project,store) {
  const send=(...args)=>require('../runtime/send-queue.cjs').send(context,...args);
  const s={id:'synthetic-host-chat',cwd:project,loaded:true,busy:false,model:'synthetic-default',effort:'low',prefs:{fast:true},attachments:[],items:[]};
  const result=await send(s,'Synthetic effort-only host input',[],{modelSelection:{effort:'high'},includeIde:false});
+ assert.deepEqual(s.lastSelection,{model:'synthetic-default',displayName:'synthetic-default',effort:'high',turnId:'synthetic-host-turn-1'});
+ assert.equal(s.effort,'low','Recording does not change the next-turn composer effort');
  assert.equal(result.turnId,'synthetic-host-turn-1','Host returns accepted turn ID even if it already completed');
  assert.equal(s.turnId,null);
  assert.equal(turns[0].model,'synthetic-default');assert.equal(turns[0].effort,'high');
@@ -54,6 +56,7 @@ async function hostSendChecks(project,store) {
  assert.match(ordinaryInstructions,/ask a concise structured quiz using request_user_input or request_user_input_async/);
  assert.doesNotMatch(ordinaryInstructions,/automated agent client/);
  await send(s,'Synthetic explicit model',[],{modelSelection:{model:'synthetic-other',effort:'medium',fast:false},includeIde:false});
+ assert.deepEqual(s.lastSelection,{model:'synthetic-other',displayName:'synthetic-other',effort:'medium',turnId:'synthetic-host-turn-3'});
  assert.equal(turns[2].model,'synthetic-other');assert.equal(turns[2].effort,'medium');assert.equal(turns[2].serviceTierForTurn,'default');
 
  complete=false;

@@ -21,6 +21,9 @@ async function main() {
     const ta = await call(pa, 'submit_task', {requestId:'synthetic-shared-request', description:'Synthetic A', acceptanceCriteria:'Synthetic check', projectDirectory:b});
     const tb = await call(pb, 'submit_task', {requestId:'synthetic-shared-request', description:'Synthetic B', acceptanceCriteria:'Synthetic check', projectDirectory:a});
     assert.notEqual(ta.taskId, tb.taskId);
+    const doneA=await call(pa,'wait_task',{taskId:ta.taskId,waitSeconds:5});
+    assert(doneA.lastSelection?.turnId);assert.equal(doneA.lastSelection.model,'synthetic-model');
+    assert.deepEqual((await call(pa,'get_task',{taskId:ta.taskId,brief:true})).lastSelection,doneA.lastSelection);
     assert.equal((await call(pa, 'list_tasks')).tasks.length, 1);
     assert.equal((await call(pb, 'list_tasks')).tasks[0].taskId, tb.taskId);
     for (const name of ['get_task', 'wait_task', 'continue_task', 'cancel_task', 'close_task'])

@@ -103,6 +103,32 @@ async function transportChecks() {
 }
 
 async function sendChecks() {
+  for(const outcome of ['ack','unknown-effort','rejected','uncertain','stale','hook-throws','hook-rejects']){
+    const f=fixture(),previous={model:'synthetic-previous',displayName:'Synthetic previous',effort:null,turnId:'synthetic-previous-turn'};
+    f.s.lastSelection=previous;f.s.effort='medium';
+    if(outcome==='unknown-effort')f.s.effort=undefined;
+    f.context.catalog[0].displayName='Synthetic display';f.context.catalog[0].supportedReasoningEfforts=[{reasoningEffort:'medium'}];
+    let hooks=0;
+    f.context.mcpTasks={recordSelection(){hooks++;if(outcome==='hook-throws')throw Error('Synthetic hook failure');if(outcome==='hook-rejects')return Promise.reject(Error('Synthetic async hook failure'));}};
+    f.start(async()=>{
+      if(outcome==='uncertain')throw uncertain();
+      if(outcome==='rejected')throw Object.assign(Error('Synthetic rejected'),{deliveryUncertain:false});
+      f.emit('turn/started');f.emit('turn/completed');
+      if(outcome==='stale')f.context.server=new EventEmitter();
+      return {turn:{id:'synthetic-selection-turn'}};
+    });
+    if(['rejected','uncertain'].includes(outcome)){
+      await assert.rejects(f.context.send(f.s,'Synthetic input'));assert.deepEqual(f.s.lastSelection,previous);
+      f.emit('turn/completed');
+    }else{
+      const result=await f.context.send(f.s,'Synthetic input',[],{modelSelection:{effort:undefined}});assert.equal(result.turnId,'synthetic-selection-turn');
+      assert.equal(f.calls.find(call=>call.method==='turn/start').params.effort,undefined,'Recording a thread-effort fallback does not change the RPC');
+      if(outcome==='stale')assert.deepEqual(f.s.lastSelection,previous);
+      else assert.deepEqual(f.s.lastSelection,{model:'synthetic-model',displayName:'Synthetic display',effort:outcome==='unknown-effort'?null:'medium',turnId:'synthetic-selection-turn'});
+    }
+    assert.equal(hooks,['rejected','uncertain','stale'].includes(outcome)?0:1);
+  }
+
   // The move precedes every RPC; resumed threads cannot restore their old cwd.
   {
     const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');

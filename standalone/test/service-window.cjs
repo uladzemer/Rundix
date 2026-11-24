@@ -53,6 +53,9 @@ async function main() {
     await until(() => wa.snapshots.get(sa)?.tasks[0]?.state === 'completed' && wb.snapshots.get(sb)?.tasks[0]?.state === 'completed');
     assert.deepEqual(wa.snapshots.get(sa).tasks.map(task=>task.taskId),[ta.taskId]);
     assert.deepEqual(wb.snapshots.get(sb).tasks.map(task=>task.taskId),[tb.taskId]);
+    assert.deepEqual(wa.snapshots.get(sa).tasks[0].lastSelection,(await wa.call(sa,'get_task',{taskId:ta.taskId})).lastSelection);
+    assert(wa.snapshots.get(sa).tasks[0].lastSelection?.turnId);
+    assert.equal((await wa.call(sa,'list_models',{})).models[0].model,'synthetic-model');
     assert.equal(wa.snapshots.get(sa).tasks[0].report.result,'Synthetic success','Panel projection includes final report');
     const huge={result:'😀'.repeat(10000),changedFiles:Array(20).fill('😀'.repeat(1000)),checks:['Synthetic check'],remainingIssues:[]};
     const bounded=require('../runtime/service-projection.cjs').report(huge);
@@ -115,6 +118,8 @@ async function main() {
     assert(!service.host.mcp.tasks.tasks.has(ta.taskId),'Closed task moved into archive');
     await reloaded.refresh(sa);
     assert.equal(reloaded.snapshots.get(sa).totalTasks,1,'Archive remains part of total history');
+    assert.deepEqual(reloaded.snapshots.get(sa).tasks[0].lastSelection,task.lastSelection,'Archived selection reaches the service panel');
+    assert.deepEqual((await reloaded.chat(sa,'chat.subscribe',{taskId:ta.taskId})).lastSelection,task.lastSelection,'Archived chat selection is retained');
     assert.equal(reloaded.snapshots.get(sa).tasks[0].taskId,ta.taskId,'Recent archive summaries stay visible');
     const extra = await call(pa,'submit_task',{requestId:'synthetic-a-extra',description:'Synthetic extra',acceptanceCriteria:'Synthetic checks',projectDirectory:a});
     const limited = await reloaded.peer.call('space.subscribe',{bindingId:reloaded.peer.binding.bindingId,spaceId:sa,limit:1});

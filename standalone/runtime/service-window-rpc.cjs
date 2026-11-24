@@ -77,6 +77,7 @@ function createWindowRpc({generation, tasks,core,migration}) {
     const result = {generation, schemaVersion:1, spaceId, viewRevision:revision(spaceId),
       tasks:page.map(task => ({...(task.legacy?{taskId:task.taskId,title:String(task.description || '').slice(0,160),state:task.state,progress:task.progress,
         chatId:task.chatId || null,projectDirectory:task.projectDirectory,unsentInputCount:task.unsentInputCount || 0,pendingRequests:0,recoveryRequired:!!task.recoveryRequired}:task.archived?{taskId:task.taskId,title:task.description,state:task.state,progress:task.progress,chatId:task.chatId,projectDirectory:task.projectDirectory,createdAt:task.createdAt,updatedAt:task.updatedAt,revision:task.revision,hasReport:!!task.report,error:task.error,waitingLimit:null,unsentInputCount:task.unsentInputCount,recoveryRequired:false,pendingRequests:0}:serviceTasks.summary(task)),
+        lastSelection:task.legacy?null:task.lastSelection || null,
         readOnly:!!task.readOnly,report:task.archived || task.legacy?task.report:projection.report(task.report),closed:!!task.closedAt,
         actionRequired:task.providerFailureCode || (task.error?.startsWith('action_required') ? 'provider_unavailable' : null)})),
       chats:page.filter(task => task.chatId).map(task => ({taskId:task.taskId, chatId:task.chatId,

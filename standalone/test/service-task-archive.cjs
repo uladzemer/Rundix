@@ -14,9 +14,11 @@ async function main(){
   const a=tasks.call('submit_task',args('synthetic-a1'));tasks.call('submit_task',args('synthetic-a2'));
   assert.throws(()=>tasks.call('submit_task',args('synthetic-a3')),{code:'limit'});
   space='synthetic-b';const b=tasks.call('submit_task',args('synthetic-a1'));assert.notEqual(a.taskId,b.taskId,'Another space has independent storage capacity');
-  space='synthetic-a';const record=tasks.get(a.taskId);record.state='completed';record.recoveryRequired=false;tasks.save(record);
+  space='synthetic-a';const record=tasks.get(a.taskId);record.lastSelection={model:'synthetic-model',displayName:'Synthetic model',effort:'medium',turnId:'synthetic-archived-turn'};record.state='completed';record.recoveryRequired=false;tasks.save(record);
   await tasks.call('close_task',{taskId:a.taskId});assert(!tasks.tasks.has(a.taskId));
   assert.equal(tasks.call('get_task',{taskId:a.taskId}).state,'completed');
+   assert.deepEqual(tasks.call('get_task',{taskId:a.taskId}).lastSelection,record.lastSelection);
+   assert.deepEqual(tasks.archive.page(space,{limit:3}).tasks[0].lastSelection,record.lastSelection);
   assert.equal(tasks.call('submit_task',args('synthetic-a1')).taskId,a.taskId,'Archived requestId cannot execute again');
   assert.throws(()=>tasks.call('submit_task',{...args('synthetic-a1'),description:'Synthetic conflicting retry'}),{code:'request_conflict'});
   assert.equal(tasks.call('list_tasks',{}).tasks.length,1,'Archived tasks leave active listing');

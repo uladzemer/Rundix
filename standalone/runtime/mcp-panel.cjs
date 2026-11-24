@@ -9,8 +9,9 @@ function readRecords(directory) {
     return record;
   });
 }
-function snapshot({records,language,connection,connected,bridgeRunning,pending}) {
+function snapshot({records,language,connection,connected,bridgeRunning,pending,modelDefaults,models}) {
   const tasks=records.slice().sort((a,b)=>b.updatedAt-a.updatedAt).slice(0,100).map(task=>({
+    lastSelection:task.lastSelection || null,
     taskId:task.taskId,title:(task.description || task.taskId).slice(0,160),state:task.state,
     chatId:task.chatId || null,projectDirectory:task.projectDirectory,progress:task.progress,
     report:task.report || null,error:task.error || null,recoveryRequired:recoveryRequired(task),
@@ -18,15 +19,15 @@ function snapshot({records,language,connection,connected,bridgeRunning,pending})
     unsentInputs:(task.unsentInputs || []).slice(-3).map(row=>({id:row.id,text:row.text.slice(0,2000),truncated:row.text.length>2000})),
     pendingRequests:pending(task).map(request=>({id:request.id,method:request.method})),
   }));
-  return {language,connection,connected,bridgeRunning,tasks};
+  return {language,connection,connected,bridgeRunning,tasks,modelDefaults,models};
 }
-function serviceSnapshot({client,language,installed,selectedSpaceId,error,taskChatsAvailable=false}) {
+function serviceSnapshot({client,language,installed,selectedSpaceId,error,taskChatsAvailable=false,modelDefaults,models}) {
   const spaces=(client?.spaces || []).map(space=>({spaceId:space.spaceId,label:space.kind==='legacy'?(language==='ru'?'История старой версии':'Legacy history')+' · '+space.spaceId.slice(-8):space.root}));
   const spaceId=spaces.some(space=>space.spaceId===selectedSpaceId)?selectedSpaceId:spaces[0]?.spaceId || null;
   const projection=client?.snapshots.get(spaceId);
   return {language,serviceMode:true,bridgeRunning:!!client?.peer && !client.peer.closed,
     configurationAvailable:!!installed,spaces,spaceId,error:error || null,legacyStatus:client?.legacyStatus,
     tasks:projection?.tasks || [],totalTasks:projection?.totalTasks || 0,hasMoreHistory:!!projection?.hasMoreHistory,
-    taskChatsAvailable};
+    taskChatsAvailable,modelDefaults,models};
 }
 module.exports={readRecords,snapshot,serviceSnapshot};

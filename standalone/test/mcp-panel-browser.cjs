@@ -26,7 +26,8 @@ fs.mkdirSync(artifacts,{recursive:true});
    await page.evaluate(()=>{
     window.fixture.tasks[0].lastSelection={model:'synthetic-model',displayName:'Synthetic <model>',effort:'medium',turnId:'synthetic-turn'};
     window.fixture.modelDefaults={model:null,effort:'medium'};
-    window.fixture.models={status:'ready',list:[{model:'gpt-6.2-sol',displayName:'Synthetic preferred',defaultEffort:'medium',efforts:['medium','high']},{model:'synthetic-other',displayName:'Synthetic other',defaultEffort:'low',efforts:['low']}]};window.update();
+    window.fixture.preferredModel='synthetic-preferred';
+    window.fixture.models={status:'ready',list:[{model:'synthetic-preferred',displayName:'Synthetic preferred',defaultEffort:'medium',efforts:['medium','high']},{model:'synthetic-other',displayName:'Synthetic other',defaultEffort:'low',efforts:['low']}]};window.update();
    });
    assert.equal(await page.$eval('.last-selection',node=>node.textContent),(language==='ru'?'Модель: ':'Model: ')+'Synthetic <model> · '+(language==='ru'?'Среднее':'Medium'));
    await page.screenshot({path:path.join(artifacts,`mcp-model-settings-${language}-${theme}-${width}.png`),fullPage:true});
@@ -64,6 +65,15 @@ fs.mkdirSync(artifacts,{recursive:true});
     // Without a loaded catalog the saved model is unknown, not unavailable.
     assert.equal(await page.$eval('#mcp-model',node=>node.selectedOptions[0].textContent),'synthetic-missing');
    }
+   await page.evaluate(()=>{
+    window.fixture.modelDefaults={model:null,effort:'auto'};
+    window.fixture.models={status:'ready',list:[{model:'synthetic-first',displayName:'Synthetic first',efforts:['low']},{model:'synthetic-second',displayName:'Synthetic second',efforts:['high','low']}]};window.update();
+   });
+   assert.deepEqual(await page.$$eval('#mcp-effort option',nodes=>nodes.map(node=>node.value)),['auto','low','high'],'Automatic without the preferred model offers the catalog union');
+   await page.screenshot({path:path.join(artifacts,`mcp-automatic-fallback-${language}-${theme}-${width}.png`),fullPage:true});
+   await page.select('#mcp-effort','high');
+   assert.deepEqual(await page.evaluate(()=>{const message=window.calls.at(-1);return [message.action,message.model,message.effort];}),['setModelDefaults',null,'high']);
+   await page.evaluate(()=>{window.fixture.modelDefaults.effort='high';window.update();window.dispatchEvent(new MessageEvent('message',{data:{type:'mcpResult',ok:true,action:'setModelDefaults',requestId:window.calls.at(-1).requestId}}));});
    await page.evaluate(()=>{window.fixture.modelDefaults={model:null,effort:'auto'};window.fixture.tasks[0].lastSelection.effort=null;window.update();});
    assert(!await page.$eval('.last-selection',node=>node.textContent.includes(' · ')));
    await page.$eval('#clarification',node=>{node.value='';node.dispatchEvent(new Event('input'));});

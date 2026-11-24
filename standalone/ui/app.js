@@ -2342,7 +2342,7 @@ window.addEventListener("message", (event) => {
     }
     if (!historyScope) historyScope = msg.data.historyScope === "all" ? "all" : "workspace";
     hydrated = true;
-    state = { ...state, lastSelection:null, ...msg.data };
+    state = { ...state, lastSelection:null, turnSelections:null, ...msg.data };
     const submittedFiles=submittedAttachments.get(state.key);
     if(submittedFiles && !(state.attachments || []).some(file=>submittedFiles.has(file.id)))submittedAttachments.delete(state.key);
     document.documentElement.dataset.controlMotion =

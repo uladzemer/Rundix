@@ -641,7 +641,7 @@ function activate(context) {
           parentId: s.parentId || null,
           model: s.model,
           effort: s.effort,
-          ...(s.mcpTask?{lastSelection:s.lastSelection || null}:{}),
+          ...(s.mcpTask?{lastSelection:s.lastSelection || null,turnSelections:require('./runtime/turn-selections.cjs').history(s)}:{}),
           models: core.state.catalog,
           cli: {...cliInfo, channel:cliChannel(),autoUpdate:vscode.workspace.getConfiguration('rundix').get('cliAutoUpdate',true),custom:!!configuredCliPath()},
           modelsUpdatedAt: core.state.catalogUpdatedAt,

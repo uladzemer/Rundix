@@ -22,6 +22,7 @@ fs.mkdirSync(artifacts,{recursive:true});
       },{language,theme});
       for(const file of ['translations.js','i18n.js','controls.js','forms.js','questions.js','markdown.js','markdown-view.js','task-report.js','service-chat.js'])await page.addScriptTag({content:fs.readFileSync(path.join(__dirname,'../ui',file),'utf8')});
       await page.evaluate(()=>window.update());assert.deepEqual(errors,[]);
+      await require('./turn-captions-browser.cjs')({page,service:true,language,theme,width,artifacts});
       await page.evaluate(()=>{window.fixture.lastSelection={model:'synthetic-model',displayName:'Synthetic <model>',effort:'medium',turnId:'synthetic-turn'};window.update();});
       assert.equal(await page.$eval('.last-selection',node=>node.textContent),(language==='ru'?'Модель: ':'Model: ')+'Synthetic <model> · '+(language==='ru'?'Среднее':'Medium'));
       await page.screenshot({path:path.join(artifacts,`service-model-selection-${language}-${theme}-${width}.png`),fullPage:true});

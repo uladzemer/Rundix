@@ -38,7 +38,10 @@
     option(model,'null',t('automatic'),defaults.model===null);option(model,'""',t('regular'),defaults.model==='');
     for(const entry of catalog.list)option(model,JSON.stringify(entry.model),entry.displayName,defaults.model===entry.model);
     if(defaults.model && !catalog.list.some(entry=>entry.model===defaults.model))option(model,JSON.stringify(defaults.model),defaults.model+(catalog.status==='ready'?' ('+t('unavailable')+')':''),true);
-    const supported=value=>value===''?[...new Set(catalog.list.flatMap(entry=>entry.efforts))]:catalog.list.find(entry=>entry.model===(value===null?'gpt-6.2-sol':value))?.efforts || [];
+    const supported=value=>{
+      const entry=catalog.list.find(entry=>entry.model===(value===null?state.preferredModel:value));
+      return value==='' || value===null && !entry?[...new Set(catalog.list.flatMap(entry=>entry.efforts))]:entry?.efforts || [];
+    };
     option(effort,'auto',t('auto'),defaults.effort==='auto');
     const efforts=[...supported(defaults.model)];if(defaults.effort!=='auto' && !efforts.includes(defaults.effort))efforts.push(defaults.effort);
     for(const value of efforts)option(effort,value,WorkbenchControls.label(value),defaults.effort===value);

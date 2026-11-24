@@ -42,6 +42,7 @@ if(!chromePath)throw Error('Set CHROME_PATH to an installed Chrome or Chromium e
   },{language,theme});
   assert.equal(await page.$eval('.last-turn-selection',node=>node.textContent),(language==='ru'?'Последний ход: ':'Last turn: ')+'Synthetic MCP display · '+(language==='ru'?'Среднее':'Medium'));
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'Last-turn label fits the task chat');
+  await require('./turn-captions-browser.cjs')({page,language,theme,width,artifacts:process.env.RUNDIX_BROWSER_ARTIFACT_DIR});
   if(process.env.RUNDIX_BROWSER_ARTIFACT_DIR)await page.screenshot({path:path.join(process.env.RUNDIX_BROWSER_ARTIFACT_DIR,`window-model-selection-${language}-${theme}-${width}.png`),fullPage:true});
  }
  await page.setViewport(selectionViewport);

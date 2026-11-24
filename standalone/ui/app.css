@@ -2114,3 +2114,4 @@ body.vscode-high-contrast-light button {
 .focus-collapse { margin: 6px 0 0 24px; padding: 4px 8px; background: transparent; color: var(--vscode-textLink-foreground, #75beff); border: 1px solid var(--border); border-radius: 5px; cursor: pointer; font-size: var(--text-small); }
 
 .last-turn-selection{display:block;color:var(--muted);font-size:11px;text-align:right;padding:0 12px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.turn-model-caption{display:block;width:100%;max-width:var(--content-width);color:var(--muted);font-size:11px;overflow-wrap:anywhere;margin:2px auto 12px}

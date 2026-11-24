@@ -12,7 +12,7 @@ function validateDefaults(model,effort,models) {
   if(models.status==='ready'){
     const entry=models.list.find(entry=>entry.model===(model===null?preferredModel:model));
     if(model && !entry)throw failure();
-    const efforts=model===''?models.list.flatMap(entry=>entry.efforts):entry?.efforts || [];
+    const efforts=model==='' || model===null && !entry?models.list.flatMap(entry=>entry.efforts):entry?.efforts || [];
     if(effort!=='auto' && !efforts.includes(effort))throw failure();
   }
 }

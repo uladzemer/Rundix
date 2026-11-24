@@ -70,6 +70,7 @@
 !runtime/mcp-access.cjs
 !runtime/session-resume.cjs
 !runtime/send-queue.cjs
+!runtime/turn-selections.cjs
 !runtime/turn-writer-guard.cjs
 !runtime/turn-diagnostics.cjs
 !runtime/question-policy.cjs

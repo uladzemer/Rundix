@@ -104,6 +104,8 @@ class WorkbenchMessages {
       failed: WorkbenchI18n.t("ошибка"),
       declined: WorkbenchI18n.t("отклонено"),
     };
+    const selections=new Map((state.turnSelections ?? (state.lastSelection?[state.lastSelection]:[])).map(value=>[value.turnId,value]));
+    const captioned=new Set();
     for (const item of state.items) {
       const essential = ["userMessage", "agentMessage", "questionSummary"].includes(item.type);
       let node = this.nodes.get(item.id);
@@ -321,6 +323,14 @@ class WorkbenchMessages {
       if (!essential && item.type === "reasoning" && !state.prefs.showThinking)
         continue;
       desired.push(node.article);
+      const selection=item.type==='userMessage' && selections.get(item.turnId);
+      if(selection && !captioned.has(item.turnId)){
+        captioned.add(item.turnId);
+        if(!node.caption){node.caption=document.createElement('small');node.caption.className='turn-model-caption';}
+        node.caption.dataset.turnId=item.turnId;
+        node.caption.textContent=(selection.displayName || selection.model)+(selection.effort?' · '+WorkbenchControls.label(selection.effort):'');
+        desired.push(node.caption);
+      }
     }
     if(state.prefs.focus)desired=this.focused(desired,state,labels);
     if (pending) desired.push(pending);

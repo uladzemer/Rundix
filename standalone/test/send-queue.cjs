@@ -103,8 +103,9 @@ async function transportChecks() {
 }
 
 async function sendChecks() {
-  for(const outcome of ['ack','unknown-effort','rejected','uncertain','stale','hook-throws','hook-rejects']){
+  for(const outcome of ['ack','ordinary','unknown-effort','rejected','uncertain','stale','hook-throws','hook-rejects']){
     const f=fixture(),previous={model:'synthetic-previous',displayName:'Synthetic previous',effort:null,turnId:'synthetic-previous-turn'};
+    f.s.mcpTask=outcome!=='ordinary';
     f.s.lastSelection=previous;f.s.effort='medium';
     if(outcome==='unknown-effort')f.s.effort=undefined;
     f.context.catalog[0].displayName='Synthetic display';f.context.catalog[0].supportedReasoningEfforts=[{reasoningEffort:'medium'}];
@@ -119,14 +120,53 @@ async function sendChecks() {
     });
     if(['rejected','uncertain'].includes(outcome)){
       await assert.rejects(f.context.send(f.s,'Synthetic input'));assert.deepEqual(f.s.lastSelection,previous);
+      assert.equal(f.s.turnSelections,undefined,'Rejected and uncertain starts do not create history');
       f.emit('turn/completed');
     }else{
       const result=await f.context.send(f.s,'Synthetic input',[],{modelSelection:{effort:undefined}});assert.equal(result.turnId,'synthetic-selection-turn');
       assert.equal(f.calls.find(call=>call.method==='turn/start').params.effort,undefined,'Recording a thread-effort fallback does not change the RPC');
-      if(outcome==='stale')assert.deepEqual(f.s.lastSelection,previous);
-      else assert.deepEqual(f.s.lastSelection,{model:'synthetic-model',displayName:'Synthetic display',effort:outcome==='unknown-effort'?null:'medium',turnId:'synthetic-selection-turn'});
+      if(outcome==='stale'){assert.deepEqual(f.s.lastSelection,previous);assert.equal(f.s.turnSelections,undefined);}
+      else if(outcome==='ordinary'){
+        assert.equal(f.s.turnSelections,undefined,'Ordinary chats record no turn history');
+        await f.context.save(f.s);assert.equal(f.records.get(f.s.key).turnSelections,undefined,'Ordinary chats persist no turn history');
+      }
+      else {
+        assert.deepEqual(f.s.lastSelection,{model:'synthetic-model',displayName:'Synthetic display',effort:outcome==='unknown-effort'?null:'medium',turnId:'synthetic-selection-turn'});
+        assert.deepEqual(f.s.turnSelections,[previous,f.s.lastSelection],'A 0.4.21 session seeds only its previous lastSelection');
+        await f.context.save(f.s);
+        assert.deepEqual(f.records.get(f.s.key).turnSelections,f.s.turnSelections,'History is persisted with the session');
+        const restored=clone(f.records.get(f.s.key));
+        assert.deepEqual(require('../runtime/turn-selections.cjs').history(restored),f.s.turnSelections);
+        assert.deepEqual(require('../runtime/turn-selections.cjs').history({turnSelections:[null,{turnId:7,model:'synthetic-model'},{turnId:'synthetic-ok',model:'synthetic-model',displayName:'Synthetic',effort:null,extra:1}]}),
+          [{turnId:'synthetic-ok',model:'synthetic-model',displayName:'Synthetic',effort:null}],'Damaged stored entries are dropped');
+      }
     }
     assert.equal(hooks,['rejected','uncertain','stale'].includes(outcome)?0:1);
+  }
+
+  for(const outcome of ['ack','rejected','uncertain','history-failure']){
+    const f=fixture();f.s.mcpTask=true;
+    const previous=Array.from({length:100},(_,index)=>({turnId:'synthetic-history-'+index,model:'synthetic-model',displayName:'Synthetic model',effort:null}));
+    f.s.turnSelections=previous;
+    const selections=require('../runtime/turn-selections.cjs'),append=selections.append;
+    if(outcome==='history-failure')selections.append=()=>{throw Error('Synthetic history recording failure');};
+    f.start(async()=>{
+      if(outcome==='rejected')throw Object.assign(Error('Synthetic rejected'),{deliveryUncertain:false});
+      if(outcome==='uncertain')throw uncertain();
+      f.emit('turn/started');f.emit('turn/completed');return {turn:{id:'synthetic-history-100'}};
+    });
+    try {if(['rejected','uncertain'].includes(outcome)){
+      await assert.rejects(f.context.send(f.s,'Synthetic input'));assert.deepEqual(f.s.turnSelections,previous);f.emit('turn/completed');
+    }else{
+      assert.equal((await f.context.send(f.s,'Synthetic input')).turnId,'synthetic-history-100');
+      if(outcome==='ack'){
+        assert.equal(f.s.turnSelections.length,100);assert.equal(f.s.turnSelections[0].turnId,'synthetic-history-1');
+        assert.deepEqual(f.s.turnSelections.at(-1),f.s.lastSelection);
+        f.s.busy=false;await f.context.send(f.s,'Synthetic input');
+        assert.equal(f.s.turnSelections.length,100);assert.equal(f.s.turnSelections.filter(row=>row.turnId==='synthetic-history-100').length,1,'Repeated ACK IDs are deduplicated');
+      }
+      if(outcome==='history-failure')assert.deepEqual(f.s.turnSelections,previous,'History recording failure preserves delivery and prior history');
+    }}finally{selections.append=append;}
   }
 
   // The move precedes every RPC; resumed threads cannot restore their old cwd.

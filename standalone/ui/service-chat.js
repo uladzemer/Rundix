@@ -5,6 +5,7 @@
   let traversal=null,historyPending=false;
   let draft=saved.draft || '',questionDrafts=saved.questionDrafts || {},attempts=saved.attempts || {};
   const requests=new Map(),items=new Map();
+  const captions=new Map();
   const el=(tag,text,cls)=>{const node=document.createElement(tag);if(text!=null)node.textContent=text;if(cls)node.className=cls;return node;};
   const tr=(en,ru)=>state?.language==='ru'?ru:en;
   const title=el('h1','Rundix'),owner=el('p',null,'service-note'),status=el('p'),notice=el('p',null,'notice'),error=el('p',null,'alert');
@@ -61,7 +62,21 @@
       if(existing)existing.node.replaceWith(article);else if(prepend)transcript.insertBefore(article,transcript.firstChild);else transcript.append(article);
       items.set(item.id,{node:article,signature,item:display});
     }
+    renderCaptions();
     if(atBottom && !prepend)scrollTo(0,document.documentElement.scrollHeight);
+  }
+  function renderCaptions(){
+    const selections=new Map((state?.turnSelections ?? (state?.lastSelection?[state.lastSelection]:[])).map(value=>[value.turnId,value])),used=new Set();
+    for(const article of [...transcript.children]){
+      const item=items.get(article.dataset.itemId)?.item,selection=item?.type==='userMessage' && selections.get(item.turnId);
+      if(!selection || used.has(item.turnId))continue;
+      used.add(item.turnId);
+      let caption=captions.get(item.turnId);
+      if(!caption){caption=el('small',null,'turn-model-caption');caption.dataset.turnId=item.turnId;captions.set(item.turnId,caption);}
+      caption.textContent=(selection.displayName || selection.model)+(selection.effort?' · '+WorkbenchControls.label(selection.effort):'');
+      article.after(caption);
+    }
+    for(const [id,caption]of captions)if(!used.has(id)){caption.remove();captions.delete(id);}
   }
   function requestView(request){
     const section=el('section',null,'approval');section.append(el('h2',tr('Your decision','Ваше решение')));

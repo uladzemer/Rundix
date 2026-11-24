@@ -17,6 +17,9 @@ async function scenario(kind){
     const pending=await wa.call(sa,'wait_task',{taskId:task.taskId,waitSeconds:5});assert.equal(pending.state,'waiting_approval');
     const chat=await wa.chat(sa,'chat.open',{taskId:task.taskId});await wa2.chat(sa,'chat.open',{taskId:task.taskId});
     assert.deepEqual(chat.lastSelection,(await wa.call(sa,'get_task',{taskId:task.taskId})).lastSelection);assert(chat.lastSelection?.turnId);
+    assert.deepEqual(chat.turnSelections,[chat.lastSelection]);
+    assert.equal(chat.items.find(item=>item.type==='userMessage').turnId,chat.lastSelection.turnId);
+    assert.equal(Object.hasOwn(await wa.call(sa,'get_task',{taskId:task.taskId}),'turnSelections'),false,'History stays on the session, not the task API');
     assert.equal(chat.owner,'service');assert(chat.items.some(item=>item.type==='userMessage'));assert.equal(chat.pendingRequests.length,1);
     await assert.rejects(wb.chat(sb,'chat.open',{taskId:task.taskId}),{code:'unknown_task'});
     let changes=0;wa.on('chatChanged',()=>changes++);
@@ -26,6 +29,7 @@ async function scenario(kind){
     const done=await wa.call(sa,'wait_task',{taskId:task.taskId,waitSeconds:5});assert.equal(done.state,'completed');assert(changes>0);
     const finished=await wa.chat(sa,'chat.subscribe',{taskId:task.taskId});assert(finished.items.some(item=>item.type==='agentMessage'));
     const latest=await wa.chat(sa,'chat.history',{taskId:task.taskId,cursor:'@latest'});assert(latest.items.some(item=>item.type==='agentMessage'));
+    assert.equal(latest.items.find(item=>item.type==='userMessage').turnId,chat.lastSelection.turnId,'Paging keeps the original turn identity');
     const escaped=Array.from({length:20},(_,index)=>({id:'synthetic-escaped-'+index,type:'agentMessage',text:'\n\\"\u0001'.repeat(5000)}));
     const escapedPage=require('../runtime/service-projection.cjs').transcript(escaped);
     assert.equal(escapedPage.items.length,20,'Escaped JSON cannot drop history page rows');
@@ -34,6 +38,17 @@ async function scenario(kind){
     const continued=await wa.call(sa,'wait_task',{taskId:task.taskId,waitSeconds:5});assert.equal(continued.chatId,chat.chatId);
     const key=service.host.mcp.tasks.tasks.get(task.taskId).sessionKey;
     const session=service.host.core.sessions.get(key) || service.host.core.store.session(key);
+    const continuedChat=await wa.chat(sa,'chat.subscribe',{taskId:task.taskId});
+    assert.equal(continuedChat.turnSelections.length,2);assert.notEqual(continuedChat.turnSelections[0].turnId,continuedChat.turnSelections[1].turnId);
+    const taskRecord=service.host.mcp.tasks.tasks.get(task.taskId),snapshot=require('../runtime/service-task-chat.cjs').snapshot;
+    assert.equal(Object.hasOwn(taskRecord,'turnSelections'),false);
+    assert.equal(Object.hasOwn((await wa.call(sa,'list_tasks')).tasks[0],'turnSelections'),false);
+    await wa.refresh(sa);assert.equal(Object.hasOwn(wa.snapshots.get(sa).tasks[0],'turnSelections'),false,'Panel projection stays history-free');
+    const savedSnapshot=()=>snapshot({core:{sessions:new Map(),store:service.host.core.store},tasks:service.host.mcp.tasks,task:taskRecord,generation:'synthetic-saved-generation',revision:1});
+    assert.deepEqual(savedSnapshot().turnSelections,continuedChat.turnSelections,'Saved-session snapshots retain the history');
+    const saved=service.host.core.store.session(key);delete saved.turnSelections;service.host.core.store.write('session',key,saved);
+    assert.deepEqual(savedSnapshot().turnSelections,[saved.lastSelection],'0.4.21 saved sessions expose only their recorded last turn');
+    service.host.core.store.saveSession(session);
     session.items=Array.from({length:250},(_,index)=>({id:'synthetic-item-'+index,type:'agentMessage',text:'😀'.repeat(10000)}));
     service.host.core.store.saveSession(session);
     const bounded=await wa.chat(sa,'chat.subscribe',{taskId:task.taskId});

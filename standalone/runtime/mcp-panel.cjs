@@ -1,6 +1,7 @@
 const fs=require('node:fs');
 const path=require('node:path');
 const {recoveryRequired}=require('./mcp-tasks.cjs');
+const {preferredModel}=require('./mcp-model.cjs');
 function readRecords(directory) {
   if(!fs.existsSync(directory))return [];
   return fs.readdirSync(directory).filter(name=>/^mcp-task-[\w-]+\.json$/.test(name)).map(name=>{
@@ -19,7 +20,7 @@ function snapshot({records,language,connection,connected,bridgeRunning,pending,m
     unsentInputs:(task.unsentInputs || []).slice(-3).map(row=>({id:row.id,text:row.text.slice(0,2000),truncated:row.text.length>2000})),
     pendingRequests:pending(task).map(request=>({id:request.id,method:request.method})),
   }));
-  return {language,connection,connected,bridgeRunning,tasks,modelDefaults,models};
+  return {language,connection,connected,bridgeRunning,tasks,modelDefaults,models,preferredModel};
 }
 function serviceSnapshot({client,language,installed,selectedSpaceId,error,taskChatsAvailable=false,modelDefaults,models}) {
   const spaces=(client?.spaces || []).map(space=>({spaceId:space.spaceId,label:space.kind==='legacy'?(language==='ru'?'История старой версии':'Legacy history')+' · '+space.spaceId.slice(-8):space.root}));
@@ -28,6 +29,6 @@ function serviceSnapshot({client,language,installed,selectedSpaceId,error,taskCh
   return {language,serviceMode:true,bridgeRunning:!!client?.peer && !client.peer.closed,
     configurationAvailable:!!installed,spaces,spaceId,error:error || null,legacyStatus:client?.legacyStatus,
     tasks:projection?.tasks || [],totalTasks:projection?.totalTasks || 0,hasMoreHistory:!!projection?.hasMoreHistory,
-    taskChatsAvailable,modelDefaults,models};
+    taskChatsAvailable,modelDefaults,models,preferredModel};
 }
 module.exports={readRecords,snapshot,serviceSnapshot};

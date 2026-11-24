@@ -257,8 +257,10 @@ async function send(deps, s, text, attached=s.attachments, options={}) {
     const draftConsumed=!!(current() && options.consumeDraft!==false && draft.text===text && composerDraft.consume(s,draft));
     if(current()){
       s.lastStartedTurnId=result.turn.id;
-      s.lastSelection={model:selection.model,displayName:selectedModel.displayName || selection.model,
+      const confirmedSelection={model:selection.model,displayName:selectedModel.displayName || selection.model,
         effort:selection.effort ?? s.effort ?? null,turnId:result.turn.id};
+      try {if(s.mcpTask)s.turnSelections=require('./turn-selections.cjs').append(s,confirmedSelection);} catch {}
+      s.lastSelection=confirmedSelection;
       // Task metadata is best effort; it must never affect acknowledged delivery or drafts.
       try { Promise.resolve(deps.mcpTasks?.recordSelection?.(s)).catch(()=>{}); } catch {}
     }

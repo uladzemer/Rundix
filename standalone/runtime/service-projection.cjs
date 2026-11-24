@@ -21,7 +21,7 @@ function transcript(items) {
   const result=[];let bytes=0,itemsTruncated=false;
   for(const item of items.slice(-200).reverse()) {
     const original=require('./session.cjs').itemText(item);
-    const display=limit=>({id:item.id,type:item.type,...text(original,limit),timestamp:item.timestamp});
+    const display=limit=>({id:item.id,type:item.type,...(typeof item.turnId==='string'?{turnId:item.turnId}:{}),...text(original,limit),timestamp:item.timestamp});
     let row=display(16384),size=Buffer.byteLength(JSON.stringify(row));
     if(size>16384){
       let low=0,high=16384;

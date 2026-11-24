@@ -1,5 +1,10 @@
 # Changelog / История изменений
 
+## 0.4.22 — 2026-11-24
+
+- Automatic MCP model selection offers the catalog's supported reasoning efforts when the preferred model is unavailable, matching the regular chat fallback used at execution.
+- MCP task chats show a muted model and effort caption after the user message of each recorded turn. Sessions retain the newest 100 confirmed selections; task APIs and panel summaries keep only the last selection.
+
 ## 0.4.21 — 2026-11-24
 
 - The MCP panel offers catalog-backed model and reasoning-effort dropdowns for new tasks, saving the existing user settings in window and background service modes.

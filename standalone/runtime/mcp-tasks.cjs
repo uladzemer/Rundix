@@ -48,6 +48,10 @@ class McpTasks {
       inputRecovery.prune(task);
       this.tasks.set(task.taskId, task);
     }
+    if(this.archive){
+      try {for(const space of new Set([...this.tasks.values()].map(task=>task.space)))this.pruneClosed(space,{loading:true});}
+      catch {this.archive.notice('archive_record_unavailable');}
+    }
   }
   archiveEligible(task, allowUnsent=false) {
     return typeof task.space==='string' && !task.legacy && !task.readOnly && ['completed','cancelled','error'].includes(task.state) &&
@@ -113,9 +117,9 @@ class McpTasks {
     finally {if(archived)this.notifyArchive(space);}
     return counts;
   }
-  pruneClosed(space,requiredSlots=0){
+  pruneClosed(space,{requiredSlots=0,loading=false}={}){
     if(!this.archive)return;
-    const closed=[...this.tasks.values()].filter(task=>task.space===space && task.closedAt && (requiredSlots
+    const closed=[...this.tasks.values()].filter(task=>task.space===space && task.closedAt && (requiredSlots || loading
       ? ['completed','cancelled','error'].includes(task.state) && !task.recoveryRequired && !this.starting.has(task.taskId)
       : this.archiveEligible(task)))
       .sort((a,b)=>b.closedAt-a.closedAt || b.createdAt-a.createdAt || a.taskId.localeCompare(b.taskId));
@@ -128,7 +132,7 @@ class McpTasks {
     if(!this.archive){if(this.tasks.size>=1000)throw fail('limit',persist?'Task storage limit reached.':'Task storage limit reached. Archive tasks while the bridge is stopped.');return;}
     const count=()=>[...this.tasks.values()].filter(task=>task.space===space).length;
     const requiredSlots=count()-this.maxStoredPerSpace+1;
-    if(requiredSlots>0)this.pruneClosed(space,requiredSlots);
+    if(requiredSlots>0)this.pruneClosed(space,{requiredSlots});
     if(count()>=this.maxStoredPerSpace)throw fail('limit','Task storage limit reached for this space. Close finished tasks first.');
   }
   save(task) {

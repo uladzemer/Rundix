@@ -53,7 +53,11 @@ function takeAttempt(task,id,keepQueued=false) {
   }
   return {row,index};
 }
-function requeue(task,id) {return !!takeAttempt(task,id,true);}
+function requeue(task,id) {
+  const row=task.unsentInputs?.find(row=>row.id===id && row.possiblyNotDelivered);
+  if(!row)return false;
+  return task.nextInput===row.text ? !!takeAttempt(task,id,true) : settle(task,id,true);
+}
 function settle(task,id,unsent=false) {
   const attempt=takeAttempt(task,id);
   if(!attempt)return false;

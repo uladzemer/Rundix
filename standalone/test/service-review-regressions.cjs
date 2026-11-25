@@ -465,6 +465,38 @@ async function lostEmptyThread(){
   }
 }
 
+async function emptyThreadWithNewerInput(){
+  const previous='Synthetic earlier clarification',next='Synthetic newer clarification',id='synthetic-earlier-attempt';
+  const sent=[];
+  const tasks=harness('empty-thread-newer-input',true,{
+    status:async row=>{
+      if(sent.length)return {done:true};
+      row.deliveryPhase='preparing';row.chatId=null;
+      return {done:true,failed:true,emptyThreadAttemptId:id};
+    },
+    start:async (row,text)=>{
+      sent.push(text);
+      row.queuedRecoveryInput=false;row.deliveryPhase='dispatching';
+      inputRecovery.begin(row,{id:'synthetic-newer-attempt',text,threadId:'synthetic-replacement-thread'});
+      inputRecovery.confirm(row,'synthetic-newer-attempt');
+    }
+  });
+  try{
+    const row=task('synthetic-empty-newer',project('empty-thread-newer-input'));
+    Object.assign(row,{chatId:'synthetic-empty-thread',deliveryPhase:'dispatching',nextInput:previous,queuedRecoveryInput:false});
+    inputRecovery.begin(row,{id,text:previous,threadId:row.chatId});inputRecovery.expose(row,id);
+    tasks.tasks.set(row.taskId,row);tasks.save(row);
+    tasks.call('continue_task',{taskId:row.taskId,requestId:'synthetic-newer-continue',clarification:next});
+    await tasks.observe(row);
+    assert.equal(row.state,'queued');assert.equal(row.nextInput,next);
+    assert.deepEqual(tasks.store.read('mcp-task',row.taskId).unsentInputs,[{id,text:previous}]);
+    assert.deepEqual(sent,[]);
+    await step(tasks);await tasks.observe(row);await step(tasks);
+    assert.equal(row.state,'completed');assert.deepEqual(sent,[next]);
+    assert.deepEqual(tasks.call('get_task',{taskId:row.taskId}).unsentInputs,[{id,text:previous}]);
+  }finally{tasks.dispose();}
+}
+
 // End to end: the first turn was refused after thread/start, then the service
 // restarted. The MCP start path must replace the empty thread, not refuse forever.
 async function emptyThreadServiceRestart(){
@@ -763,9 +795,10 @@ async function resendPlainInput(){
 }
 
 (async()=>{try{
+  await emptyThreadWithNewerInput();
   await emptyThreadServiceRestart();await restartInterruption();await lostEmptyThread();await queuedInput();await windowsAndSlowRecovery();await lightweightStatus();await repeatedLimit();await historyRecovery();await preparingRestart();await generationAndPredispatchExit(false);await generationAndPredispatchExit(true);await freshThreadGenerationChange();
   await exitDuringLimit('clarification-at-limit');await exitDuringLimit('automatic-exit-without-limit');await exitDuringLimit('automatic-exit-with-new-limit');await replyWithQueuedInput(false);await replyWithQueuedInput(true);
   for(const phase of ['before-write','before-ack','after-ack'])await dispatchRestart(phase);
   await lateAck();await lateAck(true);await attemptAttribution();await definiteDispatchRefusal(true);await definiteDispatchRefusal(false);settledInput();await resendPlainInput();
-  console.log('PASS review regressions: window recovery, restart and reconnect, retry slots, bounded status/limits/history, dispatch checkpoints, late ACK after restore, refusal archival, missing-rollout requeue, plain resend dedup and attempt isolation.');
+  console.log('PASS review regressions: window recovery, restart and reconnect, retry slots, bounded status/limits/history, dispatch checkpoints, late ACK after restore, refusal archival, missing-rollout requeue with and without newer input, plain resend dedup and attempt isolation.');
 }finally{assert.equal(path.dirname(root),os.tmpdir());assert(path.basename(root).startsWith('rundix-review-regression-synthetic-'));fs.rmSync(root,{recursive:true,force:true});}})().catch(error=>{console.error(error);process.exitCode=1;});

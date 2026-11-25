@@ -19,8 +19,7 @@ async function retention(root){
    queue:{continuations:['Synthetic queued continuation']},next:{nextInput:'Synthetic next input'},auto:{limitContinuation:{state:'pending'}},
    unsent:{unsentInputs:[{id:'synthetic-input',text:'Synthetic unsent text'}]},subscribed:{chatId:'synthetic-chat'},legacy:{legacy:true},readonly:{readOnly:true}};
  for(const [id,extra] of Object.entries(exclusions))record(id,extra);
- tasks=new McpTasks({store,adapter,scope:()=>space,now:()=>time,keepClosed:0,archiveLog:value=>logs.push(value),chatSubscribed:id=>reconnected && id==='subscribed'});
- tasks.keepClosed=100;
+ tasks=new McpTasks({store,adapter,scope:()=>space,now:()=>time,archiveLog:value=>logs.push(value),chatSubscribed:id=>reconnected && id==='subscribed'});
  tasks.schedule=()=>{};
  try{
    assert(tasks.tasks.has('old-closed'));assert(tasks.tasks.has('old-open'));
@@ -69,6 +68,25 @@ async function retention(root){
  }finally{tasks.dispose();}
  console.log('PASS task retention: reconnect grace, age boundary, periodic sweep, exclusion states, pause and partial write retry');
 }
+function pruneClosedOnLoad(root){
+ const store=new SessionStore(path.join(root,'load-closed')),space='synthetic-load-a',other='synthetic-load-b';
+ const now=()=>Date.UTC(2026,0,20);
+ const unsent={id:'synthetic-load-input',text:'Synthetic unsent at load'};
+ const records=[
+   {taskId:'older-closed',space,closedAt:now()-2,unsentInputs:[unsent],needsReconcile:true},
+   {taskId:'newer-closed',space,closedAt:now()-1},
+   {taskId:'other-closed',space:other,closedAt:now()-2},
+   {taskId:'old-open',space,updatedAt:now()-15*86400000},
+   {taskId:'recovering-closed',space,closedAt:now(),recoveryRequired:true},
+ ];
+ for(const record of records)store.write('mcp-task',record.taskId,{state:'completed',projectDirectory:root,operations:[],createdAt:1,updatedAt:now(),...record});
+ const tasks=new McpTasks({store,scope:()=>space,adapter:{pending:()=>[]},now,keepClosed:1});
+ try{
+   assert.deepEqual([...tasks.tasks.keys()].sort(),['newer-closed','old-open','other-closed','recovering-closed']);
+   assert.equal(store.read('mcp-task','older-closed'),null);
+   assert.deepEqual(tasks.call('get_task',{taskId:'older-closed'}).unsentInputs,[unsent]);
+ }finally{tasks.dispose();}
+}
 async function closedAtCap(root,approval=false){
  const store=new SessionStore(path.join(root,'cap-'+approval)),space='synthetic-cap';
  let rejectCancel,acceptApproval;
@@ -110,6 +128,7 @@ async function main(){
  const args=id=>({requestId:id,description:'Synthetic archived task',acceptanceCriteria:'Synthetic check',projectDirectory:root});
  try{
   await retention(root);
+  pruneClosedOnLoad(root);
   await closedAtCap(root);
   await closedAtCap(root,true);
   tasks=create();

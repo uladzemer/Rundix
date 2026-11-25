@@ -2,9 +2,12 @@
 const {usageLimit}=require('./task-recovery.cjs');
 const {readItem}=require('./session.cjs');
 const {lostEmptyThread}=require('./session-resume.cjs');
+const inputRecovery=require('./mcp-input-recovery.cjs');
 const STATUS_TIMEOUT_MS=30000, MISSING_EVENTS_MS=120000;
 function createTaskStatus({core,provider,now=Date.now,status,finishRun,runs}) {
   return async task=>{
+    const attempt=task.inputAttempt;
+    let inputDeliveredIds;
     let session=core.sessions.get(task.sessionKey);
     const saved=session || core.store.session(task.sessionKey);
     if(!task.chatId && !saved?.id && task.deliveryPhase!=='dispatching')
@@ -15,8 +18,12 @@ function createTaskStatus({core,provider,now=Date.now,status,finishRun,runs}) {
     const missingEvents=session?.busy && now()-Math.max(task.lastActivityAt || 0,task.lastStatusReadAt || 0)>=MISSING_EVENTS_MS;
     if(session?.id && (task.needsReconcile || changed || !session.loaded || missingEvents)) {
       await core.connect();
-      const server=core.state.server,owner=provider.cli?.binding?.appServerGeneration;
-      const current=()=>core.state.server===server && provider.cli?.binding?.appServerGeneration===owner;
+      const server=core.state.server,binding=provider.cli?.binding,owner=binding?.appServerGeneration;
+      const current=()=>{
+        const active=provider.cli?.binding;
+        return core.state.server===server && active?.appServerGeneration===owner && active?.accountRevision===binding?.accountRevision;
+      };
+      if(attempt && attempt.threadId!==session.id)throw Object.assign(Error('Status thread changed.'),{code:'stale_instance'});
       let thread;
       if(changed || !session.loaded) {
         let result;
@@ -24,9 +31,10 @@ function createTaskStatus({core,provider,now=Date.now,status,finishRun,runs}) {
         catch(error) {
           // No turn ever reached this thread: the input is unsent and a send starts a fresh one.
           // Even an ambiguous 'dispatching' start is safe: an accepted turn would have written a rollout.
-          if(!lostEmptyThread(session,error) || task.deliveryPhase==='confirmed')throw error;
+          if(!current() || !lostEmptyThread(session,error) || task.deliveryPhase==='confirmed')throw error;
+          const emptyThreadAttemptId=attempt?.threadId===session.id?attempt.id:undefined;
           session.id=null;task.chatId=null;task.deliveryPhase='preparing';task.needsReconcile=false;await core.save(session);
-          return {done:true,failed:true,cancelled:!!task.cancelRequested,chatId:null,progress:'Unsent input queued'};
+          return {done:true,failed:true,cancelled:!!task.cancelRequested,chatId:null,progress:'Unsent input queued',emptyThreadAttemptId};
         }
         thread=result.thread;
       } else {
@@ -44,6 +52,13 @@ function createTaskStatus({core,provider,now=Date.now,status,finishRun,runs}) {
         for(const entry of (page.data || []).slice().reverse())items.set(entry.id,readItem(entry));
         session.items=[...items.values()].slice(-200);
       }
+      inputDeliveredIds=(task.unsentInputs || []).filter(row=>{
+        if(!row.possiblyNotDelivered) return false;
+        if(row.id===attempt?.id && last?.id!==attempt.previousTurnId && !row.attempt?.turnId)
+          return inputRecovery.matchingMessage(task,row.id,session,last?.id);
+        // A typed turn/started pins the attempt, even after another input takes its slot.
+        return inputRecovery.matchingMessage(task,row.id,session,row.attempt?.turnId,row.id===attempt?.id?task.baselineItems:[]);
+      }).map(row=>row.id);
       session.loaded=true;session.cliGeneration=owner;session.busy=busy;
       session.turnId=busy?last?.id:null;session.lastReadTurnId=last?.id;
       if(last?.id)session.lastStartedTurnId=last.id;
@@ -58,6 +73,7 @@ function createTaskStatus({core,provider,now=Date.now,status,finishRun,runs}) {
       await core.save(session);
     }
     const value=await status(task),row=runs.get(value.chatId);
+    if(inputDeliveredIds?.length)value.inputDeliveredIds=inputDeliveredIds;
     if(value.done && session?.lastTurnStatus==='restartInterrupted' && !task.cancelRequested)value.interruptedByRestart=true;
     if(value.done && row && value.finishedTurnId)finishRun(row,value.finishedTurnId,true);
     if(value.done && task.exhaustedTurnId && (!task.turnId || task.turnId===task.exhaustedTurnId))

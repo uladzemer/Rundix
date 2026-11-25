@@ -3,6 +3,7 @@
 const fs=require('node:fs'),path=require('node:path');
 const {createHash}=require('node:crypto');
 const {SessionStore}=require('./store.cjs');
+const inputRecovery=require('./mcp-input-recovery.cjs');
 const failure=()=>Object.assign(Error('Task archive is unavailable.'),{code:'storage_unavailable'});
 class TaskArchive {
   constructor(store,{log=()=>{}}={}){
@@ -29,7 +30,7 @@ class TaskArchive {
     const stat=fs.statSync(this.store.file('mcp-task',task.taskId));
     const summary={lastSelection:task.lastSelection || null,taskId:task.taskId,space:task.space,description:(task.description || '').slice(0,160),state:task.state,progress:(task.progress || '').slice(0,2000),
       chatId:task.chatId || null,projectDirectory:task.projectDirectory,createdAt:task.createdAt,updatedAt:task.updatedAt,revision:task.revision || 0,closedAt:task.closedAt,
-      report:require('./service-projection.cjs').report(task.report),error:(task.error || '').slice(0,1000) || null,unsentInputCount:task.unsentInputs?.length || 0};
+      report:require('./service-projection.cjs').report(task.report),error:(task.error || '').slice(0,1000) || null,...inputRecovery.counts(task)};
     return {taskId:task.taskId,space:task.space,createdAt:task.createdAt || 0,size:stat.size,mtimeMs:stat.mtimeMs,summary};
   }
   page(space,{limit=100,exclude=new Set()}={}){

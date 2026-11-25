@@ -76,6 +76,10 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     catch (error) { if (error.code !== 'STALE_FENCE') logger({code:'host_error'}); return false; }
     row.turnId = turnId; runs.delete(row.threadId); return true;
   }
+  function confirmInput(task,id,acknowledged=true) {
+    if(disposed || !(acknowledged?inputRecovery.confirm(task,id):inputRecovery.settle(task,id)))return;
+    try{mcp.tasks.save(task);}catch{logger({code:'host_error'});}
+  }
   class HeadlessTransport extends EventEmitter {
     constructor(options) { super(); this.options = options; this.executable = options.executable; this.listeners = []; this.handlesTurnAdmission = true; }
     async start() {
@@ -88,8 +92,12 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
         const row = runs.get(message.params?.threadId);
         const task=row && mcp.tasks.tasks.get(row.taskId);
         if(task)task.lastActivityAt=clock.now();
-        if(row?.dispatchedInput && message.method==='turn/started' && message.params.turn?.id!==row.dispatchedInput.previousTurnId)
+        if(row?.dispatchedInput && message.method==='turn/started' && message.params.turn?.id!==row.dispatchedInput.previousTurnId){
           row.observedTurnId ||= message.params.turn?.id;
+          if(task && row.dispatchedInput.id && inputRecovery.observedTurn(task,row.dispatchedInput.id,row.observedTurnId)){
+            try{mcp.tasks.save(task);}catch{logger({code:'host_error'});}
+          }
+        }
         if (row && message.params?.willRetry!==true && recovery.usageLimit(message.params?.error || message.params?.turn?.error)) {
           const turnId=message.params?.turn?.id || message.params?.turnId || row.turnId;
           if (turnId && (!row.turnId || row.turnId===turnId)) {
@@ -117,6 +125,17 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
           }
         }
         this.emit('notification', message);
+        if(row?.dispatchedInput?.id && ['item/started','item/completed'].includes(message.method)) {
+          const {id,baselineItems}=row.dispatchedInput;
+          const turnId=row.turnId || row.observedTurnId;
+          const session=core.sessions.get(task?.sessionKey);
+          if(task && session?.id===row.threadId && message.params?.turnId===turnId &&
+            inputRecovery.matchingMessage(task,id,session,turnId,baselineItems)){
+            // Keep the send's phase until ACK. A saved user item also fences
+            // missing-rollout recovery if the service stops before that ACK.
+            void core.save(session).then(()=>confirmInput(task,id,false)).catch(()=>logger({code:'host_error'}));
+          }
+        }
       });
       on('request', message => {
         // Refresh belongs exclusively to the v2 driver, which claims it once.
@@ -188,8 +207,13 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
             const started=await this.cli.request('thread/start',startParams,30000);
             const replacement=started?.thread?.id;
             if(!replacement)throw error;
+            const cwd=session.cwd;
+            session.id=replacement;session.cwd=started.thread.cwd || cwd;
+            // A restart must reconcile the replacement thread, not the old
+            // empty thread whose missing rollout would requeue this input.
+            try{await core.save(session);}
+            catch(error){session.id=original;session.cwd=cwd;throw error;}
             threadStarts.delete(original);threadStarts.set(replacement,startParams);
-            session.id=replacement;session.cwd=started.thread.cwd || session.cwd;
             // The in-flight send's leases move with the id, atomically with it.
             const lease=core.turnLeases.get(original);
             if(lease){core.turnLeases.delete(original);core.turnLeases.set(replacement,lease);}
@@ -207,28 +231,34 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
           dispatchState.autoLimit={consecutive:(task.autoLimit?.consecutive || 0)+1,lastSentAt:clock.now()};
           dispatchState.limitContinuation={...task.limitContinuation,state:'dispatching'};
         }
+        const session=core.sessions.get(task.sessionKey);
+        const previousTurnId=session?.turnId || session?.lastStartedTurnId || session?.lastReadTurnId || session?.items.findLast(item=>item.turnId)?.turnId;
+        const inputAttemptId=ownsInput && !automatic?randomUUID():null;
         const beforeDispatch={...task};
         Object.assign(task,dispatchState);
+        if(inputAttemptId)inputRecovery.begin(task,{id:inputAttemptId,text:requestText,threadId:row.threadId,previousTurnId});
+        else delete task.inputAttempt;
         try{mcp.tasks.save(task);}catch(error){
           // No RPC was attempted and save() can also change the in-memory revision.
-          for(const key of [...Object.keys(dispatchState),'updatedAt','revision']){
+          inputRecovery.expose(task,inputAttemptId);
+          for(const key of [...Object.keys(dispatchState),'inputAttempt','unsentInputs','queuedInputRecoveryId','updatedAt','revision']){
             if(Object.hasOwn(beforeDispatch,key))task[key]=beforeDispatch[key];
             else delete task[key];
           }
           throw error;
         }
-        const session=core.sessions.get(task.sessionKey);
         row.dispatched=true;
-        if(ownsInput)row.dispatchedInput={text:requestText,baselineItems:task.baselineItems,
-          previousTurnId:session?.lastStartedTurnId,automatic};
+        if(ownsInput)row.dispatchedInput={id:inputAttemptId,text:requestText,baselineItems:task.baselineItems,previousTurnId,automatic};
         dispatched();
-        const result = await provider.dispatchTurn(outcome.grant, params); row.turnId = result.turn.id;
+        const result = await provider.dispatchTurn(outcome.grant, params,inputAttemptId?()=>confirmInput(task,inputAttemptId):undefined); row.turnId = result.turn.id;
         if(session)session.cliGeneration=this.cli?.binding?.appServerGeneration;
         task.deliveryPhase='confirmed';task.needsReconcile=false;task.lastStatusReadAt=clock.now();
         if(automatic && task.limitContinuation===dispatchState.limitContinuation) {
           task.limitContinuation.state='delivered';task.limitContinuation.turnId=result.turn.id;
         }
+        if(automatic)inputRecovery.delivered(task,requestText);
         delete task.waitId; task.waitingLimit = null;
+        confirmInput(task,inputAttemptId);
         if (row.completed.has(row.turnId)) finishRun(row, row.turnId);
         return result;
       } catch (error) {
@@ -238,14 +268,23 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
           throw Object.assign(error,{notSent:true,deliveryUncertain:false,retryable:true});
         }
         if(row.exited)throw Object.assign(error,{confirmedCliExit:true,deliveryUncertain:false});
+        const inputAttemptId=row.dispatchedInput?.id;
+        const exposed=inputRecovery.expose(task,inputAttemptId);
         if (error.deliveryUncertain === false) {
           // A definite refusal sent nothing: the same continuation may be retried.
           task.deliveryPhase='preparing';
+          if(inputAttemptId){
+            error.refusedInputAttemptId=inputAttemptId;
+            if(task.inputAttempt?.id===inputAttemptId)task.inputAttempt.refused=true;
+          }
           if(row.dispatchedInput?.automatic && task.limitContinuation?.state==='dispatching'){task.limitContinuation.state='pending';task.autoLimit.consecutive=Math.max(0,task.autoLimit.consecutive-1);}
           runs.delete(params.threadId);
         }
         else {
           row.uncertain = true;
+          // The checkpoint is already durable. Refresh the live projection
+          // before the shared sender awaits its first status probe.
+          if(exposed && !disposed)try{mcp.tasks.changed?.(task);}catch{}
           for (const candidate of row.completed) if (finishRun(row, candidate)) break;
         }
         throw error;
@@ -322,15 +361,15 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     }
     const session=core.sessions.get(task.sessionKey);
     if(row.dispatchedInput) {
-      const {text,baselineItems,automatic}=row.dispatchedInput;
+      const {id,text,baselineItems,automatic}=row.dispatchedInput;
       // A user message from this attempt can reach the chat before the ACK.
       const turnId=row.turnId || row.observedTurnId;
       const inChat=turnId && session?.id===row.threadId && baselineItems && session.items.some(item=>
         item.type==='userMessage' && item.turnId===turnId && !baselineItems.includes(item.id) &&
         item.content?.length===1 && item.content[0]?.type==='text' && item.content[0].text===text);
       if(inChat)void core.save(session).catch(()=>logger({code:'host_error'}));
-      if(row.turnId || inChat)inputRecovery.delivered(task,text);
-      else if(!automatic)inputRecovery.remember(task,text);
+      if(id)inputRecovery.settle(task,id,!(row.turnId || inChat));
+      else if(row.turnId || inChat)inputRecovery.delivered(task,text);
       // A later explicit continuation may already own the queue slot.
       if(!task.queuedRecoveryInput && task.nextInput===text) {
         if(inChat)task.deliveryPhase='confirmed';

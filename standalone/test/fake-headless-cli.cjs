@@ -87,9 +87,17 @@ readline.createInterface({input:process.stdin}).on('line', line => {
     const gate=dispatchGate && fs.existsSync(dispatchGate) ? fs.readFileSync(dispatchGate,'utf8') : null;
     if(gate==='waiting'){fs.writeFileSync(dispatchGate,'received');return;}
     const turn = {id:'synthetic-turn-' + instance + '-' + ++turnSequence, status:'inProgress'}; thread.turns.push(turn);persist(thread);
-    if(gate!=='deliver')output({id:message.id, result:{turn}});
+    if(gate==='late'){
+      const reply=()=>{
+        if(!fs.existsSync(dispatchGate))return;
+        if(fs.readFileSync(dispatchGate,'utf8')==='release-late-ack')output({id:message.id,result:{turn}});
+        else setTimeout(reply,20).unref();
+      };
+      setTimeout(reply,20).unref();
+    }
+    else if(gate!=='deliver')output({id:message.id, result:{turn}});
     output({method:'turn/started', params:{threadId:thread.id, turn:{...turn}}});
-    if(gate==='ack')return;
+    if(gate==='ack' || gate==='late')return;
     if(gate==='deliver'){
       const item={id:'synthetic-user-'+turn.id,type:'userMessage',turnId:turn.id,content:params.input};
       thread.items.push(item);persist(thread);

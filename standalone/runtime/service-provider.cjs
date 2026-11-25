@@ -389,7 +389,7 @@ class ServiceProvider extends EventEmitter {
     grant.limitReached=limitReached;
     if(limitReached)this.#limitBinding=identity(grant.binding);
   }
-  async dispatchTurn(grant, params) {
+  async dispatchTurn(grant, params, onAckEvidence) {
     const owned = this.#turns.get(grant?.leaseId);
     try {
     this.#checkConfig();
@@ -404,12 +404,14 @@ class ServiceProvider extends EventEmitter {
       let pending;
       try {
         this.#dispatchAuthorization = {grant:owned, method:'turn/start', params};
-        pending = this.#cli.request('turn/start', params);
+        pending = this.#cli.request('turn/start', params, undefined, onAckEvidence?result=>{
+          if(!this.#lost && typeof result?.turn?.id==='string' && result.turn.id)onAckEvidence();
+        }:undefined);
       } finally { this.#dispatchAuthorization = null; }
       const result = await pending;
       if (!result?.turn?.id || typeof result.turn.id !== 'string') throw actionRequired('PROVIDER_PROTOCOL_INVALID');
       if (this.#turns.get(owned.leaseId) !== owned) return result; // Typed terminal arrived before ACK.
-      if (this.#lost) { owned.turnId = result.turn.id; throw Object.assign(actionRequired('PROVIDER_UNAVAILABLE'), {deliveryUncertain:true}); }
+      if (this.#lost) { owned.turnId = result.turn.id; onAckEvidence?.(); throw Object.assign(actionRequired('PROVIDER_UNAVAILABLE'), {deliveryUncertain:true}); }
       owned.state = 'active'; owned.turnId = result.turn.id;
       this.#event('turnStarted', {taskId:owned.taskId, spaceId:owned.spaceId, runId:owned.runId,
         turnId:owned.turnId, turnLeaseId:owned.leaseId});

@@ -142,7 +142,7 @@ function executor({connections,sessions,store,create,send,resume,handle,pending,
         if(result?.turnId){
           accepted=true;deliveryPending=false;
           task.turnId=result.turnId;task.turnIds=[...(task.turnIds || []),result.turnId];
-          inputRecovery.delivered(task,input);
+          if(!adapter.limitRecovery)inputRecovery.delivered(task,input);
           const consumed=composerDraft.consume(s,draft) || result.draftConsumed===true;
           try {
             await save(s);

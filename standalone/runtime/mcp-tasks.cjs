@@ -197,7 +197,7 @@ class McpTasks {
       lastSelection:task.lastSelection || null, updatedAt:task.updatedAt, revision:task.revision || 0, accessMode:task.accessMode || null, ...reportFields, error:task.error || null,
       ...(this.scope || task.waitingLimit ? {waitingLimit:task.state === 'waiting_limit' ? task.waitingLimit : null} : {}),
       queuedContinuations:task.continuations?.length || 0,
-      ...(fullRecovery?inputRecovery.page(task,unsentAfter):{unsentInputCount:task.unsentInputs?.length || 0}),
+      ...(fullRecovery?inputRecovery.page(task,unsentAfter):inputRecovery.counts(task)),
       recoveryRequired:recoveryRequired(task), pendingRequests:this.adapter.pending(task)}));
   }
   summary(task) {
@@ -205,7 +205,7 @@ class McpTasks {
       progress:task.progress, chatId:task.chatId || null, projectDirectory:task.projectDirectory, createdAt:task.createdAt,
       lastSelection:task.lastSelection || null, updatedAt:task.updatedAt, revision:task.revision || 0, hasReport:!!task.report, error:task.error || null,
       ...(this.scope || task.waitingLimit ? {waitingLimit:task.state === 'waiting_limit' ? task.waitingLimit : null} : {}),
-      unsentInputCount:task.unsentInputs?.length || 0,
+      ...inputRecovery.counts(task),
       recoveryRequired:recoveryRequired(task), pendingRequests:this.adapter.pending(task).length}));
   }
   operation(requestId, method, args, action) {
@@ -316,7 +316,7 @@ class McpTasks {
     if (name === 'get_task') {
       if (args.brief !== undefined && typeof args.brief !== 'boolean') throw fail('invalid_argument', 'Invalid brief');
       const task=this.get(args.taskId);
-      if(args.unsentAfter!==undefined && (typeof args.unsentAfter!=='string' || !task.unsentInputs?.some(row=>row.id===args.unsentAfter)))throw fail('invalid_argument','Invalid unsentAfter');
+      if(args.unsentAfter!==undefined && (typeof args.unsentAfter!=='string' || !inputRecovery.visible(task).some(row=>row.id===args.unsentAfter)))throw fail('invalid_argument','Invalid unsentAfter');
       return this.view(task, args.brief,args.unsentAfter,args.brief!==true);
     }
     if (name === 'wait_task') return this.wait(args);
@@ -408,7 +408,12 @@ class McpTasks {
           task.continuations ||= [];
           if(task.continuations.length>=20)throw fail('limit', 'Too many queued continuations.');
           task.continuations.push(args.clarification);
-        } else {if(this.serviceRecovery){if(task.nextInput && task.queuedRecoveryInput)inputRecovery.remember(task,task.nextInput);task.queuedRecoveryInput=true;recovery.manualInput(task);}task.nextInput=args.clarification; task.state='queued'; task.error=null; task.cancelRequested=false; delete task.waitId;task.waitingLimit=null;
+        } else {if(this.serviceRecovery){
+          if(task.inputAttempt?.refused)inputRecovery.settle(task,task.inputAttempt.id,true);
+          if(task.nextInput && task.queuedRecoveryInput)inputRecovery.remember(task,task.nextInput);
+          delete task.queuedInputRecoveryId;
+          task.queuedRecoveryInput=true;recovery.manualInput(task);
+        }task.nextInput=args.clarification; task.state='queued'; task.error=null; task.cancelRequested=false; delete task.waitId;task.waitingLimit=null;
           if(this.adapter.readinessBudget)delete task.serviceReadiness;}
         task.progress='Continuation queued';
       } else {
@@ -451,8 +456,9 @@ class McpTasks {
     // Pending request IDs count too: a new approval must wake waiters even when the state stays waiting_approval.
     const observed = () => JSON.stringify([task.state, task.progress, task.chatId, task.report, task.recoveryRequired, task.error, task.pendingIds]);
     const before = observed();
+    const beforeRecovery=task.unsentInputs;
     change();
-    if (observed() !== before) this.save(task);
+    if (observed() !== before || task.unsentInputs!==beforeRecovery) this.save(task);
   }
   // Blocked tasks are re-probed at most once a second, even while other tasks keep the scheduler busy.
   block(task, reason) { task.blockedUntil=Date.now()+1000; this.update(task, ()=>{ task.progress=reason; }); return 'blocked'; }
@@ -519,18 +525,22 @@ class McpTasks {
     const hadReadFailure=this.serviceRecovery && !!task.statusRead;
     if(this.serviceRecovery)recovery.retryRead(task);
     this.update(task, ()=>{
+      for(const id of status.inputDeliveredIds || [])inputRecovery.confirm(task,id);
       if(task.state==='error' && task.recoveryRequired && !status.answerUnknown)task.error=status.error || null;
       task.pendingIds=this.adapter.pending(task).map(r=>String(r.id));
       if (status.chatId) task.chatId=status.chatId;
       if(status.answerUnknown){task.state='error';task.recoveryRequired=true;task.progress=status.progress;}
       else if (status.done) {
+        const refusedId=status.emptyThreadAttemptId || (task.inputAttempt?.refused?task.inputAttempt.id:null);
         // Preparing is a durable proof that this input never reached turn/start.
         // Terminal evidence belongs to the previous turn, including after restart.
         if(this.serviceRecovery && !status.notSent && task.deliveryPhase==='preparing' && task.nextInput && !task.cancelRequested){
+          inputRecovery.settle(task,refusedId,!!task.queuedRecoveryInput);
           if(task.limitContinuation?.state==='pending'){task.waitId ||= randomUUID();recovery.enterLimitWait(task,this.now());}
           else {task.queuedRecoveryInput=true;task.state='queued';task.recoveryRequired=false;task.error=null;task.progress='Unsent input queued';}
           return;
         }
+        inputRecovery.settle(task,refusedId,true);
         if(this.adapter.limitRecovery && status.exhaustedTurnId && !task.cancelRequested && task.queuedRecoveryInput && task.nextInput) {
           task.continuations=[task.nextInput,...(task.continuations || [])];delete task.nextInput;delete task.queuedRecoveryInput;
         }
@@ -617,22 +627,29 @@ class McpTasks {
       '\n\nFinish with a report containing result, changed files, checks performed and remaining issues.';
     // Service preparation is durably proven unsent until the transport dispatches.
     // Window delivery bookkeeping retains its existing behavior.
-    if(this.serviceRecovery){task.deliveryPhase='preparing';task.nextInput=input;task.queuedRecoveryInput=true;}
+    if(this.serviceRecovery){delete task.inputAttempt;task.deliveryPhase='preparing';task.nextInput=input;task.queuedRecoveryInput=true;}
     else inputRecovery.delivered(task,input);
     task.state='running'; task.progress='Starting existing Codex executor'; task.recoveryRequired=true; task.awaitingPreparation=false; this.save(task);
     try {
       await this.adapter.start(task,input,()=>this.save(task));
       if(this.closed && this.serviceRecovery)return;
-      inputRecovery.delivered(task,input);
+      if(!this.serviceRecovery)inputRecovery.delivered(task,input);
       delete task.nextInput;
+      delete task.queuedInputRecoveryId;
       task.chatId=this.adapter.chatId(task); this.save(task);
     } catch (error) {
       if(this.closed && this.serviceRecovery)return;
       // The service exit handler owns settlement, including any new queued input.
       if(this.serviceRecovery && error?.confirmedCliExit)return;
+      const retainInput=()=>{
+        if(error?.refusedInputAttemptId)inputRecovery.settle(task,error.refusedInputAttemptId,true);
+        else inputRecovery.remember(task,input);
+      };
       if(this.serviceRecovery)task.chatId=this.adapter.chatId(task) || task.chatId;
       if(error?.providerWait && !task.cancelRequested){
-        inputRecovery.remember(task,input); task.nextInput=input;
+        const recoveryId=inputRecovery.remember(task,input);
+        if(recoveryId)task.queuedInputRecoveryId=recoveryId;
+        task.nextInput=input;
         task.state='waiting_limit';task.recoveryRequired=false;task.needsReconcile=false;
         task.waitId=error.providerWait.waitId || task.waitId || randomUUID();
         task.waitingLimit={resetAt:error.providerWait.resetAt,reason:error.providerWait.reason};
@@ -641,22 +658,23 @@ class McpTasks {
         task.progress='Waiting for provider availability';task.error=null;this.save(task);return;
       }
       if(error?.reason==='action_required' && error?.notSent && !error.retryable && !task.cancelRequested){
-        inputRecovery.remember(task,input); task.state='error';task.recoveryRequired=false;task.needsReconcile=false;
+        retainInput(); task.state='error';task.recoveryRequired=false;task.needsReconcile=false;
         task.error='action_required: Open companion connection settings and reconnect.';task.progress='Provider action required';
         this.release(task);this.save(task);return;
       }
       if(task.cancelRequested && (task.awaitingPreparation || error?.retryable || error?.notSent)){
-        inputRecovery.remember(task,input);
+        retainInput();
         task.state='cancelled';task.recoveryRequired=false;task.progress='Cancelled before model execution';
         this.release(task);this.save(task);return;
       }
       // Nothing was sent (another turn holds the connection or credentials): wait and start again.
       if(error?.retryable && !task.cancelRequested){
+        inputRecovery.settle(task,error.refusedInputAttemptId);
         task.state='queued';task.recoveryRequired=false;task.progress=error.serviceReadiness ? error.progress : 'Waiting to start: the connection is busy with another turn';
         task.blockedUntil=Date.now()+5000;directories.release(this.directoryStore,task.projectDirectory,task.taskId);this.save(task);return;
       }
       if(error?.notSent){
-        inputRecovery.remember(task,input);
+        retainInput();
         task.state='error';task.recoveryRequired=false;task.needsReconcile=false;
         task.progress='Execution refused before sending';task.error='Execution did not start. Check the connection and chat before continuing.';
         this.release(task);this.save(task);return;

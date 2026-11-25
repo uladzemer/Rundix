@@ -46,6 +46,8 @@
   }
   function button(text,name,extra,disabled=false){const b=element('button',text);b.type='button';b.disabled=pending || disabled;b.addEventListener('click',()=>action(name,extra));return b;}
   const selectionText=value=>(value.displayName || value.model)+(value.effort?' · '+WorkbenchControls.label(value.effort):'');
+  words.en.possiblyNotDelivered='possibly not delivered';
+  words.ru.possiblyNotDelivered='возможно, не доставлено';
   function modelSettings() {
     const defaults=state.modelDefaults || {model:null,effort:'auto'},catalog=state.models || {status:'idle',list:[]};
     const section=element('section',undefined,'model-settings'),model=element('select'),effort=element('select');
@@ -152,6 +154,7 @@
     }
     if(task.actionRequired)detail.append(element('p',t('actionRequired')+': '+task.actionRequired,'notice'));
     if(state.serviceMode && task.unsentInputCount)detail.append(element('p',t('unsentCount')+': '+task.unsentInputCount,'unsent-count'));
+    if(task.possiblyNotDeliveredCount)detail.append(element('p',t('possiblyNotDelivered')+': '+task.possiblyNotDeliveredCount,'possibly-not-delivered'));
     if(task.progress)detail.append(element('p',task.progress,'progress'));
     if(!state.bridgeRunning)detail.append(element('p',t('offline'),'notice'));
     if(task.pendingRequests?.length || typeof task.pendingRequests==='number' && task.pendingRequests>0)detail.append(element('p',t('approval'),'notice'));
@@ -160,7 +163,10 @@
     if(task.unsentInputs?.length){
       const recovery=element('details',undefined,'unsent-inputs');
       recovery.append(element('summary',t('unsent')));
-      for(const row of task.unsentInputs)recovery.append(element('pre',row.text+(row.truncated?'…':''),'configuration-json'));
+      for(const row of task.unsentInputs){
+        if(row.possiblyNotDelivered)recovery.append(element('p',t('possiblyNotDelivered'),'possibly-not-delivered'));
+        recovery.append(element('pre',row.text+(row.truncated?'…':''),'configuration-json'));
+      }
       detail.append(recovery);
     }
     if(task.readOnly)detail.append(element('p',state.language==='ru'?'История старой версии · только чтение':'Legacy history · read only','notice'));

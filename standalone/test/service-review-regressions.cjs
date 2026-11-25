@@ -4,6 +4,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {SessionStore}=require('../runtime/store.cjs');
 const {McpTasks}=require('../runtime/mcp-tasks.cjs');
 const recovery=require('../runtime/task-recovery.cjs');
+const inputRecovery=require('../runtime/mcp-input-recovery.cjs');
 const {createHeadlessHost}=require('../runtime/service-headless-host.cjs');
 const {createLimitPoller}=require('../runtime/service-limit-poller.cjs');
 const {fixture}=require('./service-fixture.cjs');
@@ -189,12 +190,23 @@ async function exitDuringLimit(kind){
       assert.equal(row.autoLimit.consecutive,1);
       assert.equal(sent.at(-1),recovery.CONTINUE);
     }else{
+      const checkpoint=tasks.store.read('mcp-task',taskId);
+      const attemptId=checkpoint.inputAttempt.id;
+      assert.equal(checkpoint.unsentInputs[0].id,attemptId,'The attempt and text share the dispatch checkpoint');
+      assert.equal(checkpoint.unsentInputs[0].possiblyNotDelivered,true);
+      assert.deepEqual(recoveryTexts(),[],'An in-flight attempt is invisible in its own process');
+      assert.equal(tasks.call('get_task',{taskId,brief:true}).unsentInputCount,0);
       held.reject(lostAck());await tasks.idle();
       assert.equal(row.state,'error');assert.equal(row.recoveryRequired,true);
       assert.equal(host.provider.cli,held.cli,'The uncertain turn still owns the live CLI');
-      await tasks.call('continue_task',{taskId,requestId:'synthetic-queued-at-limit',clarification});
+      const continued=await tasks.call('continue_task',{taskId,requestId:'synthetic-queued-at-limit',clarification});
       assert.equal(row.nextInput,clarification);assert.equal(row.queuedRecoveryInput,true);
-      assert.deepEqual(recoveryTexts(),[],'Uncertainty without confirmed exit stays out of recovery');
+      assert.deepEqual(tasks.call('get_task',{taskId}).unsentInputs,[{id:attemptId,text:sent[0],possiblyNotDelivered:true}],
+        'The uncertain input stays visible when a clarification takes the execution slot');
+      for(const view of [continued,tasks.call('get_task',{taskId,brief:true}),tasks.call('list_tasks').tasks[0]]){
+        assert.equal(view.unsentInputCount,1);assert.equal(view.possiblyNotDeliveredCount,1);
+        assert.equal(Object.hasOwn(view,'unsentInputs'),false);
+      }
     }
     if(nextLimit){
       const signalLimit=turnId=>held.cli.emit('notification',{method:'error',params:{threadId:row.chatId,turnId,
@@ -214,6 +226,8 @@ async function exitDuringLimit(kind){
     const expected=automatic?[]:[sent[0],clarification];
     assert.deepEqual(recoveryTexts(),expected);
     assert.deepEqual((saved.unsentInputs || []).map(item=>item.text),expected);
+    assert.equal(tasks.call('get_task',{taskId}).possiblyNotDeliveredCount,undefined);
+    assert((saved.unsentInputs || []).every(item=>!Object.hasOwn(item,'possiblyNotDelivered')),'Exit settles the flag');
     if(nextLimit){
       assert.equal(saved.state,'waiting_limit');
       assert.deepEqual(saved.limitContinuation,{exhaustedTurnId:held.turnId,state:'pending'});
@@ -482,7 +496,197 @@ async function emptyThreadServiceRestart(){
   }finally{await host?.dispose({force:true});await data.close();}
 }
 
+async function dispatchRestart(phase){
+  const directory=project('dispatch-restart-'+phase),gate=path.join(directory,'synthetic-dispatch-gate');
+  const beforeWrite=phase==='before-write',beforeAck=phase==='before-ack';
+  fs.writeFileSync(gate,beforeAck?'deliver':'ack');
+  const data=fixture(directory,{cliEnv:{RUNDIX_SYNTHETIC_DISPATCH_GATE:gate}});
+  const makeCli=data.hostOptions.providerOptions.createCli;
+  let host,checkpoint,sessionCheckpoint,oldTaskId,intercept=true,accepted=false,ackSave=false,sends=0,release;
+  data.hostOptions.providerOptions.createCli=options=>{
+    const cli=makeCli(options),request=cli.request.bind(cli),emit=cli.emit.bind(cli);
+    cli.emit=(event,message,...args)=>{
+      if(intercept && beforeAck && event==='notification' && message.params?.item?.type==='userMessage'){
+        accepted=true;return false; // The rollout has the item. The old service never sees it.
+      }
+      return emit(event,message,...args);
+    };
+    cli.request=(method,params,...args)=>{
+      if(method!=='turn/start')return request(method,params,...args);
+      if(intercept && !checkpoint){
+        oldTaskId=host.mcp.tasks.tasks.values().next().value.taskId;
+        const task=host.mcp.tasks.get(oldTaskId);
+        checkpoint=host.mcp.tasks.store.read('mcp-task',oldTaskId);
+        sessionCheckpoint=host.core.store.session(task.sessionKey);
+        assert.equal(checkpoint.deliveryPhase,'dispatching');
+        assert.equal(checkpoint.unsentInputs[0].possiblyNotDelivered,true);
+        assert.deepEqual(host.mcp.tasks.call('get_task',{taskId:oldTaskId}).unsentInputs,[]);
+        if(beforeWrite)return new Promise((_,reject)=>{release=()=>reject(Error('Synthetic process ended before write'));});
+      }
+      sends++;return request(method,params,...args);
+    };
+    return cli;
+  };
+  const create=generation=>createHeadlessHost({root:directory,generation,taskOptions:{scope:()=> 'synthetic-space'},...data.hostOptions});
+  try{
+    host=await create('synthetic-before-crash');
+    let tasks=host.mcp.tasks;tasks.pause();
+    await tasks.call('submit_task',{requestId:'synthetic-crash-submit',description:'Synthetic crash input',acceptanceCriteria:'Synthetic check',projectDirectory:directory});
+    const store=tasks.store,sessionStore=host.core.store,write=store.write.bind(store);
+    if(!beforeWrite && !beforeAck)store.write=(kind,id,value)=>{
+      if(intercept && kind==='mcp-task' && value.deliveryPhase==='confirmed'){
+        ackSave=true;throw Error('Synthetic process ended after ACK before the task write');
+      }
+      return write(kind,id,value);
+    };
+    tasks.resume();
+    await until(host,()=>beforeWrite?!!release:beforeAck?accepted:ackSave,false);
+    assert.equal(sends,beforeWrite?0:1);
+    assert.equal(store.read('mcp-task',oldTaskId).deliveryPhase,'dispatching');
+    // Restore only the files available at the crash boundary after disposing the fixture's processes.
+    tasks.pause();await host.dispose({force:true});release?.();await data.close();
+    store.write=write;write('mcp-task',oldTaskId,checkpoint);sessionStore.write('session',checkpoint.sessionKey,sessionCheckpoint);
+    intercept=false;fs.unlinkSync(gate);
+    host=await create('synthetic-after-crash');
+    tasks=host.mcp.tasks;tasks.pause();
+    const restored=tasks.get(oldTaskId),get=()=>tasks.call('get_task',{taskId:oldTaskId});
+    assert.deepEqual(get().unsentInputs,[{id:checkpoint.inputAttempt.id,text:checkpoint.nextInput,possiblyNotDelivered:true}]);
+    await tasks.observe(restored);
+    if(beforeWrite){
+      assert.equal(restored.state,'queued','Missing rollout preserves the existing re-queue');
+      assert.equal(restored.nextInput,checkpoint.nextInput);
+      assert.equal(get().unsentInputCount,0,'Re-queued input leaves recovery');
+      const olderId=inputRecovery.remember(restored,checkpoint.nextInput);
+      tasks.save(restored);
+      tasks.resume();await until(host,()=>restored.state==='completed');
+      assert.equal(sends,1);
+      assert.deepEqual(get().unsentInputs,[{id:olderId,text:checkpoint.nextInput}],'ACK preserves an older plain entry with equal text');
+    }else if(beforeAck){
+      assert.equal(get().unsentInputCount,0,'A matching item from the recovered rollout proves delivery');
+      assert.equal(restored.deliveryPhase,'confirmed');
+      assert.equal(sends,1);
+    }else{
+      assert.equal(get().possiblyNotDeliveredCount,1,'An ACK lost with the process and no chat item cannot prove delivery');
+      assert.equal(sends,1);
+    }
+  }finally{release?.();await host?.dispose({force:true});await data.close();}
+}
+
+async function lateAck(){
+  const directory=project('late-input-ack'),gate=path.join(directory,'synthetic-dispatch-gate');
+  fs.writeFileSync(gate,'late');
+  const data=fixture(directory,{cliEnv:{RUNDIX_SYNTHETIC_DISPATCH_GATE:gate}}),makeCli=data.hostOptions.providerOptions.createCli;
+  let host,sends=0;
+  data.hostOptions.providerOptions.createCli=options=>{
+    const cli=makeCli(options),request=cli.request.bind(cli);
+    cli.request=(method,params,timeout,late)=>{
+      if(method==='turn/start'){sends++;timeout=100;}
+      return request(method,params,timeout,late);
+    };
+    return cli;
+  };
+  try{
+    host=await createHeadlessHost({root:directory,generation:'synthetic-late-ack',...data.hostOptions});
+    const tasks=host.mcp.tasks;
+    const {taskId}=await tasks.call('submit_task',{requestId:'synthetic-late-ack',description:'Synthetic late ACK',acceptanceCriteria:'Synthetic check',projectDirectory:directory});
+    const get=()=>tasks.call('get_task',{taskId});
+    await until(host,()=>get().possiblyNotDeliveredCount===1,false);
+    const id=get().unsentInputs[0].id;
+    fs.writeFileSync(gate,'release-late-ack');
+    await until(host,()=>get().unsentInputCount===0,false);
+    assert(!tasks.store.read('mcp-task',taskId).unsentInputs.some(row=>row.id===id));
+    assert.equal(sends,1,'A late ACK settles recovery without replaying the turn');
+  }finally{await host?.dispose({force:true});await data.close();}
+}
+
+async function attemptAttribution(){
+  const tasks=harness('attempt-attribution',true,{});
+  try{
+    const row=task('synthetic-attribution',project('attempt-attribution')),text='Synthetic identical input';
+    const session={id:'synthetic-thread',loaded:true,cliGeneration:'synthetic-cli',items:[]};
+    const oldItem={id:'synthetic-old-item',type:'userMessage',turnId:'synthetic-old-turn',content:[{type:'text',text}]};
+    const newItem={...oldItem,id:'synthetic-new-item',turnId:'synthetic-new-turn'};
+    let latest=oldItem.turnId,items=[oldItem];
+    const server={request:async method=>method==='thread/read'?{thread:{status:{type:'idle'}}}:
+      method==='thread/turns/list'?{data:[{id:latest,status:'completed'}]}:{data:items}};
+    const core={sessions:new Map([[row.sessionKey,session]]),state:{server},connect:async()=>{},save:async()=>{}};
+    tasks.adapter.status=require('../runtime/service-task-status.cjs').createTaskStatus({
+      core,provider:{cli:{binding:{appServerGeneration:session.cliGeneration}}},runs:new Map(),
+      status:async()=>({done:true,failed:true,chatId:session.id})
+    });
+    tasks.tasks.set(row.taskId,row);
+    Object.assign(row,{chatId:session.id,deliveryPhase:'dispatching',baselineItems:[]});
+    const begin=(id,previousTurnId)=>{
+      inputRecovery.begin(row,{id,text,threadId:session.id,previousTurnId});
+      inputRecovery.expose(row,id);
+    };
+    begin('synthetic-attempt-first',oldItem.turnId);
+    const get=()=>tasks.call('get_task',{taskId:row.taskId});
+    const observe=async()=>{row.needsReconcile=true;await tasks.observe(row);};
+    await observe();
+    assert.equal(get().possiblyNotDeliveredCount,1,'A matching message in the previous turn is not proof');
+    begin('synthetic-attempt-second',oldItem.turnId);
+    assert.equal(get().possiblyNotDeliveredCount,2,'Equal text has two independent attempt IDs');
+    latest=newItem.turnId;items=[];
+    await observe();
+    assert.equal(get().possiblyNotDeliveredCount,2,'A bounded read without the item does not settle delivery');
+    items=[newItem];
+    await observe();
+    assert.deepEqual(get().unsentInputs,[{id:'synthetic-attempt-first',text,possiblyNotDelivered:true}]);
+    const panel=require('../runtime/mcp-panel.cjs').snapshot({records:[row],pending:()=>[]}).tasks[0];
+    assert.equal(panel.possiblyNotDeliveredCount,1);
+    assert.equal(panel.unsentInputs[0].possiblyNotDelivered,true);
+    begin('synthetic-attempt-protected',newItem.turnId);
+    for(let index=0;index<55;index++)inputRecovery.remember(row,'Synthetic queue '+index+' '.repeat(90000));
+    assert.equal(get().possiblyNotDeliveredCount,1,'The current uncertain entry survives count and byte pruning');
+    assert(row.unsentInputs.some(item=>item.id==='synthetic-attempt-protected'));
+    assert(Buffer.byteLength(JSON.stringify(row.unsentInputs))<=inputRecovery.MAX_BYTES);
+  }finally{tasks.dispose();}
+}
+
+async function definiteDispatchRefusal(retryable){
+  const directory=project('definite-dispatch-refusal-'+retryable),data=fixture(directory);
+  const makeCli=data.hostOptions.providerOptions.createCli;
+  let host,attempt,sends=0;
+  data.hostOptions.providerOptions.createCli=options=>{
+    const cli=makeCli(options),request=cli.request.bind(cli);
+    cli.request=async(method,params,...args)=>{
+      if(method==='turn/start'){
+        if(!attempt){
+          const tasks=host.mcp.tasks,row=tasks.tasks.values().next().value;
+          [attempt]=tasks.store.read('mcp-task',row.taskId).unsentInputs;
+          throw Object.assign(Error('Synthetic definite send refusal'),{deliveryUncertain:false,notSent:true,retryable});
+        }
+        sends++;
+      }
+      return request(method,params,...args);
+    };
+    return cli;
+  };
+  try{
+    host=await createHeadlessHost({root:directory,generation:'synthetic-definite-refusal',...data.hostOptions});
+    const tasks=host.mcp.tasks;tasks.schedule=()=>{};
+    const {taskId}=await tasks.call('submit_task',{requestId:'synthetic-refused-input',description:'Synthetic refused input',acceptanceCriteria:'Synthetic check',projectDirectory:directory});
+    await step(tasks);
+    const row=tasks.get(taskId),get=()=>tasks.call('get_task',{taskId});
+    assert.equal(sends,0);
+    assert.equal(get().possiblyNotDeliveredCount,undefined);
+    if(retryable){
+      assert.equal(row.state,'queued');
+      assert.equal(row.nextInput,attempt.text);
+      assert.deepEqual(get().unsentInputs,[],'A definite refusal returned to the queue drops the attempt entry');
+      row.blockedUntil=0;await until(host,()=>row.state==='completed');
+      assert.equal(sends,1);
+    }else{
+      assert.equal(row.state,'error');
+      assert.deepEqual(get().unsentInputs,[{id:attempt.id,text:attempt.text}],'A terminal refusal converts the same entry to ordinary unsent');
+    }
+  }finally{await host?.dispose({force:true});await data.close();}
+}
+
 (async()=>{try{await emptyThreadServiceRestart();await restartInterruption();await lostEmptyThread();await queuedInput();await windowsAndSlowRecovery();await lightweightStatus();await repeatedLimit();await historyRecovery();await preparingRestart();await generationAndPredispatchExit(false);await generationAndPredispatchExit(true);await freshThreadGenerationChange();
   await exitDuringLimit('clarification-at-limit');await exitDuringLimit('automatic-exit-without-limit');await exitDuringLimit('automatic-exit-with-new-limit');await replyWithQueuedInput(false);await replyWithQueuedInput(true);
+  for(const phase of ['before-write','before-ack','after-ack'])await dispatchRestart(phase);
+  await lateAck();await attemptAttribution();await definiteDispatchRefusal(true);await definiteDispatchRefusal(false);
   console.log('PASS review regressions: unchanged window recovery, lossless preparing restart, slow retries/free slots, lightweight status, bounded limits, concurrent history, generation config, dispatch checkpoint rollback, CLI exits at limits and unrelated reply delivery.');
 }finally{assert.equal(path.dirname(root),os.tmpdir());assert(path.basename(root).startsWith('rundix-review-regression-synthetic-'));fs.rmSync(root,{recursive:true,force:true});}})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -120,10 +120,10 @@ class ServiceAppServer extends EventEmitter {
     });
     return this.#starting;
   }
-  async #request(cli, method, params, timeoutMs) {
+  async #request(cli, method, params, timeoutMs, onLateResult) {
     if (this.#cli !== cli || !cli) throw unavailable('connection_changed');
     try {
-      const result = await cli.request(method, params, timeoutMs);
+      const result = await cli.request(method, params, timeoutMs, onLateResult);
       if (this.#cli !== cli) throw Object.assign(unavailable('connection_changed'), {deliveryUncertain:true});
       return result;
     } catch (error) {
@@ -131,7 +131,7 @@ class ServiceAppServer extends EventEmitter {
       throw rejected(error);
     }
   }
-  async request(method, params = {}, timeoutMs = 30000) {
+  async request(method, params = {}, timeoutMs = 30000, onLateResult) {
     if (!METHODS.has(method)) return Promise.reject(Object.assign(Error('CLI method is unsupported.'), {code:'METHOD_NOT_SUPPORTED', deliveryUncertain:false}));
     if (!this.#ready) throw unavailable();
     if (MODEL_METHODS.has(method) && !this.#authenticated) return Promise.reject(unavailable());
@@ -141,7 +141,11 @@ class ServiceAppServer extends EventEmitter {
     }
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 90000) return Promise.reject(unavailable());
     const fence = this.fence;
-    const result = await this.#request(this.#cli, method, params, timeoutMs);
+    const cli=this.#cli;
+    const late=method==='turn/start' && onLateResult?result=>{
+      if(this.#cli===cli && this.#authenticated && sameFence(fence,this.fence))onLateResult(result);
+    }:undefined;
+    const result = await this.#request(cli, method, params, timeoutMs, late);
     if (!sameFence(fence, this.fence)) throw Object.assign(unavailable('connection_changed'), {deliveryUncertain:true});
     return result;
   }

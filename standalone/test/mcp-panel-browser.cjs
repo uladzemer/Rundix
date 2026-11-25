@@ -81,6 +81,15 @@ fs.mkdirSync(artifacts,{recursive:true});
    assert.equal(await page.$eval('.unsent-inputs summary',node=>node.textContent),language==='ru'
     ?'Неотправленные сообщения: полный текст доступен через get_task':'Unsent inputs: recover full text with get_task');
    assert.equal(await page.$eval('.unsent-inputs pre',node=>node.textContent),'Synthetic unsent <img src=x onerror="window.injected=true">');
+   const uncertainLabel=language==='ru'?'возможно, не доставлено':'possibly not delivered';
+   await page.evaluate(()=>{
+    window.fixture.tasks[0].unsentInputs[0].possiblyNotDelivered=true;
+    window.fixture.tasks[0].possiblyNotDeliveredCount=1;
+    window.update();
+   });
+   await page.click('.unsent-inputs summary');
+   assert.equal(await page.$eval('.unsent-inputs .possibly-not-delivered',node=>node.textContent),uncertainLabel);
+   await page.screenshot({path:path.join(artifacts,`mcp-window-uncertain-${language}-${theme}-${width}.png`),fullPage:true});
    assert.equal(await page.$$('img').then(rows=>rows.length),0);
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'Recovery preview fits both panel widths');
    await page.type('#clarification','Synthetic retained draft');await page.focus('#clarification');await page.evaluate(()=>{document.getElementById('clarification').setSelectionRange(5,10);window.update();});
@@ -164,6 +173,8 @@ fs.mkdirSync(artifacts,{recursive:true});
    assert.equal(await page.$$('#space option').then(rows=>rows.length),2);
    assert.match(await page.$eval('.limit-reset',node=>node.textContent),language==='ru'?/Сброс лимитов/:/Reset at/);
    assert.match(await page.$eval('.unsent-count',node=>node.textContent),/3/);
+   await page.evaluate(()=>{window.fixture.tasks[0].possiblyNotDeliveredCount=2;window.update();});
+   assert.equal(await page.$eval('.possibly-not-delivered',node=>node.textContent),uncertainLabel+': 2');
    await page.screenshot({path:path.join(artifacts,`mcp-service-wait-${language}-${theme}-${width}.png`),fullPage:true});
    await page.type('#clarification','Synthetic service draft');await page.click('form button');
    const serviceSend=await page.evaluate(()=>window.calls.at(-1));assert.equal(serviceSend.spaceId,'synthetic-space-a');

@@ -1,6 +1,7 @@
 const fs=require('node:fs');
 const path=require('node:path');
 const {recoveryRequired}=require('./mcp-tasks.cjs');
+const inputRecovery=require('./mcp-input-recovery.cjs');
 const {preferredModel}=require('./mcp-model.cjs');
 const {compareVersions}=require('./service-version.cjs');
 function readRecords(directory) {
@@ -17,8 +18,9 @@ function snapshot({records,language,connection,connected,bridgeRunning,pending,m
     taskId:task.taskId,title:(task.description || task.taskId).slice(0,160),state:task.state,
     chatId:task.chatId || null,projectDirectory:task.projectDirectory,progress:task.progress,
     report:task.report || null,error:task.error || null,recoveryRequired:recoveryRequired(task),
-    unsentInputCount:task.unsentInputs?.length || 0,
-    unsentInputs:(task.unsentInputs || []).slice(-3).map(row=>({id:row.id,text:row.text.slice(0,2000),truncated:row.text.length>2000})),
+    ...inputRecovery.counts(task),
+    unsentInputs:inputRecovery.visible(task).slice(-3).map(row=>({id:row.id,text:row.text.slice(0,2000),truncated:row.text.length>2000,
+      ...(row.possiblyNotDelivered?{possiblyNotDelivered:true}:{})})),
     pendingRequests:pending(task).map(request=>({id:request.id,method:request.method})),
   }));
   return {language,connection,connected,bridgeRunning,tasks,modelDefaults,models,preferredModel};

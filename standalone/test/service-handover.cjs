@@ -369,6 +369,65 @@ async function forced(root, phase) {
     assert.deepEqual((await taskCall(adapter,'get_task',{taskId:task.taskId})).unsentInputs,task.unsentInputs,'Manual Continue preserves the recovery entries');
   } finally {adapter?.close();window?.close();other?.close();await service?.shutdown();await data.close();}
 }
+
+async function forcedWithoutCliExit(root) {
+  fs.mkdirSync(root);
+  const gate=path.join(root,'synthetic-dispatch-gate'),data=fixture(root,{cliEnv:{RUNDIX_SYNTHETIC_DISPATCH_GATE:gate}});
+  const makeCli=data.hostOptions.providerOptions.createCli;
+  let service,adapter,window,cliChild,kill,sends=0;
+  data.hostOptions.providerOptions.createCli=options=>{
+    const cli=makeCli(options),request=cli.request.bind(cli);
+    cli.request=(method,...args)=>{
+      if(method==='turn/start')sends++;
+      return request(method,...args);
+    };
+    return cli;
+  };
+  try {
+    registration(root,currentVersion);
+    service=await runService({root,hostOptions:data.hostOptions});
+    adapter=await connectService({root,hello:hello(root,'adapter')});window=await open(root,'window');
+    const {taskId}=await taskCall(adapter,'submit_task',{requestId:'synthetic-stop-initial',description:'Synthetic first turn',acceptanceCriteria:'Synthetic check',projectDirectory:root});
+    const row=service.host.mcp.tasks.tasks.get(taskId);
+    await until(()=>row.state==='completed');
+    fs.writeFileSync(gate,'waiting');
+    const clarification='Synthetic still uncertain after retire';
+    await taskCall(adapter,'continue_task',{taskId,requestId:'synthetic-stop-clarification',clarification});
+    await until(()=>row.deliveryPhase==='dispatching' && fs.readFileSync(gate,'utf8')==='received');
+    assert.equal((await taskCall(adapter,'get_task',{taskId})).unsentInputCount,0);
+
+    cliChild=data.children.find(value=>value.child.spawnargs.some(arg=>arg.endsWith('fake-headless-cli.cjs'))).child;
+    kill=cliChild.kill.bind(cliChild);
+    cliChild.kill=()=>true; // Keep the child alive beyond the real stop deadline.
+    cliChild.stdin.emit('error',Error('Synthetic lost CLI transport'));
+    await until(()=>row.state==='error');
+    const flagged=(await taskCall(adapter,'get_task',{taskId})).unsentInputs;
+    assert.deepEqual(flagged,[{id:row.inputAttempt.id,text:clarification,possiblyNotDelivered:true}]);
+    assert.equal(cliChild.exitCode,null);
+    const panel=await window.call('space.subscribe',{bindingId:window.binding.bindingId,spaceId:adapter.binding.spaceId});
+    const summary=panel.result.tasks.find(task=>task.taskId===taskId);
+    assert.equal(summary.unsentInputCount,1);assert.equal(summary.possiblyNotDeliveredCount,1);
+    assert.equal(Object.hasOwn(summary,'unsentInputs'),false);
+    const waited=await taskCall(adapter,'wait_task',{taskId,waitSeconds:1});
+    assert.equal(waited.possiblyNotDeliveredCount,1);
+
+    assert.deepEqual(await retire(window,true),{result:{retiring:true}});
+    await until(()=>!readDiscovery(locations({root})));
+    assert.equal(cliChild.exitCode,null,'The forced retire exceeded the exit wait without a close event');
+    cliChild.kill=kill;await data.close();
+    fs.unlinkSync(gate);
+    service=await runService({root,hostOptions:data.hostOptions});
+    adapter=await connectService({root,hello:hello(root,'adapter')});
+    const restored=service.host.mcp.tasks.tasks.get(taskId);
+    await until(()=>!restored.recoveryRequired);
+    assert.deepEqual((await taskCall(adapter,'get_task',{taskId})).unsentInputs,flagged);
+    assert.equal(sends,2,'A restart after unconfirmed retire does not replay the clarification');
+  }finally{
+    if(kill)cliChild.kill=kill;
+    adapter?.close();window?.close();await service?.shutdown();await data.close();
+  }
+}
+
 async function main() {
   const base=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-handover-synthetic-'));
   try {
@@ -385,6 +444,7 @@ async function main() {
     await forced(path.join(base,'first-input'),'initial');
     await forced(path.join(base,'observed'),'observed');
     await forced(path.join(base,'superseded'),'superseded');
+    await forcedWithoutCliExit(path.join(base,'unconfirmed-exit'));
   } finally {assert.equal(path.dirname(base),os.tmpdir());assert(path.basename(base).startsWith('rundix-handover-synthetic-'));fs.rmSync(base,{recursive:true,force:true});}
   console.log('PASS service handover: target validation, quiescence gates, contention, retire authorization, ACK and actual forced shutdown/recovery.');
 }

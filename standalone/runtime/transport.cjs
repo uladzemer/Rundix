@@ -37,13 +37,36 @@ class AppServer extends EventEmitter {
   })().catch(error=>{if(this.generation===generation)this.starting=null;throw error;});return this.starting;
  }
  write(message){if(!this.child?.stdin.writable)throw Error(locale.t('Codex CLI не подключён.'));this.child.stdin.write(JSON.stringify(message)+'\n');}
- request(method,params={},timeout=30000){const id=++this.sequence;return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{this.pending.delete(id);reject(Object.assign(Error(locale.t("Нет ответа Codex: {0}",method)),{deliveryUncertain:true}));},timeout);this.pending.set(id,{resolve,reject,timer});try{this.write({id,method,params});}catch(error){clearTimeout(timer);this.pending.delete(id);reject(Object.assign(error,{deliveryUncertain:false}));}});}
+ request(method,params={},timeout=30000,onLateResult){
+  const id=++this.sequence;
+  return new Promise((resolve,reject)=>{
+   const timer=setTimeout(()=>{
+    this.pending.delete(id);
+    if(onLateResult){
+     // Keep a bounded window for evidence only. The original call still times out.
+     const late=this.lateResults ||= new Map();
+     if(late.size>=32)late.delete(late.keys().next().value);
+     late.set(id,{callback:onLateResult,until:Date.now()+120000});
+    }
+    reject(Object.assign(Error(locale.t("Нет ответа Codex: {0}",method)),{deliveryUncertain:true}));
+   },timeout);
+   this.pending.set(id,{resolve,reject,timer});
+   try{this.write({id,method,params});}
+   catch(error){clearTimeout(timer);this.pending.delete(id);reject(Object.assign(error,{deliveryUncertain:false}));}
+  });
+ }
  receive(message){
   if(message.method){if(message.id!==undefined){this.serverRequests.set(String(message.id),message);this.emit('request',message);}else this.emit('notification',message);return;}
-  const entry=this.pending.get(message.id);if(!entry)return;this.pending.delete(message.id);clearTimeout(entry.timer);if(message.error)entry.reject(Object.assign(Error(message.error.message),{deliveryUncertain:false}));else entry.resolve(message.result);
+  const entry=this.pending.get(message.id);
+  if(!entry){
+   const late=this.lateResults?.get(message.id);
+   if(late){this.lateResults.delete(message.id);if(!message.error && Date.now()<late.until)late.callback(message.result);}
+   return;
+  }
+  this.pending.delete(message.id);clearTimeout(entry.timer);if(message.error)entry.reject(Object.assign(Error(message.error.message),{deliveryUncertain:false}));else entry.resolve(message.result);
  }
  respond(id,result,error){if(!this.serverRequests.has(String(id)))return false;this.write(error?{id,error}:{id,result});this.serverRequests.delete(String(id));return true;}
- fail(error){for(const entry of this.pending.values()){clearTimeout(entry.timer);entry.reject(Object.assign(Error(error.message),{deliveryUncertain:true}));}this.pending.clear();this.serverRequests.clear();this.starting=null;this.emit('disconnected',error.message);}
+ fail(error){for(const entry of this.pending.values()){clearTimeout(entry.timer);entry.reject(Object.assign(Error(error.message),{deliveryUncertain:true}));}this.pending.clear();this.lateResults?.clear();this.serverRequests.clear();this.starting=null;this.emit('disconnected',error.message);}
  async waitForExit(timeout=5000){
   if(!this.exited)return;
   let timer;

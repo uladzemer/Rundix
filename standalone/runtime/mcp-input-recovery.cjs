@@ -1,27 +1,86 @@
 const {randomUUID}=require('node:crypto');
 const MAX_ENTRIES=50,MAX_BYTES=2*1024*1024;
+const inFlight=new WeakMap();
 function prune(task) {
   const rows=task.unsentInputs || [];
+  const protectedId=task.inputAttempt?.id || rows.findLast(row=>row.possiblyNotDelivered)?.id;
   let bytes=Buffer.byteLength(JSON.stringify(rows));
-  while(rows.length>MAX_ENTRIES || bytes>MAX_BYTES){rows.shift();bytes=Buffer.byteLength(JSON.stringify(rows));}
+  while(rows.length>MAX_ENTRIES || bytes>MAX_BYTES){
+    const oldest=rows.findIndex(row=>row.id!==protectedId);
+    if(oldest<0)break;
+    rows.splice(oldest,1);bytes=Buffer.byteLength(JSON.stringify(rows));
+  }
 }
 function remember(task,text) {
   task.unsentInputs ||= [];
-  if(!task.unsentInputs.some(row=>row.text===text))task.unsentInputs.push({id:randomUUID(),text});
+  let id;
+  if(!task.unsentInputs.some(row=>!row.attempt && row.text===text)){
+    id=randomUUID();task.unsentInputs.push({id,text});
+  }
   prune(task);
+  return id;
 }
 function delivered(task,text) {
-  if(task.unsentInputs)task.unsentInputs=task.unsentInputs.filter(row=>row.text!==text);
+  if(task.unsentInputs)task.unsentInputs=task.unsentInputs.filter(row=>row.attempt || row.text!==text);
+}
+function begin(task,{id,text,threadId,previousTurnId}) {
+  task.inputAttempt={id,threadId,previousTurnId};
+  const rows=(task.unsentInputs || []).filter(row=>row.id!==task.queuedInputRecoveryId || row.text!==text);
+  delete task.queuedInputRecoveryId;
+  task.unsentInputs=[...rows,{id,text,attempt:{threadId},possiblyNotDelivered:true}];
+  inFlight.set(task,id);
+  prune(task);
+}
+function expose(task,id) {
+  return inFlight.get(task)===id && inFlight.delete(task);
+}
+function observedTurn(task,id,turnId) {
+  const row=task.unsentInputs?.find(row=>row.id===id && row.possiblyNotDelivered);
+  if(!row || row.attempt.turnId || !turnId)return false;
+  row.attempt.turnId=turnId;
+  return true;
+}
+function settle(task,id,unsent=false) {
+  if(!id)return false;
+  const row=task.unsentInputs?.find(row=>row.id===id && row.possiblyNotDelivered);
+  if(!row)return false;
+  task.unsentInputs=unsent
+    ? task.unsentInputs.map(item=>item===row?{id,text:row.text,attempt:true}:item)
+    : task.unsentInputs.filter(item=>item!==row);
+  expose(task,id);
+  if(task.inputAttempt?.id===id)delete task.inputAttempt;
+  return true;
+}
+function confirm(task,id) {
+  const ownsDispatch=task.inputAttempt?.id===id && task.deliveryPhase==='dispatching';
+  if(!settle(task,id))return false;
+  if(ownsDispatch)task.deliveryPhase='confirmed';
+  return true;
+}
+function matchingMessage(task,id,session,turnId,baseline=task.baselineItems) {
+  const row=task.unsentInputs?.find(row=>row.id===id && row.possiblyNotDelivered);
+  return !!(row && row.attempt?.threadId===session?.id && turnId && baseline && session?.items?.some(item=>item.type==='userMessage' &&
+    item.turnId===turnId && !baseline.includes(item.id) && item.content?.length===1 &&
+    item.content[0]?.type==='text' && item.content[0].text===row.text));
+}
+function visible(task) {
+  const hidden=inFlight.get(task);
+  return (task.unsentInputs || []).filter(row=>row.id!==hidden);
+}
+function counts(task,rows=visible(task)) {
+  const possiblyNotDeliveredCount=rows.filter(row=>row.possiblyNotDelivered).length;
+  return {unsentInputCount:rows.length,...(possiblyNotDeliveredCount?{possiblyNotDeliveredCount}:{})};
 }
 function page(task,after) {
-  const rows=task.unsentInputs || [],start=after?rows.findIndex(row=>row.id===after)+1:0;
+  const rows=visible(task),start=after?rows.findIndex(row=>row.id===after)+1:0;
   const selected=[];let bytes=0;
-  for(const row of rows.slice(start)){
+  for(const {id,text,possiblyNotDelivered} of rows.slice(start)){
+    const row={id,text,...(possiblyNotDelivered?{possiblyNotDelivered:true}:{})};
     const size=Buffer.byteLength(JSON.stringify(row));
     if(selected.length && (selected.length>=10 || bytes+size>512000))break;
     selected.push(row);bytes+=size;
   }
-  return {unsentInputs:selected,unsentInputCount:rows.length,
+  return {unsentInputs:selected,...counts(task,rows),
     nextUnsentCursor:start+selected.length<rows.length?selected.at(-1).id:null};
 }
-module.exports={remember,delivered,page,prune,MAX_ENTRIES,MAX_BYTES};
+module.exports={remember,delivered,begin,expose,settle,confirm,observedTurn,matchingMessage,visible,counts,page,prune,MAX_ENTRIES,MAX_BYTES};

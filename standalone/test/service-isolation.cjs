@@ -8,8 +8,47 @@ const {locations} = require('../runtime/service-endpoint.cjs');
 const {configLocation} = require('../runtime/service-provider-config.cjs');
 const {serviceEnvironment} = require('../runtime/service-environment.cjs');
 const root = fs.mkdtempSync(path.join(os.tmpdir(),'rundix-guard-synthetic-'));
+async function checkRootCleanup() {
+  const {cleanupServiceRoot} = require('../runtime/service-root-cleanup.cjs');
+  const disk = require('node:fs/promises');
+  const directory = path.join(root,'cleanup');fs.mkdirSync(directory);
+  const uuid = i => `00000000-0000-4000-8000-${String(i).padStart(12,'0')}`;
+  const tmp = (base,i) => `${base}.${uuid(i)}.tmp`;
+  const backup = i => `legacy-roots.json.cleanup-${uuid(i)}.bak`;
+  const now = () => Date.UTC(2026,0,1), day = 86400000;
+  const old = [tmp('bridge.json',1),tmp('settings.json',1),tmp('installation.json',1),tmp('legacy-roots.json',1),
+    tmp('lease-service-startup.json',1),`lease-service-install.json.reap.123-${uuid(1)}.tmp`,backup(1)];
+  const busy = tmp('bridge.json',2), changed = backup(4), young = tmp('bridge.json',3), newest = backup(2);
+  const kept = ['bridge.json','installation.json','legacy-roots.json','settings.json','lease-legacy-roots.json',
+    `bridge.json.stale-${uuid(1)}`,`bridge.json.${uuid(1)}.tmp.extra`,tmp('unrelated.json',1),'bridge.json.abc.tmp',young,busy,changed,newest];
+  const touch = (file,age) => fs.utimesSync(file,new Date(now()-age*day),new Date(now()-age*day));
+  for (const name of [...old,...kept]) {
+    const file = path.join(directory,name);fs.writeFileSync(file,'SYNTHETIC');
+    touch(file,name===young?30:name===newest?35:40);
+  }
+  const nested = tmp('bridge.json',4);fs.mkdirSync(path.join(directory,nested));
+  fs.writeFileSync(path.join(directory,nested,old[0]),'SYNTHETIC');
+  touch(path.join(directory,nested),40);touch(path.join(directory,nested,old[0]),40);kept.push(nested);
+  const symlink = tmp('bridge.json',5);
+  try {
+    const link = path.join(directory,symlink);fs.symlinkSync(path.join(directory,'bridge.json'),link,'file');kept.push(symlink);
+    fs.lutimesSync(link,new Date(now()-40*day),new Date(now()-40*day));
+  }
+  catch (error) {if (!['EPERM','EACCES','ENOSYS'].includes(error.code)) throw error;}
+  let changedStats = 0;
+  const files = {opendir:disk.opendir,
+    lstat:async file=>{if(path.basename(file)===changed && ++changedStats===2)touch(file,31);return disk.lstat(file);},
+    unlink:async file=>{if(path.basename(file)===busy)throw Object.assign(Error(),{code:'EBUSY'});await disk.unlink(file);}};
+  assert.equal(await cleanupServiceRoot(directory,{now,files,maxEntries:0}),0);
+  assert.equal(await cleanupServiceRoot(directory,{now,files}),old.length);
+  assert.deepEqual(fs.readdirSync(directory).sort(),kept.sort());
+  assert(fs.existsSync(path.join(directory,nested,old[0])));
+  assert.equal(changedStats,2);
+  console.log('PASS service root cleanup: bounded metadata-only scan, age and exact names, backup retention, recheck and busy files');
+}
 (async()=>{
 try {
+  await checkRootCleanup();
   const watched = [path.join(root,'local'),path.join(root,'roaming')];
   let before = snapshot(watched); assertUnchanged(before,watched);
   fs.mkdirSync(watched[0]); assert.throws(() => assertUnchanged(before,watched),/guard FAILED/);

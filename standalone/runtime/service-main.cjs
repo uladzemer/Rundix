@@ -4,6 +4,7 @@ const {createHeadlessHost} = require('./service-headless-host.cjs');
 const {createTaskRpc} = require('./service-task-rpc.cjs');
 const {createLimitPoller} = require('./service-limit-poller.cjs');
 const {handoverTarget, restartTarget} = require('./service-version.cjs');
+const {cleanupServiceRoot} = require('./service-root-cleanup.cjs');
 const serviceVersion = require('../package.json').version;
 
 // Startup failures used to exit silently. Only a short code or error class is recorded: no message, path or user data.
@@ -20,6 +21,8 @@ async function runService(options = {}) {
   const endpoint = await startService({...options, entryPath:__filename, serviceVersion,
     ipc:{...options.ipc, hello:rpc.hello, getHandlerTimeoutMs:rpc.getHandlerTimeoutMs}, call:rpc.call});
   if (endpoint.status !== 'owner') return endpoint;
+  const cleanupStop = new AbortController();
+  const rootCleanup = cleanupServiceRoot(root,{signal:cleanupStop.signal}).catch(() => 0);
   let host, idle, poller,migration;
   try {
     migration=require('./service-migration.cjs').createMigration({root,...options.migrationOptions});
@@ -27,6 +30,7 @@ async function runService(options = {}) {
     host = await createHeadlessHost({...options.hostOptions, root, generation:endpoint.generation,onSessionChanged:rpc.sessionChanged,
       taskOptions:{...options.hostOptions?.taskOptions, scope:rpc.scope, signal:rpc.signal, changed:rpc.changed}});
     poller = createLimitPoller({host, ...options.pollerOptions});
+    void rootCleanup.then(removed=>{if(removed)host.logger({code:'service_root_cleanup',removed});}).catch(()=>{});
     let disposal,hostStopped=false,retry;
     const dispose = async () => {
       if(disposal)return disposal;
@@ -34,7 +38,7 @@ async function runService(options = {}) {
       endpoint.pause();rpc.stop();poller.pause();
       disposal=(async()=>{
         try {
-          await host.dispose();hostStopped=true;
+          await host.dispose();hostStopped=true;cleanupStop.abort();
           await endpoint.dispose();await migration.close();poller.dispose();idle?.dispose();clearTimeout(retry);return {exiting:true};
         } catch(error) {
           if(!hostStopped){endpoint.resume();rpc.resume();poller.resume();}
@@ -45,6 +49,7 @@ async function runService(options = {}) {
       return disposal;
     };
     const shutdown=async({retire=false}={})=>{
+      cleanupStop.abort();
       endpoint.pause({allowProbe:retire});rpc.stop();poller.dispose();idle?.dispose();clearTimeout(retry);
       try{await host.dispose(retire ? {force:true,confirmProviderExit:true} : {force:true});}
       finally{
@@ -80,7 +85,7 @@ async function runService(options = {}) {
         if (automatic) nextCheck=now()+failureBackoffMs;
         resume();logFailure();return;
       }
-      idle.dispose();poller.dispose();
+      cleanupStop.abort();idle.dispose();poller.dispose();
       await closeTransport();
     }
     function busyResult() {
@@ -120,7 +125,7 @@ async function runService(options = {}) {
     await endpoint.ready();
     online=true;
     return {status:'owner', host, endpoint, poller, dispose, shutdown};
-  } catch (error) { idle?.dispose(); poller?.dispose(); await endpoint.dispose();await migration?.close(); throw error; }
+  } catch (error) { cleanupStop.abort();idle?.dispose(); poller?.dispose(); await endpoint.dispose();await migration?.close(); throw error; }
 }
 if (require.main === module) {
   const index = process.argv.indexOf('--service-root');

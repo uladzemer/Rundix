@@ -84,6 +84,7 @@
 !runtime/service-process.cjs
 !runtime/service-lifecycle.cjs
 !runtime/service-version.cjs
+!runtime/service-root-cleanup.cjs
 !runtime/service-space.cjs
 !runtime/service-cli.cjs
 !runtime/service-json.cjs

@@ -1,5 +1,9 @@
 # Changelog / История изменений
 
+## 0.4.27 — 2026-11-25
+
+- **Clear finished** also archives finished tasks that still carry an input left over from an earlier failed send, and counts them among tasks with unsent text in the confirmation. Automatic archival leaves them in the list.
+
 ## 0.4.26 — 2026-11-25
 
 - In service mode, a manual input is recorded together with its dispatch checkpoint. If delivery stays unknown (timeout, lost connection, service restart), `get_task` lists it with `possiblyNotDelivered: true`, compact responses add `possiblyNotDeliveredCount`, and the MCP panels label it. Proof of delivery removes the entry; a confirmed CLI exit or a definite refusal turns it into an ordinary unsent input. Nothing is re-sent automatically.

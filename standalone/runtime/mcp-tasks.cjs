@@ -57,7 +57,7 @@ class McpTasks {
     return typeof task.space==='string' && !task.legacy && !task.readOnly && ['completed','cancelled','error'].includes(task.state) &&
       !this.starting.has(task.taskId) && !this.observations.has(task.taskId) && !this.taskActivity.has(task.taskId) &&
       !task.recoveryRequired && !task.unknownAnswer && !task.awaitingAsync && !task.pendingIds?.length && !task.operations.some(op=>op.outcome==='pending') &&
-      !task.continuations?.length && task.nextInput == null && task.limitContinuation?.state!=='pending' && (allowUnsent || !task.unsentInputs?.length) &&
+      !task.continuations?.length && task.limitContinuation?.state!=='pending' && (allowUnsent || (task.nextInput == null && !task.unsentInputs?.length)) &&
       !this.chatSubscribed(task.taskId) && !this.adapter.pending(task).length;
   }
   holdTask(task) {
@@ -107,7 +107,7 @@ class McpTasks {
     for(const task of this.tasks.values()){
       if(task.space!==space)continue;
       if(!this.archiveEligible(task,true)){skipped++;continue;}
-      candidates.push(task);if(task.unsentInputs?.length)withUnsent++;
+      candidates.push(task);if(task.unsentInputs?.length || task.nextInput != null)withUnsent++; // A terminal task never sends a leftover nextInput by itself.
     }
     const counts={archived:candidates.length,skipped,withUnsent};
     if(dryRun)return counts;

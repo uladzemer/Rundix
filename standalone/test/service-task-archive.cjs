@@ -37,7 +37,8 @@ async function retention(root){
    time+=hour-1;tasks.sweepArchive();assert(tasks.tasks.has('boundary'));
    time++;tasks.sweepArchive();assert(!tasks.tasks.has('boundary'));
    for(const id of [...Object.keys(exclusions),...states])assert(tasks.tasks.has(id),id);
-   assert.deepEqual(tasks.clearFinished(space,{dryRun:true}),{archived:2,skipped:Object.keys(exclusions).length+states.length-1,withUnsent:1});
+   assert.deepEqual(tasks.clearFinished(space,{dryRun:true}),{archived:3,skipped:Object.keys(exclusions).length+states.length-2,withUnsent:2},
+     'Confirmed clearing counts a finished task with a leftover nextInput as holding unsent text');
    controller.abort();await waiting;release();resolveClose(false);await closing;
    tasks.starting.clear();tasks.observations.clear();
    time+=hour;tasks.pause();tasks.sweepArchive();assert(tasks.tasks.has('waiting'));tasks.resume();tasks.schedule=()=>{};
@@ -58,7 +59,7 @@ async function retention(root){
    const finished=tasks.get(taskId);finished.state='completed';
    finished.report={result:'Synthetic retained report',changedFiles:[],checks:[],remainingIssues:[]};
    finished.unsentInputs=[{id:'synthetic-retained-input',text:'Synthetic retained text'}];tasks.save(finished);
-   const estimate=tasks.clearFinished(space,{dryRun:true});assert.equal(estimate.withUnsent,2);
+   const estimate=tasks.clearFinished(space,{dryRun:true});assert.equal(estimate.withUnsent,3);assert(tasks.tasks.has('next'),'The age sweep leaves a leftover nextInput alone');
    assert.deepEqual(tasks.clearFinished(space),estimate);
    assert.equal(tasks.call('submit_task',submission).taskId,taskId);
    assert.equal(tasks.call('get_task',{taskId}).unsentInputs[0].text,'Synthetic retained text');

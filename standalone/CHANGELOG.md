@@ -1,5 +1,10 @@
 # Changelog / История изменений
 
+## 0.4.24 — 2026-11-25
+
+- The background MCP service hands over to a validated newer installation after 60 seconds of quiescence, even with clients connected.
+- The MCP panel shows the running service version, warns about older versions, and can restart capable services. Restarting with active tasks requires confirmation across all projects.
+
 ## 0.4.23 — 2026-11-25
 
 - MCP task chats hide per-turn model captions after any steering attempt, including refused or uncertain delivery, so clipped history cannot attach a caption to a later user message. Session-only marks survive restore; task snapshots and header selections stay unchanged.

@@ -13,7 +13,7 @@ class Peer extends EventEmitter {
     super();
     this.socket = socket; this.options = options; this.pending = new Map();
     this.sequence = 0; this.parts = []; this.bytes = 0; this.closed = false;
-    this.inflight = 0; this.handlerTimers = new Set(); this.calls = new Set();
+    this.inflight = 0; this.responding = 0; this.writes = 0; this.handlerTimers = new Set(); this.calls = new Set();
     this.abortController = new AbortController(); this.signal = this.abortController.signal;
     socket.on('error', () => this.close('service_unavailable'));
     socket.on('close', () => this.close('service_unavailable'));
@@ -40,7 +40,7 @@ class Peer extends EventEmitter {
       this.receive(message); start = end + 1;
     }
   }
-  send(message) {
+  send(message, written) {
     if (this.closed) throw failure('service_unavailable');
     const line = JSON.stringify({jsonrpc:'2.0', ...message});
     const size = Buffer.byteLength(line);
@@ -48,8 +48,11 @@ class Peer extends EventEmitter {
     if (this.socket.writableLength + size + 1 > (this.options.maxQueue || MAX_QUEUE)) {
       this.close('backpressure'); throw failure('backpressure');
     }
-    this.socket.write(line + '\n', () => {
+    this.writes++;
+    this.socket.write(line + '\n', error => {
+      this.writes--;
       if (!this.socket.writableLength) { clearTimeout(this.writeTimer); this.writeTimer = null; }
+      written?.(error);
     });
     // A reader which stops consuming cannot retain a connection forever.
     if (this.socket.writableLength && !this.writeTimer) {
@@ -84,7 +87,17 @@ class Peer extends EventEmitter {
       if (++this.inflight > 64) return this.close('limit');
       let timer, budget;
       const controller = new AbortController(); this.calls.add(controller);
-      const context = {signal:controller.signal};
+      let afterResponse;
+      const finishResponse = error => {
+        const callback = afterResponse; afterResponse = null;
+        controller.signal.removeEventListener('abort', aborted);
+        callback?.(error);
+      };
+      const aborted = () => finishResponse(failure('service_unavailable'));
+      const context = {signal:controller.signal, afterResponse(callback) {
+        afterResponse = callback;
+        controller.signal.addEventListener('abort', aborted, {once:true});
+      }};
       try {
         budget = this.options.getHandlerTimeoutMs?.(message.method,message.params,this) ?? this.options.handlerTimeoutMs ?? 12000;
         if (!Number.isFinite(budget) || budget <= 0 || budget > 1515000) throw failure('invalid_argument');
@@ -100,14 +113,19 @@ class Peer extends EventEmitter {
       });
       // A deadline stops delivery, but must not free a slot still occupied by application work.
       work.then(() => this.inflight--, () => this.inflight--);
+      this.responding++;
       Promise.race([work, deadline])
-        .then(result => { if (!this.closed) this.send({id:message.id, result:result ?? null}); })
+        .then(result => {
+          if (this.closed) finishResponse(failure('service_unavailable'));
+          else this.send({id:message.id, result:result ?? null}, afterResponse ? finishResponse : undefined);
+        })
         .catch(error => {
+          finishResponse(error);
           // No exception messages or caller-supplied error codes cross the boundary.
           const code = ['auth_failed','protocol_incompatible','stale_instance','service_initializing','method_not_supported','rpc_timeout',
             'legacy_owner_active','migration_conflict','workspace_untrusted','space_unsupported_uri','space_invalid_directory','space_git_invalid','space_git_layout_unsupported'].includes(error?.code) ? error.code : 'rejected';
           if (!this.closed) { try { this.send({id:message.id, error:{code, message:code}}); } catch { this.close('service_unavailable'); } }
-        }).finally(() => { clearTimeout(timer); this.handlerTimers.delete(timer); this.calls.delete(controller); });
+        }).finally(() => { this.responding--; clearTimeout(timer); this.handlerTimers.delete(timer); this.calls.delete(controller); });
       return;
     }
     const pending = this.pending.get(message.id);
@@ -162,7 +180,7 @@ function accept(socket, {secret, generation, status, call, hello, onAuthenticate
 }
 function dial(address, options = {}) {
   return new Promise((resolve, reject) => {
-    const socket = net.createConnection(address);
+    const socket = net.createConnection({path:address,signal:options.signal});
     const timer = setTimeout(() => { socket.destroy(); reject(failure('connect_timeout')); }, options.connectTimeoutMs || 2000);
     // reason keeps the OS code so callers can tell a missing endpoint (ENOENT) from access denied.
     const failed = error => { clearTimeout(timer); reject(Object.assign(failure('service_unavailable'), {reason:error?.code})); };

@@ -3,7 +3,7 @@
   const api=acquireVsCodeApi(), root=document.getElementById('app');
   let saved=api.getState() || {}, drafts=saved.drafts || {}, selected=saved.selected || null, state=null, pending=false, error='', submission=null, requestId=null;
   const versions={}, attempts=saved.attempts || {};
-  let configuration=null,copied=false,settingsFocus=null;
+  let configuration=null,copied=false,settingsFocus=null,restartRequestId=null,restartError=false;
   const configurationText={ru:{title:'Подключение Claude Code',hint:'Эти настройки связывают Claude Code с Rundix. Если сервер rundix уже добавлен, перезапустите сессию Claude Code и проверьте /mcp. VS Code должен оставаться открытым.',copy:'Скопировать настройки',copied:'Настройки скопированы'},en:{title:'Connect Claude Code',hint:'These settings connect Claude Code to Rundix. If rundix is already registered, restart your Claude Code session and check /mcp. VS Code must remain open.',copy:'Copy configuration',copied:'Configuration copied'}};
   const words={
     en:{unsent:'Unsent inputs: recover full text with get_task',title:'MCP tasks',subtitle:'Claude Code → Codex',pool:'Connection',local:'Select a companion connection',ready:'Connected',unchecked:'Not checked',bridgeOn:'MCP bridge running',bridgeOff:'MCP bridge stopped',connect:'Connect companion',start:'Start MCP',stop:'Stop MCP',config:'Claude configuration',refresh:'Refresh',empty:'No MCP tasks yet. Start the bridge and submit a task from Claude Code.',open:'Open chat',cancel:'Cancel task',follow:'Continue in the same chat',placeholder:'Clarification or next step…',send:'Send continuation',report:'Final report',result:'Result',files:'Changed files',checks:'Checks performed',issues:'Remaining issues',none:'None reported',approval:'Approval required — open the chat to review the request, or answer in Claude Code.',recovery:'Execution requires verification. Inspect the chat before continuing.',offline:'Tasks are paused while the bridge is stopped.',failed:'Action failed. Check the selected connection, workspace trust and task state.',queued:'Queued',running:'Running',waiting_approval:'Waiting for approval',completed:'Completed',error:'Error',cancelled:'Cancelled',working:'Working…',copy:'Task ID',context:'VS Code must remain open. Tasks use the selected companion and its server limits.'},
@@ -13,14 +13,27 @@
   Object.assign(words.ru,{space:'Пространство проекта',waiting_limit:'Ожидает лимитов',reset:'Сброс лимитов',resetUnknown:'Время сброса неизвестно',actionRequired:'Требуется действие с подключением',close:'Закрыть задачу',unsentCount:'Неотправленные сообщения',low_remaining:'Осталось мало лимитов',exhausted:'Лимиты исчерпаны',limits_unknown:'Лимиты неизвестны',reset_unknown:'Время сброса неизвестно',active_turns:'Ожидает завершения активных задач',action_required:'Требуется действие с подключением',connection_changed:'Подключение изменилось'});
   Object.assign(words.en,{modelSettings:'Model for new tasks',model:'Model',effort:'Reasoning effort',automatic:'Automatic (GPT-6.2 Sol · Medium when available)',regular:'Same as regular chat',auto:'Auto',unavailable:'unavailable',modelsIdle:'Start MCP to load the model list',modelsLoading:'Loading models…',modelsUnavailable:'Models unavailable, press Refresh',newTasks:'Applies to new tasks only. A model passed in submit_task wins.'});
   Object.assign(words.ru,{modelSettings:'Модель для новых задач',model:'Модель',effort:'Глубина размышления',automatic:'Автоматически (GPT-6.2 Sol · Medium, если доступна)',regular:'Как в обычном чате',auto:'Авто',unavailable:'недоступна',modelsIdle:'Запустите MCP, чтобы загрузить список моделей',modelsLoading:'Загрузка моделей…',modelsUnavailable:'Модели недоступны, нажмите «Обновить»',newTasks:'Применяется только к новым задачам. Модель, переданная в submit_task, имеет приоритет.'});
+  Object.assign(words.en,{serviceVersion:'Service version',outdated:'The service is older than the extension',legacyRestart:'To update the service, finish its tasks, disconnect MCP clients, and close connected windows or use Stop MCP in them. The service exits after five idle minutes.',restart:'Restart service',restarting:'Restarting service…',restartConfirm:'Confirm restart in VS Code. Active tasks across all projects',service_restart_failed:'Could not restart the service.'});
+  Object.assign(words.ru,{serviceVersion:'Версия сервиса',outdated:'Сервис старее расширения',legacyRestart:'Для обновления сервиса завершите задачи, отключите MCP-клиентов и закройте подключённые окна или нажмите в них «Остановить MCP». Сервис завершится после пяти минут простоя.',restart:'Перезапустить сервис',restarting:'Перезапуск сервиса…',restartConfirm:'Подтвердите перезапуск в VS Code. Активных задач во всех проектах',service_restart_failed:'Не удалось перезапустить сервис.'});
+  words.en.restartConfirmBusy='The service is performing a background operation. Confirm restart in VS Code.';
+  words.ru.restartConfirmBusy='Сервис выполняет фоновую операцию. Подтвердите перезапуск в VS Code.';
   const t=key=>(words[state?.language==='ru'?'ru':'en'][key] || key);
   function element(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;}
   function persist(){api.setState({selected,drafts,attempts});}
+  function nextRequestId(){
+    return Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');
+  }
   function action(name,extra={}){
+    if(name==='restartService'){
+      if(restartRequestId || state.serviceRestart)return;
+      restartRequestId=nextRequestId();restartError=false;render();
+      api.postMessage({action:name,requestId:restartRequestId});return;
+    }
     if(pending)return;
+    if(!restartRequestId && !state.serviceRestart)restartError=false;
     if(name==='setModelDefaults')settingsFocus=document.activeElement?.id || null;
     pending=true;error='';submission=name==='continue'?{taskId:extra.taskId,version:versions[extra.taskId] || 0}:null;
-    const bytes=crypto.getRandomValues(new Uint8Array(16));requestId=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+    requestId=nextRequestId();
     const payload={action:name,...(state.serviceMode?{spaceId:state.spaceId}:{}),...extra};
     if(state.serviceMode && ['continue','cancel'].includes(name)){
       const key=JSON.stringify(payload);requestId=attempts[key] || requestId;attempts[key]=requestId;
@@ -67,8 +80,14 @@
         (state.language==='ru'?'Импорт старой истории: ':'Legacy history import: ')+({busy:state.language==='ru'?'старое окно занято; повтор позже':'legacy owner busy; retry later',retry_later:state.language==='ru'?'временная ошибка; повтор позже':'temporary failure; retry later',needs_repair:state.language==='ru'?'данные требуют восстановления':'data needs repair',pending:state.language==='ru'?'ожидается':'pending'}[state.legacyStatus.state] || state.legacyStatus.state),'legacy-status notice'));
       const controls=element('section',undefined,'connection');
       const actions=element('div',undefined,'actions');
-      actions.append(button(t('start'),'start',{},state.bridgeRunning),button(t('stop'),'stop',{},!state.bridgeRunning),button(t('config'),'configuration',{},!state.configurationAvailable),button(t('refresh'),'refresh',{},!state.bridgeRunning));
+      actions.append(button(t('start'),'start',{},state.bridgeRunning),button(t('stop'),'stop',{},!state.bridgeRunning && !state.serviceRestart),button(t('config'),'configuration',{},!state.configurationAvailable),button(t('refresh'),'refresh',{},!state.bridgeRunning));
+      if(state.serviceCanRestart)actions.append(button(t('restart'),'restartService',{},!!(state.serviceRestart || restartRequestId)));
       controls.append(element('p',state.bridgeRunning?t('ready'):t('unchecked'),'bridge-status'),actions);root.append(controls);
+      if(state.serviceVersion)controls.append(element('p',t('serviceVersion')+': '+state.serviceVersion,'service-version'));
+      if(state.serviceOutdated){
+        controls.append(element('p',t('outdated')+' ('+state.extensionVersion+').','service-outdated notice'));
+        if(!state.serviceCanRestart)controls.append(element('p',t('legacyRestart'),'service-restart-hint muted'));
+      }
       if(state.spaces?.length){
         const label=element('label',t('space')),select=element('select');select.id='space';label.htmlFor='space';select.disabled=pending;
         for(const space of state.spaces){const option=element('option',space.label);option.value=space.spaceId;option.selected=space.spaceId===state.spaceId;select.append(option);}
@@ -87,7 +106,15 @@
       const labels=configurationText[state.language==='ru'?'ru':'en'],section=element('section',undefined,'claude-configuration');
       section.append(element('h2',labels.title),element('p',state.serviceMode?(state.language==='ru'?'Замените запись Rundix MCP и перезапустите Claude MCP.':'Replace the Rundix MCP entry and restart Claude MCP.'):labels.hint,'muted'),element('pre',JSON.stringify(configuration,null,2),'configuration-json'),button(copied?labels.copied:labels.copy,'copyConfiguration',{},!(state.serviceMode?state.configurationAvailable:state.bridgeRunning)));root.append(section);
     }
-    if(error || pending){const alert=element('p',pending?t('working'):error==='failed'?t('failed'):t('failed')+' '+error,'alert');alert.setAttribute('role','status');root.append(alert);}
+    function showStatus(message){
+      const alert=element('p',message,'alert');alert.setAttribute('role','status');root.append(alert);
+    }
+    const restart=state.serviceRestart;
+    if(restart?.phase==='restarting')showStatus(t('restarting'));
+    else if(restart?.phase==='confirming')showStatus(restart.activeTasks?t('restartConfirm')+': '+restart.activeTasks:t('restartConfirmBusy'));
+    else if(restart || restartRequestId)showStatus(t('working'));
+    else if(restartError)showStatus(t('service_restart_failed'));
+    if(error || pending)showStatus(pending?t('working'):error==='failed'?t('failed'):t('failed')+' '+error);
     const tasks=state.tasks || [];
     if(!tasks.length){root.append(element('p',t('empty'),'empty'));restore();return;}
     if(!tasks.some(task=>task.taskId===selected)){selected=tasks[0].taskId;persist();}
@@ -143,6 +170,9 @@
     const message=event.data;
     if(message?.type==='mcpState'){state=message.data;render();}
     if(message?.type==='mcpResult'){
+      if(restartRequestId && message.requestId===restartRequestId){
+        restartRequestId=null;restartError=!message.ok;render();return;
+      }
       if(pending && message.requestId!==requestId)return;
       pending=false;error=message.ok?'':typeof message.error==='string' && message.error?message.error.slice(0,300):'failed';
       if(message.ok && message.configuration){configuration=message.configuration;copied=message.action==='copyConfiguration';}

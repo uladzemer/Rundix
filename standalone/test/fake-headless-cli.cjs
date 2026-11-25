@@ -83,6 +83,8 @@ readline.createInterface({input:process.stdin}).on('line', line => {
   }
   if (message.method === 'turn/start') {
     if(!thread || !loaded.has(thread.id)){output({id:message.id,error:{code:-32000,message:'Synthetic thread must be resumed'}});return;}
+    const dispatchGate=process.env.RUNDIX_SYNTHETIC_DISPATCH_GATE;
+    if(dispatchGate && fs.existsSync(dispatchGate)){fs.writeFileSync(dispatchGate,'received');return;}
     const turn = {id:'synthetic-turn-' + instance + '-' + ++turnSequence, status:'inProgress'}; thread.turns.push(turn);persist(thread);
     output({id:message.id, result:{turn}});
     output({method:'turn/started', params:{threadId:thread.id, turn:{...turn}}});

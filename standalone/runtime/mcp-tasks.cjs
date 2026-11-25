@@ -34,6 +34,7 @@ class McpTasks {
     this.spaceOf = spaceOf; this.taskFilter = taskFilter; this.scope = scope; this.signal = signal;
     this.changed = changed;this.now=now;this.log=archiveLog || (()=>{});
     this.serviceRecovery=adapter.limitRecovery===true;this.observations=new Map();this.observedAt=new Map();
+    this.paused=false;this.cleanup=new Set();this.handoverActivity=0;
     this.store = store; this.directoryStore=directoryStore; this.adapter = adapter; this.maxParallel = maxParallel; this.tasks = new Map(); this.waiters = new Set(); this.starting = new Set(); this.launches = new Set(); this.operations = new Map(); this.executing = false; this.closed = false;
     if(scope){this.archive=new (require('./service-task-archive.cjs').TaskArchive)(store,{log:archiveLog});this.maxStoredPerSpace=maxStoredPerSpace;this.keepClosed=keepClosed;}
     for (const name of fs.readdirSync(store.directory).filter(n => /^mcp-task-[\w-]+\.json$/.test(n))) {
@@ -60,6 +61,7 @@ class McpTasks {
     if(count()>=this.maxStoredPerSpace)throw fail('limit','Task storage limit reached for this space. Close finished tasks first.');
   }
   save(task) {
+    if(this.closed && this.serviceRecovery)return;
     if(this.serviceRecovery && ['completed','error','cancelled'].includes(task.state) && !task.recoveryRequired)this.preserveQueued(task);
     if(this.scope && task.state==='cancelled'){task.error=null;delete task.blockedReason;delete task.blockedUntil;}
     const restoring=this.archive && !this.tasks.has(task.taskId) && this.archive.get(task.taskId);
@@ -78,10 +80,31 @@ class McpTasks {
     task.continuations=[];
   }
   release(task) {
+    if(this.closed && this.serviceRecovery)return;
     directories.release(this.directoryStore,task.projectDirectory,task.taskId);
     // Best-effort cleanup must never change the durable task outcome, even on synchronous failure.
-    try { void Promise.resolve(this.adapter.release?.(task)).catch(()=>{}); } catch {}
+    this.trackCleanup(()=>this.adapter.release?.(task));
   }
+  trackCleanup(action) {
+    try {
+      const result=action();
+      if (!result?.then) return;
+      this.handoverActivity++;
+      const work=Promise.resolve(result).catch(()=>{}).finally(()=>this.cleanup.delete(work));
+      this.cleanup.add(work);
+    } catch {}
+  }
+  unfinishedCount() {
+    return [...this.tasks.values()].filter(task=>active.has(task.state) || task.recoveryRequired).length;
+  }
+  get handoverBusy() {
+    return this.executing || this.starting.size > 0 || this.launches.size > 0 || this.observations.size > 0 ||
+      this.operations.size > 0 || this.cleanup.size > 0 || this.unfinishedCount() > 0 ||
+      [...this.tasks.values()].some(task=>task.unknownAnswer || task.continuations?.length ||
+        task.queuedRecoveryInput && task.nextInput);
+  }
+  pause() { this.paused=true; }
+  resume() { this.paused=false;if(this.unfinishedCount())this.schedule(); }
   limit() { const value = Number(this.maxParallel()); return Number.isInteger(value) && value >= 1 ? Math.min(value, MAX_PARALLEL) : 1; }
   visible(task) { return (!this.scope || this.scope() === this.spaceOf(task)) && this.taskFilter(this.spaceOf(task), task); }
   get(id) { const task = this.tasks.get(id) || this.archive?.get(id); if (!task || !this.visible(task)) throw fail('unknown_task', 'Unknown taskId'); return task; }
@@ -321,7 +344,7 @@ class McpTasks {
         } else { task.state='running';task.progress='Cancellation requested'; }
       }
       task.operations.push(op); this.save(task);
-      if (name === 'cancel_task' && task.state === 'cancelled' && task.waitId) void Promise.resolve(this.adapter.cancelWait?.(task)).catch(()=>{});
+      if (name === 'cancel_task' && task.state === 'cancelled' && task.waitId) this.trackCleanup(()=>this.adapter.cancelWait?.(task));
       if (name === 'cancel_task' && task.state !== 'cancelled') {
         void Promise.resolve(this.adapter.cancel(task)).catch(()=>{task.error='Cancellation could not be confirmed; query task again.';this.save(task);});
       }
@@ -444,7 +467,7 @@ class McpTasks {
     if(hadReadFailure)this.store.write('mcp-task',task.taskId,task);
   }
   async tick() {
-    if (this.closed || this.executing) return;
+    if (this.closed || this.paused || this.executing) return;
     this.executing=true;
     try {
       const observable=task=>(['running','waiting_approval'].includes(task.state) || task.state==='error' && task.recoveryRequired || this.serviceRecovery && task.state==='queued' && task.recoveryRequired) && !this.starting.has(task.taskId);
@@ -455,6 +478,7 @@ class McpTasks {
         if(this.serviceRecovery){
           if(this.observations.has(task.taskId) || !recovery.canRead(task,this.now()) || this.observations.size>=3)continue;
           this.observedAt.set(task.taskId,Date.now());
+          this.handoverActivity++;
           const work=this.observe(task).catch(()=>{}).finally(()=>{this.observations.delete(task.taskId);this.schedule();});
           this.observations.set(task.taskId,work);
         }else await this.observe(task);
@@ -469,7 +493,9 @@ class McpTasks {
       for (const task of [...this.tasks.values()].filter(t=>t.state==='queued').sort((a,b)=>a.createdAt-b.createdAt)) {
         if (capacity <= 0 && !counted.has(task.taskId)) continue;
         if (blocked.has(task.projectDirectory)) continue;
+        this.handoverActivity++;
         const outcome = await this.prepare(task);
+        if (this.paused) return;
         // start() releases the fresh reservation itself if the executor closed meanwhile.
         // Starting can wait for a quota reset; it runs alongside the scheduler so other tasks keep being observed.
         if (outcome === 'ready') { if (!counted.has(task.taskId)) capacity--; this.launch(task); continue; }
@@ -504,10 +530,12 @@ class McpTasks {
     task.state='running'; task.progress='Starting existing Codex executor'; task.recoveryRequired=true; task.awaitingPreparation=false; this.save(task);
     try {
       await this.adapter.start(task,input,()=>this.save(task));
+      if(this.closed && this.serviceRecovery)return;
       inputRecovery.delivered(task,input);
       delete task.nextInput;
       task.chatId=this.adapter.chatId(task); this.save(task);
     } catch (error) {
+      if(this.closed && this.serviceRecovery)return;
       if(this.serviceRecovery)task.chatId=this.adapter.chatId(task) || task.chatId;
       if(this.scope && error?.confirmedCliExit) {
         if(task.state==='waiting_limit' && task.limitContinuation?.state==='pending' && !task.cancelRequested) {

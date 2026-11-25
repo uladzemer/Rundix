@@ -10,7 +10,7 @@ const SAFE = new Set(['unknown_task', 'space_not_bound', 'stale_instance', 'inva
   'connection_unavailable', 'approval_not_pending', 'approval_rejected', 'delivery_unknown', 'response_too_large', 'storage_unavailable', 'limit', 'unsupported','migration_conflict']);
 const failure = code => Object.assign(Error(code), {code});
 function createTaskRpc({providerOptions = {}} = {}) {
-  const scope = new AsyncLocalStorage(); let host, windows, stopping = false;
+  const scope = new AsyncLocalStorage(); let host, windows, retire, stopping = false;
   function hello(params, peer) {
     if (stopping) throw failure('service_initializing');
     if (params.clientKind === 'window') {
@@ -25,6 +25,12 @@ function createTaskRpc({providerOptions = {}} = {}) {
   async function call(method, params, peer, context) {
     if (stopping || !host) throw failure('service_initializing');
     const isWindow = !!peer.windowBinding;
+    if (method === 'service.retire') {
+      if (!retire || !peer.windowBinding?.folders.length) throw failure('method_not_supported');
+      if (params.bindingId !== peer.windowBinding.bindingId) return {error:{code:'space_not_bound',message:'Window is not bound.'}};
+      if (typeof params.force !== 'boolean') return {error:{code:'invalid_argument',message:'Invalid restart request.'}};
+      return retire(params.force, peer, context);
+    }
     const binding = isWindow ? {spaceId:params.spaceId} : peer.spaceBinding;
     if (isWindow ? !windows.bound(params, peer) : !binding || params.bindingId !== binding.bindingId || params.spaceId !== binding.spaceId)
       return {error:{code:'space_not_bound', message:'Space is not bound.'}};
@@ -54,7 +60,10 @@ function createTaskRpc({providerOptions = {}} = {}) {
   }
   return {scope:() => scope.getStore()?.spaceId, signal:() => scope.getStore()?.signal, hello, call,
     changed:task => {windows?.changed(task.space);windows?.chatChanged(task);},sessionChanged:session=>windows?.sessionChanged(session),
-    attach:(value, generation,legacy) => {host = value; windows = createWindowRpc({generation, tasks:() => host.mcp.tasks,core:()=>host.core,migration:legacy});},
+    attach:(value, generation,legacy,retireService) => {
+      host = value; retire = retireService;
+      windows = createWindowRpc({generation, tasks:() => host.mcp.tasks,core:()=>host.core,migration:legacy,retire:!!retire});
+    },
     stop:() => {stopping = true;}, resume:()=>{stopping=false;},
     getHandlerTimeoutMs(method, params) {return method === 'task.call' ? budget(params?.name, params?.arguments) : 12000;}};
 }

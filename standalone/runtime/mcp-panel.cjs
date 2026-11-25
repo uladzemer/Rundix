@@ -2,6 +2,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {recoveryRequired}=require('./mcp-tasks.cjs');
 const {preferredModel}=require('./mcp-model.cjs');
+const {compareVersions}=require('./service-version.cjs');
 function readRecords(directory) {
   if(!fs.existsSync(directory))return [];
   return fs.readdirSync(directory).filter(name=>/^mcp-task-[\w-]+\.json$/.test(name)).map(name=>{
@@ -22,11 +23,16 @@ function snapshot({records,language,connection,connected,bridgeRunning,pending,m
   }));
   return {language,connection,connected,bridgeRunning,tasks,modelDefaults,models,preferredModel};
 }
-function serviceSnapshot({client,language,installed,selectedSpaceId,error,taskChatsAvailable=false,modelDefaults,models}) {
+function serviceSnapshot({client,language,installed,selectedSpaceId,error,taskChatsAvailable=false,modelDefaults,models,extensionVersion,restart}) {
   const spaces=(client?.spaces || []).map(space=>({spaceId:space.spaceId,label:space.kind==='legacy'?(language==='ru'?'История старой версии':'Legacy history')+' · '+space.spaceId.slice(-8):space.root}));
   const spaceId=spaces.some(space=>space.spaceId===selectedSpaceId)?selectedSpaceId:spaces[0]?.spaceId || null;
   const projection=client?.snapshots.get(spaceId);
-  return {language,serviceMode:true,bridgeRunning:!!client?.peer && !client.peer.closed,
+  const peer=client?.peer && !client.peer.closed ? client.peer : null;
+  const serviceVersion=peer?.serviceVersion || null;
+  return {language,serviceMode:true,bridgeRunning:!!peer,serviceVersion,extensionVersion,
+    serviceOutdated:compareVersions(serviceVersion,extensionVersion)===-1,
+    serviceCanRestart:!!peer?.binding?.capabilities?.includes('service.retire'),
+    serviceRestart:restart ? {phase:restart.phase,activeTasks:restart.activeTasks} : null,
     configurationAvailable:!!installed,spaces,spaceId,error:error || null,legacyStatus:client?.legacyStatus,
     tasks:projection?.tasks || [],totalTasks:projection?.totalTasks || 0,hasMoreHistory:!!projection?.hasMoreHistory,
     taskChatsAvailable,modelDefaults,models,preferredModel};

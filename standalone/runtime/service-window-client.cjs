@@ -63,6 +63,7 @@ class ServiceWindowClient extends EventEmitter {
         this.snapshots.clear(); this.reads.clear(); this.wanted.clear();
         this.emit('changed'); this.emit('status', 'disconnected'); this.reconnect();
       });
+      this.emit('hello', peer);
       await Promise.all(this.spaces.map(space => this.refresh(space.spaceId, peer)));
       if (this.peer !== peer || peer.closed || this.closed) throw failure('service_unavailable');
       this.delay = 250;
@@ -109,6 +110,32 @@ class ServiceWindowClient extends EventEmitter {
     // Exactly one dispatch. Failure leaves requestId/arguments with the caller.
     return unwrap(await peer.call('task.call', {bindingId:peer.binding.bindingId, spaceId, name, arguments:args}, 12000));
   }
+  async retire(peer, force, timeoutMs=12000) {
+    if (this.closed || this.peer !== peer || peer?.closed) throw failure('service_unavailable');
+    if (!peer.binding.capabilities.includes('service.retire')) throw failure('method_not_supported');
+    const result = unwrap(await peer.call('service.retire', {bindingId:peer.binding.bindingId, force}, timeoutMs));
+    if (result?.retiring === true) return {retiring:true};
+    if (result?.retiring === false && Number.isSafeInteger(result.activeTasks) && result.activeTasks >= 0) {
+      const reason=result.activeTasks ? 'tasks' : 'transient';
+      if (result.reason === undefined || result.reason === reason) return {retiring:false,activeTasks:result.activeTasks,reason};
+    }
+    throw failure('protocol_incompatible');
+  }
+  waitForGeneration(previous, timeoutMs = 30000) {
+    const current = peer => peer && !peer.closed && peer.generation !== previous;
+    if (this.closed) return Promise.reject(failure('service_unavailable'));
+    if (current(this.peer)) return Promise.resolve();
+    return new Promise((resolve,reject)=>{
+      const finish = error => {
+        clearTimeout(timer);this.off('hello',hello);this.off('closed',closed);
+        if (error) reject(error); else resolve();
+      };
+      const hello = peer => {if (current(peer)) finish();};
+      const closed = () => finish(failure('service_unavailable'));
+      const timer = setTimeout(()=>finish(failure('service_start_timeout')),timeoutMs);
+      this.on('hello',hello);this.once('closed',closed);
+    });
+  }
   async chat(spaceId,method,args={}) {
     const peer=this.peer;
     if(!peer || peer.closed || this.closed)throw failure('service_unavailable');
@@ -118,7 +145,7 @@ class ServiceWindowClient extends EventEmitter {
   close() {
     this.closed = true; clearTimeout(this.retry); clearInterval(this.heartbeat);
     this.connection.close(); this.peer = null;
-    this.snapshots.clear(); this.reads.clear(); this.wanted.clear(); this.emit('changed');
+    this.snapshots.clear(); this.reads.clear(); this.wanted.clear(); this.emit('changed');this.emit('closed');
   }
 }
 module.exports = {ServiceWindowClient};

@@ -47,32 +47,55 @@ async function registerRootAsync(root,source,{timeoutMs=1500}={}){
     await new Promise(resolve=>setTimeout(resolve,Math.min(jitter(attempt++),deadline-Date.now())));
   }}
 }
-async function read(file){
-  const info=await fsp.lstat(file);if(!info.isFile() || info.isSymbolicLink() || info.size>16*1024*1024)throw failure('migration_conflict');
+async function readBytes(file,maxBytes){
+  const info=await fsp.lstat(file);if(!info.isFile() || info.isSymbolicLink() || info.size>maxBytes)throw failure('migration_conflict');
   const handle=await fsp.open(file,'r');
   try{
     const bytes=Buffer.alloc(info.size+1);let size=0;
     while(size<bytes.length){const {bytesRead}=await handle.read(bytes,size,bytes.length-size,null);if(!bytesRead)break;size+=bytesRead;}
-    if(size!==info.size)throw failure('migration_conflict');return parseStrict(bytes.subarray(0,size),{maxDepth:64});
+    if(size!==info.size)throw failure('migration_conflict');return bytes.subarray(0,size);
   }
   finally{await handle.close();}
 }
+async function read(file){
+  const bytes=await readBytes(file,16*1024*1024);
+  try{return parseStrict(bytes,{maxDepth:64});}catch{throw failure('migration_conflict');}
+}
 async function committed(file){try{return await read(file);}catch(error){if(error.code==='ENOENT')throw failure('migration_conflict');throw error;}}
 async function exists(file){try{await fsp.lstat(file);return true;}catch(error){if(error.code==='ENOENT')return false;throw error;}}
-async function atomic(file,value){
+async function atomic(file,bytes){
   await fsp.mkdir(path.dirname(file),{recursive:true,mode:0o700});const temp=file+'.'+randomUUID()+'.tmp';
-  try{await fsp.writeFile(temp,json(value),{flag:'wx',mode:0o600});await fsp.rename(temp,file);}
+  try{await fsp.writeFile(temp,bytes,{flag:'wx',mode:0o600});await fsp.rename(temp,file);}
   finally{await fsp.unlink(temp).catch(()=>{});}
 }
 async function copy(file,value){
-  if(await exists(file)){if(digest(await read(file))!==digest(value))throw failure('migration_conflict');return;}
-  await atomic(file,value);
+  if(await exists(file)){if(digest(await read(file))!==digest(value))throw failure('migration_conflict');return false;}
+  await atomic(file,json(value));
+  return true;
 }
 function contains(folders,directory){return folders.some(folder=>{const relative=path.relative(folder,directory);return !relative || relative!=='..' && !relative.startsWith('..'+path.sep) && !path.isAbsolute(relative);});}
 function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
   const store=new SessionStore(root),leases=new Map(),imports=new Map(),ready=new Set(),bridges=new Map(),statuses=new Map(),listeners=new Set(),pendingRegistrations=new Map();let syncing,closed=false,timer;
+  const registrations=new Set();
+  let paused=false, activity=0;
   const status=source=>statuses.get(source) || statuses.get(undefined) || {state:source?'pending':'ready'};
-  function publish(source,value){if(json(statuses.get(source))===json(value))return;statuses.set(source,value);for(const listener of listeners)listener(source,value);}
+  function publish(source,value){
+    const previous=statuses.get(source);
+    if(json(previous)===json(value))return;
+    if(previous?.state!==value.state || previous?.code!==value.code)activity++;
+    statuses.set(source,value);for(const listener of listeners)listener(source,value);
+  }
+  async function writeChanged(file,value){
+    const bytes=Buffer.from(json(value));
+    // A pending copy may exceed the reader's limits once wrapped. Compare its
+    // bytes so rewriting the same unreadable copy does not count as progress.
+    if(await readBytes(file,bytes.length).then(previous=>previous.equals(bytes),()=>false))return;
+    await atomic(file,bytes);activity++;
+  }
+  function schedule(){
+    if(closed || paused || timer)return;
+    timer=setTimeout(()=>{timer=null;void sync().catch(()=>{});},retryMs);timer.unref?.();
+  }
   async function finish(source,sourceId,records){
     if(!bridges.has(source))bridges.set(source,await require('./mcp-bridge.cjs').serve({directory:path.join(source,'mcp'),call:()=>{
       throw Object.assign(Error('Replace the Rundix MCP entry with the service launcher and restart Claude MCP.'),{code:'adapter_upgrade_required'});
@@ -122,7 +145,7 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
       const marker=await committed(markerFile);if(marker.manifestHash!==digest(previous.manifest))throw failure('migration_conflict');
       saved.push(...await verified(previous));
       if(!await exists(active)){await finish(source,sourceId,selected(saved));return;}
-      await copy(path.join(receipts,sourceId+'-g'+generation+'.json'),previous);
+      if(await copy(path.join(receipts,sourceId+'-g'+generation+'.json'),previous))activity++;
       generation++;
     }else if(previous && previous.phase!=='verified')throw failure('migration_conflict');
     if(previous?.phase==='verified' && generation>0)await committed(markerFile);
@@ -132,7 +155,7 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
       // recreated active directory. Session changes cannot alter copied history.
       const rows=await verified(previous),marker=await committed(markerFile);
       if(marker.manifestHash!==digest(previous.manifest))throw failure('migration_conflict');
-      await atomic(receiptFile,{...previous,phase:'cutover'});saved.push(...rows);
+      await writeChanged(receiptFile,{...previous,phase:'cutover'});saved.push(...rows);
       await finish(source,sourceId,selected(saved));return;
     }
     if(await exists(backup))throw failure('migration_conflict');
@@ -161,7 +184,7 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
         const row={schemaVersion:1,sourceId,taskId:'legacy-'+sourceId+'-'+task.taskId,projectDirectory:directory,inferredSpace:inferred,task,session,...(interrupted?{interrupted:true}:{})};
         // Only this pending generation may be re-copied. Committed targets stay
         // immutable, including when a taskId reappears with newer source data.
-        await atomic(targetFor(generation,task.taskId),row);
+        await writeChanged(targetFor(generation,task.taskId),row);
         records.push(describe(row,targetFor(generation,task.taskId)));checks.push({file:sourceFile,hash:digest(task)});if(session)checks.push({file:sessionFile,hash:digest(session)});
         await hooks.afterCopy?.(records.length);
       }
@@ -174,10 +197,10 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
       for(const row of records)if(digest(await read(targetFor(generation,row.task.taskId)))!==row.recordHash)throw failure('migration_conflict');
       const manifest={schemaVersion:1,sourceId,source,records:records.map(row=>({taskId:row.task.taskId,hash:row.recordHash}))};
       const receipt={schemaVersion:1,source,generation,manifest,phase:'verified'};
-      await atomic(receiptFile,receipt);await hooks.afterVerify?.();await verifySource();
-      await atomic(markerFile,{schemaVersion:1,sourceId,generation,manifestHash:digest(manifest)});await hooks.afterMarker?.();await verifySource();
-      if(hasActive){await fsp.mkdir(path.dirname(backup),{recursive:true,mode:0o700});await fsp.rename(active,backup);}
-      await atomic(receiptFile,{...receipt,phase:'cutover'});
+      await writeChanged(receiptFile,receipt);await hooks.afterVerify?.();await verifySource();
+      await writeChanged(markerFile,{schemaVersion:1,sourceId,generation,manifestHash:digest(manifest)});await hooks.afterMarker?.();await verifySource();
+      if(hasActive){await fsp.mkdir(path.dirname(backup),{recursive:true,mode:0o700});await fsp.rename(active,backup);activity++;}
+      await writeChanged(receiptFile,{...receipt,phase:'cutover'});
       await finish(source,sourceId,selected([...saved,...records]));
     }finally{for(const release of sessionLeases)release();}
   }
@@ -196,14 +219,16 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
   }
   async function sync({force=false}={}){
     if(closed)throw failure('migration_conflict');if(syncing)return syncing;
+    if(paused)return;
     syncing=(async()=>{
       for(const [identity,source] of pendingRegistrations)if(force || !(status(identity).retryAt>clock())){
-        try{await registerRootAsync(root,source);pendingRegistrations.delete(identity);if(ready.has(identity))publish(identity,{state:'ready'});else statuses.delete(identity);}
+        try{await registerRootAsync(root,source);pendingRegistrations.delete(identity);activity++;if(ready.has(identity))publish(identity,{state:'ready'});else statuses.delete(identity);}
         catch(error){if(error.code==='ENOENT'){pendingRegistrations.delete(identity);publish(identity,{state:'vanished'});continue;}const attempt=(status(identity).attempt || 0)+1;publish(identity,{state:['EPERM','EACCES','EBUSY','legacy_registry_busy'].includes(error.code)?'retry_later':'needs_repair',code:error.code==='legacy_registry_busy'?error.code:'migration_conflict',attempt,retryAt:clock()+Math.min(60000,retryMs*2**Math.min(attempt-1,6))});}
       }
       for(const source of ready){try{await fsp.lstat(source);if(await exists(path.join(source,'mcp','tasks')))ready.delete(source);}catch{ready.delete(source);}}
       const visited=new Set();
-      for(;;){const {list:configured,removed}=pruneRoots(store);for(const source of removed){ready.delete(source);bridges.get(source)?.dispose();bridges.delete(source);leases.get(source)?.();leases.delete(source);publish(source,{state:'vanished'});}if(statuses.delete(undefined))for(const listener of listeners)listener(undefined,{state:'ready'});
+      for(;;){const {list:configured,removed}=pruneRoots(store);for(const source of removed){ready.delete(source);bridges.get(source)?.dispose();bridges.delete(source);leases.get(source)?.();leases.delete(source);publish(source,{state:'vanished'});}
+        if(statuses.delete(undefined)){activity++;for(const listener of listeners)listener(undefined,{state:'ready'});}
         const pending=configured.filter(source=>!visited.has(source) && !ready.has(source) && (force || !(status(source).retryAt>clock())));if(!pending.length)return;
         for(const source of pending){visited.add(source);try{await importRoot(source);}catch(error){
           if((hooks.afterCopy || hooks.afterVerify || hooks.afterMarker) && !error.code)throw error;
@@ -222,7 +247,7 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
     })().catch(error=>{
       if((hooks.afterCopy || hooks.afterVerify || hooks.afterMarker) && !error.code)throw error;
       publish(undefined,{state:'needs_repair',code:'migration_conflict',retryAt:clock()+60000});
-    }).finally(()=>{syncing=null;clearTimeout(timer);if(!closed){timer=setTimeout(()=>void sync().catch(()=>{}),retryMs);timer.unref?.();}});return syncing;
+    }).finally(()=>{syncing=null;clearTimeout(timer);timer=null;schedule();});return syncing;
   }
   const all=()=>[...imports.values()].flat();
   function visible(spaceId,folders){return all().filter(row=>(row.inferredSpace || 'legacy:'+row.sourceId)===spaceId && contains(folders,row.projectDirectory));}
@@ -235,14 +260,26 @@ function createMigration({root,hooks={},clock=Date.now,retryMs=1000}){
       ...projection.transcript(saved.session?.items || []),cursor:null};
   }
   return {sync,spaces,visible,chat,status,onChanged(listener){listeners.add(listener);return ()=>listeners.delete(listener);},
+    get busy(){return !!syncing || registrations.size > 0;}, get activity(){return activity;},
+    pause(){paused=true;},
+    resume(){paused=false;schedule();},
     async register(source){
+      if(closed || paused)throw failure('migration_conflict');
       if(typeof source!=='string' || !path.isAbsolute(source) || source.includes('\0'))throw failure('migration_conflict');
       let identity=path.normalize(source);if(process.platform==='win32')identity=identity.toLowerCase();
-      try{identity=canonical(source);await registerRootAsync(root,identity);await sync();if(ready.has(identity))publish(identity,{state:'ready'});}
-      catch(error){if(error.code!=='ENOENT')pendingRegistrations.set(identity,source);if(ready.has(identity))publish(identity,{state:'ready'});else publish(identity,{state:error.code==='ENOENT'?'vanished':['EPERM','EACCES','EBUSY','legacy_registry_busy'].includes(error.code)?'retry_later':'needs_repair',code:error.code==='legacy_registry_busy'?error.code:'migration_conflict',retryAt:clock()+retryMs});}
-      return identity;
+      const work=(async()=>{
+        try{identity=canonical(source);await registerRootAsync(root,identity);await sync();if(ready.has(identity))publish(identity,{state:'ready'});}
+        catch(error){if(error.code!=='ENOENT')pendingRegistrations.set(identity,source);if(ready.has(identity))publish(identity,{state:'ready'});else publish(identity,{state:error.code==='ENOENT'?'vanished':['EPERM','EACCES','EBUSY','legacy_registry_busy'].includes(error.code)?'retry_later':'needs_repair',code:error.code==='legacy_registry_busy'?error.code:'migration_conflict',retryAt:clock()+retryMs});}
+        return identity;
+      })().finally(()=>registrations.delete(work));
+      registrations.add(work);
+      return work;
     },
-    async close(){closed=true;clearTimeout(timer);await syncing?.catch(()=>{});for(const bridge of bridges.values())bridge.dispose();bridges.clear();for(const release of leases.values())release();leases.clear();listeners.clear();},
+    async close({waitForRegistrations=false}={}){
+      closed=true;clearTimeout(timer);
+      if(waitForRegistrations)await Promise.allSettled([syncing,...registrations]);else await syncing?.catch(()=>{});
+      for(const bridge of bridges.values())bridge.dispose();bridges.clear();for(const release of leases.values())release();leases.clear();listeners.clear();
+    },
   };
 }
 function legacyBridgeRoot(root,file,options){

@@ -21,7 +21,10 @@ exports.run = async () => {
     let assertion;try{assert.equal(path.join(root,'synthetic.cjs'),'synthetic expected');}catch(error){assertion=error;}
     const assertionText=hostError(assertion,[root,path.resolve(__dirname,'..')]);assert.match(assertionText,/AssertionError/);assert.match(assertionText,/synthetic expected/);
     assert(!assertionText.includes(root));assert(!assertionText.includes(JSON.stringify(root).slice(1,-1)));
-    service=await require('../runtime/service-main.cjs').runService({root,hostOptions:data.hostOptions});
+    const {runService}=require('../runtime/service-main.cjs');
+    const {connectService,readDiscovery,locations}=require('../runtime/service-endpoint.cjs');
+    const {ServiceWindowClient}=require('../runtime/service-window-client.cjs');
+    service=await runService({root,hostOptions:data.hostOptions});
     await vscode.workspace.getConfiguration('rundix').update('mcpService', 'service', vscode.ConfigurationTarget.Global);
     await assert.rejects(vscode.workspace.getConfiguration('rundix').update('mcpService', 'window', vscode.ConfigurationTarget.Workspace));
     launcher.installLauncherAsync = () => {installs++;return {root,launcher:'synthetic-launcher', configuration:{mcpServers:{rundix:{command:'node', args:['synthetic-launcher','--service']}}}};};
@@ -42,7 +45,8 @@ exports.run = async () => {
     assert.deepEqual(api.mcp.panelSnapshot().tasks, []);
     const spaceId=api.mcp.panelSnapshot().spaceId;
     assert(spaceId);assert.equal(api.mcp.panelSnapshot().bridgeRunning,true);
-    peer=await require('../runtime/service-endpoint.cjs').connectService({root,hello:{clientKind:'adapter',binding:{source:'cwd',launchDirectory:vscode.workspace.workspaceFolders[0].uri.fsPath}}});
+    const connectAdapter=()=>connectService({root,hello:{clientKind:'adapter',binding:{source:'cwd',launchDirectory:vscode.workspace.workspaceFolders[0].uri.fsPath}}});
+    peer=await connectAdapter();
     const call=async(name,args)=>{
       const result=await peer.call('task.call',{bindingId:peer.binding.bindingId,spaceId:peer.binding.spaceId,name,arguments:args});
       if(result.error)throw Object.assign(Error(result.error.message),result.error);return result.result;
@@ -62,6 +66,62 @@ exports.run = async () => {
     const tabContinued=await call('wait_task',{taskId:task.taskId,waitSeconds:5});assert.equal(tabContinued.chatId,finished.chatId);
     await api.mcp.chatAction(chat,{action:'closeReady',state:{draft:'Synthetic durable tab draft',questionDrafts:{},attempts:{}}});
     await api.mcp.panelAction({action:'openChat',spaceId,taskId:task.taskId});chat=[...api.mcp.serviceChats.values()][0];assert.equal(chat.draftState.draft,'Synthetic durable tab draft');
+    const version=require('../package.json').version;
+    assert.equal(api.mcp.panelSnapshot().serviceVersion,version);assert.equal(api.mcp.panelSnapshot().serviceCanRestart,true);
+    const stub=path.join(root,'versions','synthetic','runtime');
+    fs.mkdirSync(stub,{recursive:true});
+    const entryPath=path.join(stub,'service-main.cjs'),adapterPath=path.join(stub,'service-adapter.cjs');
+    for(const file of [entryPath,adapterPath])fs.writeFileSync(file,'/* Synthetic launcher stub. The test starts the successor. */');
+    for(const file of ['package.json','complete.json'])fs.writeFileSync(path.join(stub,'..',file),JSON.stringify({version}));
+    fs.writeFileSync(path.join(root,'installation.json'),JSON.stringify({schemaVersion:1,version,nodePath:process.execPath,entryPath,adapterPath}),{mode:0o600});
+    const quietDeadline=Date.now()+5000;
+    while(service.host.handoverBusy() || service.endpoint.handoverBusy()){
+      assert(Date.now()<quietDeadline,'Synthetic service did not become quiescent');
+      await new Promise(resolve=>setTimeout(resolve,20));
+    }
+    const oldGeneration=service.endpoint.generation, stopPreference=activationContext.globalState.get('mcpServiceStopped');
+    const oldEndpoint=service.endpoint, originalBusy=oldEndpoint.handoverBusy;
+    const originalWarning=vscode.window.showWarningMessage;
+    const prompts=[];
+    vscode.window.showWarningMessage=async message=>{prompts.push(message);};
+    try {
+      let busyCalls=0;
+      oldEndpoint.handoverBusy=retiringPeer=>{
+        if(!retiringPeer)return originalBusy();
+        busyCalls++;return true;
+      };
+      await api.mcp.panelAction({action:'restartService'});
+      assert(busyCalls>1,'Transient restart is retried before prompting');
+      assert.equal(prompts.length,1);
+      assert.match(prompts[0],/background operation|фоновую операцию/);
+      assert.match(prompts[0],/manual continuation|продолжить вручную/);
+      assert.match(prompts[0],/may not be delivered|может не дойти/);
+      assert.doesNotMatch(prompts[0],/active tasks|активных задач/i);
+      assert.equal(readDiscovery(locations({root})).generation,oldGeneration,'Declining keeps the old service');
+      let transient=0;
+      oldEndpoint.handoverBusy=retiringPeer=>retiringPeer && transient++<2 || originalBusy(retiringPeer);
+      const successor=(async()=>{
+        const until=Date.now()+15000;
+        while(readDiscovery(locations({root}))){
+          assert(Date.now()<until,'Synthetic restart did not close the old endpoint');
+          await new Promise(resolve=>setTimeout(resolve,10));
+        }
+        service=await runService({root,hostOptions:data.hostOptions});
+      })();
+      await Promise.all([api.mcp.panelAction({action:'restartService'}).catch(error=>{
+        report.restartFailureCode=error.cause?.code;throw error;
+      }),successor]);
+      assert(transient>=3);
+      assert.equal(prompts.length,1,'Transient work cleared without a forced restart prompt');
+    } finally {vscode.window.showWarningMessage=originalWarning;oldEndpoint.handoverBusy=originalBusy;}
+    report.restartRetriesTransient=true;
+    assert.notEqual(service.endpoint.generation,oldGeneration);
+    assert.equal(activationContext.globalState.get('mcpServiceStopped'),stopPreference);
+    const chatDeadline=Date.now()+5000;
+    while(chat.snapshot?.generation!==service.endpoint.generation){assert(Date.now()<chatDeadline,'Synthetic chat did not re-subscribe');await new Promise(resolve=>setTimeout(resolve,20));}
+    assert.equal(api.mcp.serviceChats.values().next().value,chat);
+    assert.equal(chat.draftState.draft,'Synthetic durable tab draft');report.serviceRestartResubscribed=true;
+    peer=await connectAdapter();
     chat.panel.dispose();report.serviceTaskTab=true;report.windowDraftDurable=true;report.noSecondThreadOwner=true;
     await api.mcp.panelAction({action:'cancel',spaceId,taskId:task.taskId,requestId:'synthetic-panel-cancel'});
     await api.mcp.panelAction({action:'close',spaceId,taskId:task.taskId,requestId:'synthetic-panel-close'});
@@ -109,6 +169,19 @@ exports.run = async () => {
     assert.equal(JSON.parse(fs.readFileSync(settingsFile,'utf8')).mcpMaxParallelTasks,3,'Stopped/reloaded host uses the isolated fallback root without an installation');
     assert.equal(installs,beforeStoppedSettings);report.stoppedSettingsUseIsolatedRoot=true;
     await api.mcp.start();assert.equal(activationContext.globalState.get('mcpServiceStopped'),false);assert.equal(api.mcp.panelSnapshot().bridgeRunning,true);
+    const waitForGeneration=ServiceWindowClient.prototype.waitForGeneration;
+    let entered;
+    const waiting=new Promise(resolve=>{entered=resolve;});
+    ServiceWindowClient.prototype.waitForGeneration=function(...args){entered();return waitForGeneration.apply(this,args);};
+    try {
+      const pendingRestart=api.mcp.panelAction({action:'restartService'});
+      await Promise.race([waiting,pendingRestart.then(()=>assert.fail('Restart did not wait for a successor'))]);
+      await api.mcp.panelAction({action:'stop'});
+      await pendingRestart;
+      assert.equal(api.mcp.panelSnapshot().serviceRestart,null);
+      assert.equal(activationContext.globalState.get('mcpServiceStopped'),true);
+      report.stopCancelsRestart=true;
+    } finally {ServiceWindowClient.prototype.waitForGeneration=waitForGeneration;}
     await api.mcp.stop();report.stopPersistsAcrossReload=true;
     report.globalOnly = true; report.noWindowExecutor = true; report.serviceConfiguration = true; report.passed = true;
   } catch (error) {report.error = hostError(error,[root,activationContext?.globalStorageUri.fsPath,path.resolve(__dirname,'..'),os.tmpdir(),os.homedir(),process.execPath]);report.passed = false;}

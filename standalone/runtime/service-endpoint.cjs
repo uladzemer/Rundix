@@ -8,7 +8,7 @@ const {execFileSync} = require('node:child_process');
 const {SessionStore} = require('./store.cjs');
 const ipc = require('./service-ipc.cjs');
 const {processIdentityAsync, ownerState} = require('./service-process.cjs');
-const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const {setTimeout:pause} = require('node:timers/promises');
 const hash = text => createHash('sha256').update(text).digest('hex').slice(0,24);
 const sidCache = new WeakMap();
 function currentSid(run = execFileSync) {
@@ -42,10 +42,11 @@ function protectDirectory(directory, {platform = process.platform, uid = process
   } else fs.chmodSync(directory,0o700);
 }
 const transientFs = error => ['EPERM','EBUSY','EACCES'].includes(error?.code);
-async function retryFs(operation, deadline = Date.now() + 2000) {
+async function retryFs(operation, deadline = Date.now() + 2000, signal) {
   for (;;) {
+    signal?.throwIfAborted();
     try { return await operation(); }
-    catch (error) { if (!transientFs(error) || Date.now() >= deadline) throw error; await pause(Math.min(50,deadline-Date.now())); }
+    catch (error) { if (!transientFs(error) || Date.now() >= deadline) throw error; await pause(Math.min(50,deadline-Date.now()),undefined,{signal}); }
   }
 }
 function readDiscovery(where, {io = fs, uid = process.getuid?.()} = {}) {
@@ -63,7 +64,7 @@ function readDiscovery(where, {io = fs, uid = process.getuid?.()} = {}) {
 }
 async function readDiscoveryWithRetry(where, options = {}, deadline = Infinity) {
   try {
-    return await retryFs(() => readDiscovery(where), Math.min(deadline,Date.now() + (options.discoveryRetryMs ?? 2000)));
+    return await retryFs(() => readDiscovery(where), Math.min(deadline,Date.now() + (options.discoveryRetryMs ?? 2000)),options.signal);
   } catch (error) {
     if (transientFs(error)) throw ipc.failure('discovery_unavailable');
     throw error;
@@ -120,13 +121,18 @@ async function startService(options = {}) {
   const descriptor = {version:2, endpoint:{kind:where.kind,address:where.address}, status:'starting',
     serviceVersion:options.serviceVersion || '0.0.0', protocol:{min:1,max:1}, pid:process.pid,
     processStart:identity.processStart, generation:randomUUID(), secret:randomBytes(32).toString('hex'), entryPath:options.entryPath || ''};
-  let stopping = false, closed = false, disposal, activeCalls = 0;
+  let stopping = false, probing = false, closed = false, disposal, activeCalls = 0, activeHellos = 0, activity = 0;
   const server = net.createServer(socket => {
-    if (stopping || peers.size >= 64) { socket.destroy(); return; }
+    if (stopping && !probing || peers.size >= 64) { socket.destroy(); return; }
     const peer = ipc.accept(socket,{...options.ipc, secret:descriptor.secret, generation:descriptor.generation,
-      status:() => descriptor.status, call:options.call ? async (...args) => {
+      status:() => descriptor.status,
+      hello:options.ipc?.hello ? async (...args) => {
+        activeHellos++; activity++;
+        try { return await options.ipc.hello(...args); } finally { activeHellos--; }
+      } : undefined,
+      call:options.call ? async (...args) => {
         if (activeCalls >= 64) throw ipc.failure('limit');
-        activeCalls++;
+        activeCalls++; activity++;
         try { return await options.call(...args); } finally { activeCalls--; }
       } : undefined});
     peers.add(peer); peer.once('closed', () => peers.delete(peer));
@@ -148,18 +154,21 @@ async function startService(options = {}) {
   if (!owner) return {status:'already_running', connect:extra => connectService({...options, ...extra})};
   server.on('error', () => { for (const peer of peers) peer.close(); });
   return {status:'owner', generation:descriptor.generation,
-    pause() {stopping=true;},
-    resume() {if(!closed && !disposal)stopping=false;},
+    pause({allowProbe=false}={}) {stopping=true;probing=allowProbe;},
+    resume() {if(!closed && !disposal){stopping=false;probing=false;}},
     ready:() => guarded(store, async () => {
       if (stopping) throw ipc.failure('service_unavailable');
       descriptor.status = 'ready'; await retryFs(() => publish(where,descriptor));
     }),
     clients:() => peers.size,
     busy:() => activeCalls > 0,
+    activity:() => activity,
+    handoverBusy:(retirePeer) => activeHellos > 0 || activeCalls > (retirePeer ? 1 : 0) ||
+      [...peers].some(peer => peer.writes > 0 || peer.responding > (peer === retirePeer ? 1 : 0)),
     broadcast(method, params) { for (const peer of peers) if (peer.authenticated) { try { peer.send({method,params:{...params,generation:descriptor.generation}}); } catch { peer.close(); } } },
     dispose() {
       if (disposal) return disposal;
-      stopping = true;
+      stopping = true; probing = false;
       // A failed guard acquisition leaves disposal retryable. Keep close under the guard:
       // Node unlinks Unix sockets on server.close, so a new listener must not race it.
       // The descriptor goes first so "descriptor present + pipe missing" (probeOwner: dead) never
@@ -186,22 +195,29 @@ async function startService(options = {}) {
 }
 async function connectService(options = {}) {
   const where = locations(options), deadline = Date.now() + (options.startupTimeoutMs || 20000);
+  const {signal}=options;
   let delay = 100, firstAttempt=true;
   do {
     let peer;
     try {
+      signal?.throwIfAborted();
       if(!firstAttempt)await options.onUnavailable?.();
       firstAttempt=false;
       const descriptor = await readDiscoveryWithRetry(where,options,deadline);
       if (descriptor) {
-        peer = await ipc.dial(where.address,{...options.ipc, connectTimeoutMs:Math.max(1,Math.min(2000,deadline-Date.now()))});
-        return await ipc.authenticate(peer, descriptor, options.pingTimeoutMs || 5000, deadline, options.hello);
+        peer = await ipc.dial(where.address,{...options.ipc, signal,connectTimeoutMs:Math.max(1,Math.min(2000,deadline-Date.now()))});
+        await ipc.authenticate(peer, descriptor, options.pingTimeoutMs || 5000, deadline, options.hello);
+        signal?.throwIfAborted();
+        const {compareVersions} = require('./service-version.cjs');
+        peer.serviceVersion = compareVersions(descriptor.serviceVersion, descriptor.serviceVersion) === 0 ? descriptor.serviceVersion : null;
+        return peer;
       }
     } catch (error) {
       peer?.close();
+      signal?.throwIfAborted();
       if (!transientFs(error) && !['auth_failed','service_initializing','service_unavailable','connect_timeout','rpc_timeout'].includes(error.code)) throw error;
     }
-    await pause(Math.max(0,Math.min(delay,deadline-Date.now()))); delay = Math.min(1000,delay*2);
+    await pause(Math.max(0,Math.min(delay,deadline-Date.now())),undefined,{signal}); delay = Math.min(1000,delay*2);
   } while (Date.now() < deadline);
   throw ipc.failure('service_start_timeout');
 }
@@ -210,10 +226,11 @@ async function probeOwner(options = {}) {
   if (!descriptor) return {state:'absent'};
   let peer;
   try {
-    peer = await ipc.dial(where.address,{connectTimeoutMs:options.pingTimeoutMs || 2000});
+    peer = await ipc.dial(where.address,{signal:options.signal,connectTimeoutMs:options.pingTimeoutMs || 2000});
     const ping = await peer.request('service.ping',{},options.pingTimeoutMs || 5000);
     return {state:ping.generation === descriptor.generation ? 'responding' : 'unverified',generation:descriptor.generation};
   } catch (error) {
+    options.signal?.throwIfAborted();
     let state = await stateOf(descriptor,options.inspectProcess);
     // A live service always holds its pipe/socket. A missing one proves the owner is gone even when the
     // PID is held by an unreadable process; access denied proves nothing and keeps the singleton.

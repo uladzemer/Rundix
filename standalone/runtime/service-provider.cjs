@@ -37,6 +37,7 @@ class ServiceProvider extends EventEmitter {
   #dispatchAuthorization = null;
   #limitBinding = null;
   #launching = false;
+  #handoverActivity = 0;
   #recovery=null; #retryTimer=null; #attempts=0; #healthySince=null; #childExit=null; #exited=new Set(); #cliRestarting=null;
   constructor({serviceGeneration, ...options} = {}) {
     super();
@@ -50,6 +51,11 @@ class ServiceProvider extends EventEmitter {
   get cli() { return this.#cli; }
   get activeTurns() { return this.#turns.size; }
   get busy() { return !!this.#recovery || this.#launching || this.#parents.size > 0 || this.#turns.size > 0 || !!this.#idle || !!this.#configurationPending; }
+  get handoverBusy() {
+    return this.busy || !!(this.#retryTimer || this.#cliRestarting || this.#authenticating || this.#preparing ||
+      this.#cli?.busy);
+  }
+  get handoverActivity() { return this.#handoverActivity; }
   get accountGrant() { return this.#account ? structuredClone(this.#account) : null; }
   async start() {
     if (this.#disposed || this.#disposing) throw actionRequired('PROVIDER_PROCESS_UNCERTAIN');
@@ -60,6 +66,7 @@ class ServiceProvider extends EventEmitter {
       return this.#start;
     }
     this.#launching = true;
+    this.#handoverActivity++;
     this.#start = (async () => {
       this.#config = await readProviderConfigAsync(this.#options);
       if(this.#disposed || this.#disposing)throw actionRequired('PROVIDER_PROCESS_UNCERTAIN');
@@ -82,7 +89,7 @@ class ServiceProvider extends EventEmitter {
       if (!isObject(result) || result.version?.major !== 2 || result.version?.minor !== 0 ||
           result.providerId !== this.#config.provider.id || result.providerVersion !== this.#config.provider.version ||
           !Array.isArray(result.capabilities) || !CAPABILITIES.every(name => result.capabilities.includes(name))) throw actionRequired('PROVIDER_INCOMPATIBLE');
-      this.#healthySince=(this.#options.now || Date.now)();clearTimeout(this.#retryTimer);
+      this.#healthySince=(this.#options.now || Date.now)();clearTimeout(this.#retryTimer);this.#retryTimer=null;
       return this;
     })().catch(error => { this.#lose(); throw error?.reason === 'action_required' ? error : actionRequired('PROVIDER_UNAVAILABLE'); })
       .finally(()=>{this.#launching=false;});
@@ -131,6 +138,7 @@ class ServiceProvider extends EventEmitter {
       for(const grant of [...this.#grants.values()].filter(grant=>grant.binding.appServerGeneration===binding.appServerGeneration)){try{this.#revoke(grant);}catch{this.#logFailure();}}
       queueMicrotask(()=>{
         if(this.#disposed || this.#disposing || this.#lost || this.#cli!==cli || this.#idle || this.#cliRestarting)return;
+        this.#handoverActivity++;
         this.#cliRestarting=cli.start().then(()=>this.authenticate('reconnect')).catch(()=>{}).finally(()=>{this.#cliRestarting=null;});
       });
     });
@@ -147,6 +155,7 @@ class ServiceProvider extends EventEmitter {
   }
   #lose(reason = 'action_required') {
     if (this.#lost) return;
+    this.#handoverActivity++;
     if(this.#healthySince!==null && (this.#options.now || Date.now)()-this.#healthySince>=60000)this.#attempts=0;
     this.#healthySince=null;
     this.#lost = true; this.#cli?.invalidateProvider();
@@ -160,21 +169,19 @@ class ServiceProvider extends EventEmitter {
   #scheduleRecovery(){
     if(this.#disposed || this.#disposing || this.#attempts>=5)return;
     clearTimeout(this.#retryTimer);
-    this.#retryTimer=setTimeout(()=>{void this.#recover().catch(()=>{});},Math.min(10000,(this.#options.recoveryBackoffMs ?? 500)*2**this.#attempts));
+    this.#retryTimer=setTimeout(()=>{this.#retryTimer=null;void this.#recover().catch(()=>{});},Math.min(10000,(this.#options.recoveryBackoffMs ?? 500)*2**this.#attempts));
     this.#retryTimer.unref?.();
   }
   #recover() {
     if(this.#recovery)return this.#recovery;
+    this.#handoverActivity++;
     const oldStart=this.#start;
     this.#recovery=(async()=>{
-      clearTimeout(this.#retryTimer);this.#attempts++;
+      clearTimeout(this.#retryTimer);this.#retryTimer=null;this.#attempts++;
       await oldStart?.catch(()=>{});
       if(this.#disposed)throw actionRequired('PROVIDER_UNAVAILABLE');
       await this.#cli?.stop();
-      this.#child?.kill();
-      if(this.#childExit) {
-        let timer;try {await Promise.race([this.#childExit,new Promise((_,reject)=>{timer=setTimeout(()=>reject(actionRequired('PROVIDER_PROCESS_UNCERTAIN')),5000);})]);}finally{clearTimeout(timer);}
-      }
+      await this.#stopChild();
       if(this.#turns.size)throw actionRequired('PROVIDER_PROCESS_UNCERTAIN');
       this.#cli=null;this.#account=null;this.#idle=null;this.#grants.clear();this.#configurationPending=null;
       this.#providerGeneration=randomUUID();this.#selectionRevision=1;this.#start=null;
@@ -207,6 +214,7 @@ class ServiceProvider extends EventEmitter {
     this.#cli.useAccountGrant({...this.#account, ...identity(this.#account.binding)});
   }
   async #call(method, params, {fence = this.#cli?.fence || this.authority, idle = null, transaction = null, timeoutMs, selection = false} = {}) {
+    this.#handoverActivity++;
     if (this.#lost || !DEADLINES[method]) throw actionRequired('PROVIDER_UNAVAILABLE');
     this.#checkConfig();
     const budget = Math.min(timeoutMs ?? DEADLINES[method], DEADLINES[method]);
@@ -506,19 +514,31 @@ class ServiceProvider extends EventEmitter {
     return {authenticated:result.authenticated, activeTurns:result.activeTurns, preparing:result.preparing,
       ...(result.counts ? {counts:{...result.counts}} : {})};
   }
-  async dispose(trigger = 'serviceShutdown', {force=false} = {}) {
+  async #stopChild() {
+    this.#child?.kill();
+    if (!this.#childExit) return;
+    let timer;
+    try {
+      await Promise.race([this.#childExit,new Promise((_,reject)=>{
+        timer=setTimeout(()=>reject(actionRequired('PROVIDER_PROCESS_UNCERTAIN')),5000);
+      })]);
+    } finally {clearTimeout(timer);}
+  }
+  async dispose(trigger = 'serviceShutdown', {force=false, confirmProviderExit=false} = {}) {
     if (this.#disposed) return;
     if (!force && (this.#turns.size || this.#preparing || this.#idle)) throw actionRequired('BUSY_ACTIVE');
-    this.#disposing=true;clearTimeout(this.#retryTimer);
+    this.#disposing=true;clearTimeout(this.#retryTimer);this.#retryTimer=null;
     try {
       try {if(!force && !this.#lost)await this.#call('dispose',{trigger,mode:'drain'});}catch{}
-      await this.#cli?.stop();
+      try {await this.#cli?.stop();}
+      finally {if (confirmProviderExit) await this.#stopChild();}
     }catch(error){
       if(!force){
         // The child may already have accepted dispose; restart a fresh generation
         // instead of resuming against that partially disposed peer.
         this.#disposing=false;this.#lose();this.#scheduleRecovery();throw error;
       }
+      if(confirmProviderExit)this.#logFailure();
     }
     this.#disposed=true;this.#disposing=false;clearTimeout(this.#retryTimer);
     this.#cli?.dispose();this.#peer?.close();this.#child?.kill();

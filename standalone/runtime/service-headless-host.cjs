@@ -314,12 +314,14 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
   logger({code:'service_started'});
   return {core, mcp, provider, settings, logger,
     busy:() => !disposed && (provider.busy || [...mcp.tasks.tasks.values()].some(task => !['completed', 'error', 'cancelled'].includes(task.state) || task.recoveryRequired)),
-    async dispose({force=false} = {}) {
+    handoverBusy:() => !disposed && (provider.handoverBusy || mcp.tasks.handoverBusy || core.state.connectionStarting),
+    handoverActivity:() => provider.handoverActivity+(mcp.tasks?.handoverActivity || 0),
+    async dispose({force=false, confirmProviderExit=false} = {}) {
       if (disposed) return;
       if (!force && (provider.busy || [...mcp.tasks.tasks.values()].some(task => !['completed', 'error', 'cancelled'].includes(task.state) || task.recoveryRequired)))
         throw Object.assign(Error('Service has unfinished tasks.'), {code:'service_busy'});
       stopping = true;
-      try{await provider.dispose('serviceShutdown',{force});}catch(error){if(!force)throw error;logger({code:'host_error'});}
+      try{await provider.dispose('serviceShutdown',{force,confirmProviderExit});}catch(error){if(!force)throw error;logger({code:'host_error'});}
       finally{stopping = false;}
       disposed = true; core.state.disposed = true; core.state.server?.dispose(); mcp.dispose(); logger({code:'service_stopped'});
     },

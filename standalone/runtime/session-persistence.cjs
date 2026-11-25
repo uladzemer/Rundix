@@ -1,5 +1,6 @@
 // Host state is supplied explicitly; mutable values are read through deps.
 async function save(deps, s) {
+  if (deps.serviceMode && deps.disposed) return;
   const record = {
     key: s.key,
     id: s.id,

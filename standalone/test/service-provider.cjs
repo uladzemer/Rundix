@@ -29,6 +29,7 @@ async function main() {
     const explicit=await create('explicit-recovery',{recoveryBackoffMs:10000});await explicit.provider.authenticate();
     const previousGeneration=explicit.provider.authority.providerGeneration;
     const disconnected=once(explicit.provider,'connectionChanged');children.at(-2).child.kill();await disconnected;
+    assert(explicit.provider.handoverBusy,'Lost provider with a pending retry blocks handover');
     const began=Date.now();await explicit.provider.start();assert(Date.now()-began<8000,'Explicit recovery bypasses the scheduled ten-second backoff');
     assert.notEqual(explicit.provider.authority.providerGeneration,previousGeneration);await explicit.provider.dispose();
     const crashing=await create('crash-after-hello',{recoveryBackoffMs:10,now:()=>0});
@@ -41,7 +42,23 @@ async function main() {
         assert(recovered,'A consecutive failure within the retry budget restarts automatically');
       }else{await pause(600);assert.equal(crashing.provider.authority.providerGeneration,generation,'Hello alone cannot replenish the crash-loop budget');}
     }
+    assert.equal(crashing.provider.handoverBusy,false,'A lost provider with an exhausted retry budget allows handover');
     await crashing.provider.dispose();
+    const restarting=await create('cli-restarting');
+    await restarting.provider.authenticate();
+    const start=restarting.cli.start.bind(restarting.cli);
+    let release,entered;
+    const gate=new Promise(resolve=>{release=resolve;});
+    const requested=new Promise(resolve=>{entered=resolve;});
+    restarting.cli.start=async()=>{entered();await gate;return start();};
+    children.at(-1).child.kill();
+    await requested;
+    assert(restarting.provider.handoverBusy,'A CLI restart in flight blocks handover');
+    release();
+    const restartDeadline=Date.now()+5000;
+    while(restarting.provider.handoverBusy && Date.now()<restartDeadline)await pause(10);
+    assert.equal(restarting.provider.handoverBusy,false);
+    await restarting.provider.dispose();
     const lateDir=path.join(root,'late-disposal');fs.mkdirSync(lateDir);const lateConfig=install(lateDir);
     let lateSpawn=0;
     const late=new ServiceProvider({serviceGeneration:'synthetic-late',configPath:lateConfig.configPath,verifyPrivate:()=>{},spawnProcess(){lateSpawn++;throw Error('Disposed provider must not launch');}});

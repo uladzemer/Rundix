@@ -187,10 +187,10 @@ poller makes fresh admissions when the quota becomes available.
 
 The launcher preserves --wait/--timeout/--brief. Its background waiter reconnects
 after transient service loss; mutations are never automatically replayed. Reuse
-the same requestId explicitly after an uncertain response. Connected adapters
-keep the service alive; otherwise it exits after five idle minutes with no
-nonterminal tasks or uncertain turns. Hung-owner recovery is not implemented
-by this experimental switch. The Stop MCP command in the window
+the same requestId explicitly after an uncertain response. The ordinary idle
+exit requires five idle minutes with no connected clients, nonterminal tasks
+or uncertain turns. Hung-owner recovery is not implemented by this experimental
+switch. The Stop MCP command in the window
 disconnects its client and saves a profile-wide Stop preference, including for
 later activations or reloads. Opening or refreshing the panel does not restart
 a stopped client; Start MCP clears that profile preference.
@@ -200,15 +200,38 @@ Background tasks continue running.
 In service mode Start MCP and subsequent setting changes atomically copy only
 user/global values of `mcpAccessMode`, `mcpThreadConfig`, `mcpMaxParallelTasks`,
 `mcpDefaultModel`, `mcpDefaultEffort` and `cliPath` to the service settings file.
-After upgrading from an older version, finish background tasks, disconnect Claude
-clients and close connected VS Code windows or run **Stop MCP** in them. The old
-service can then exit after five idle minutes. Start MCP again to use the new
-service. The model settings are read on submission and `cliPath`
+The model settings are read on submission and `cliPath`
 changes apply at the next CLI connection. Workspace values
 are ignored. Task chat access mode is initialized from this snapshot and existing
 chats keep their mode. Identical launcher runtimes are reused across activations.
 A confirmed CLI exit stops its tasks; they require an explicit continuation.
 Provider recovery uses a new generation and never replays an ambiguous send.
+
+Starting MCP in the upgraded extension registers its service copy. A service
+with automatic handover exits after 60 continuous seconds of full quiescence
+when the registration points to a validated, strictly newer copy. Connected
+clients can remain open. An enabled VS Code window and the background waiter
+reconnect automatically. An ordinary adapter reconnects on its next request.
+
+The MCP panel shows the running service version and warns when it is older
+than the extension. On a capable service, **Restart service** is available
+even at the same version. An authenticated window with a trusted workspace
+folder sends `service.retire` for its current service generation. This RPC is
+unavailable to MCP adapters.
+If the service is busy with tasks, it returns the number of active tasks
+across all projects. If only background operations are busy, the panel retries
+briefly before offering forced restart. Confirming a forced restart stops running
+tasks across all projects and may interrupt a message already being sent.
+After confirmed CLI exit, an interrupted task enters `error`, releases its
+directory and requires manual continuation. When CLI exit cannot be confirmed,
+the existing crash recovery reconciles the turn before releasing its directory.
+Restart waits for the next generation within a bounded interval. It preserves
+open task chats, drafts and the window's Stop MCP preference.
+
+Service generations through 0.4.23 lack the restart capability. For those
+generations, finish background tasks, disconnect MCP clients, and close
+connected VS Code windows or select **Stop MCP** in them. The service exits
+after five idle minutes. Start MCP to connect to the registered version.
 
 
 Service task storage is capped per launch space. Closing finished tasks permits

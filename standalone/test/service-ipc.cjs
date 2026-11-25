@@ -431,6 +431,15 @@ async function main() {
       clients = 0; await advance(0); await advance(100); assert.equal(fires,3); assert.equal(cancelled,true);
       await advance(1000); assert.equal(fires,3);
     });
+    await test('a failed handover tick still lets the idle hook run', async () => {
+      let tick, exits=0;
+      const errors=[];
+      idleExit({clients:()=>0,busy:()=>false,idleMs:0,schedule:callback=>{tick=callback;return {};},cancel:()=>{},
+        onTick(){throw Error('Synthetic tick failure');},onIdle(){exits++;},log:value=>errors.push(value)});
+      await tick();
+      assert.equal(exits,1);
+      assert.deepEqual(errors,[{code:'idle_exit_failed'}]);
+    });
     console.log(`service IPC: ${count} synthetic checks passed`);
   } finally {
     for (const dispose of cleanup.reverse()) await dispose();

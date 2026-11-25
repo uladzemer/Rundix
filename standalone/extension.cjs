@@ -247,11 +247,12 @@ function activate(context) {
   const serviceMode=vscode.workspace.getConfiguration('rundix').inspect('mcpService')?.globalValue==='service';
   let serviceInstallation=null;
   let serviceClient=null, serviceStarting=null, serviceStartingEpoch=null, serviceSpaceId=null, serviceError=null, serviceDisposed=false, serviceEpoch=0;
+  let serviceRestart=null;
   let serviceStopped=serviceMode && context.globalState.get('mcpServiceStopped',false);
   let serviceWanted=serviceMode && !serviceStopped && context.globalState.get('mcpEnabled',false);
   function closeServiceClient() {
     serviceEpoch++;
-    const client=serviceClient;serviceClient=null;client?.close();serviceSpaceId=null;
+    const client=serviceClient;serviceClient=null;serviceRestart?.cancel();serviceRestart=null;client?.close();serviceSpaceId=null;
     for(const record of serviceChats.values())void postServiceChat(record,null);
     publishMcpPanel(true);broadcast();
   }
@@ -352,7 +353,8 @@ function activate(context) {
     if(serviceMode){
       if(!vscode.workspace.isTrusted && serviceClient)closeServiceClient();
       return mcpPanelState.serviceSnapshot({client:serviceClient,language:locale.language,installed:serviceInstallation,
-        selectedSpaceId:serviceSpaceId,error:serviceError,taskChatsAvailable:true,modelDefaults,models});
+        selectedSpaceId:serviceSpaceId,error:serviceRestart?.phase==='restarting'?null:serviceError,taskChatsAvailable:true,modelDefaults,models,
+        extensionVersion:context.extension.packageJSON.version,restart:serviceRestart});
     }
     let connected=false;
     try{if(core.state.activeConnection?.provider && core.state.account && !core.state.limits.error){connections.assertCurrent(core.state.activeConnection);connected=true;}}catch{}
@@ -373,8 +375,65 @@ function activate(context) {
     if(!mcpHost.bridge)throw Error('Start the MCP bridge first.');
     return {mcpServers:{rundix:{command:'node',args:[mcpHost.launcher,'--bridge',mcpHost.bridge.descriptor]}}};
   }
+  async function restartService() {
+    const client=serviceClient,peer=client?.peer;
+    const current=()=>vscode.workspace.isTrusted && client===serviceClient && peer===client?.peer && !peer?.closed;
+    if (!peer || !current() || serviceRestart) throw Object.assign(Error('Service restart unavailable.'),{code:'service_restart_failed'});
+    let cancel;
+    const cancellation=new Promise(resolve=>{cancel=resolve;});
+    const restart={phase:'checking',cancel};serviceRestart=restart;publishMcpPanel(true);
+    const cancelled=()=>serviceRestart!==restart || client!==serviceClient;
+    try {
+      let result=await client.retire(peer,false);
+      const retryUntil=performance.now()+3000;
+      while(!result.retiring && result.reason==='transient'){
+        const remaining=retryUntil-performance.now();
+        if(remaining<=250)break;
+        await new Promise(resolve=>setTimeout(resolve,250));
+        if(cancelled())return;
+        if(!current())throw Error('Service changed.');
+        // Each attempt keeps the ordinary RPC budget: a nearly spent retry window must not turn into a false failure.
+        result=await client.retire(peer,false);
+      }
+      if (!result.retiring) {
+        if (cancelled()) return;
+        if (!current()) throw Error('Service changed.');
+        restart.phase='confirming';restart.activeTasks=result.activeTasks;publishMcpPanel(true);
+        const ru=locale.language==='ru',label=ru?'Перезапустить сервис':'Restart service';
+        const detail=result.reason==='tasks'
+          ? (ru?`Активных задач во всех проектах: ${result.activeTasks}.`:`Active tasks across all projects: ${result.activeTasks}.`)
+          : (ru?'Сервис всё ещё выполняет фоновую операцию. Принудительный перезапуск может её прервать.':
+            'The service is still performing a background operation. A forced restart may interrupt it.');
+        const prompt=detail+(ru?' Выполняющиеся задачи будут остановлены. Их нужно будет продолжить вручную. Сообщение, которое отправляется прямо сейчас, может не дойти.':
+          ' Running tasks will stop and require manual continuation. A message being sent right now may not be delivered.');
+        if (await Promise.race([vscode.window.showWarningMessage(prompt,{modal:true},label),cancellation])!==label) return;
+        if (cancelled()) return;
+        if (!current()) throw Error('Service changed.');
+        restart.phase='restarting';publishMcpPanel(true);
+        result=await client.retire(peer,true);
+        if (!result.retiring) throw Error('Service restart rejected.');
+      }
+      restart.phase='restarting';publishMcpPanel(true);
+      await client.waitForGeneration(peer.generation);
+      // The hello precedes the refreshed snapshots: keep the restart state until the panel has data again.
+      if (serviceError && client===serviceClient) await new Promise(resolve=>{
+        const done=()=>{clearTimeout(timer);client.off('status',connected);client.off('closed',done);resolve();};
+        const connected=status=>{if(status==='connected')done();};
+        const timer=setTimeout(done,12000);
+        client.on('status',connected);client.once('closed',done);
+      });
+      if (cancelled()) return;
+      if (!vscode.workspace.isTrusted || client!==serviceClient) throw Error('Window binding changed.');
+    } catch (error) {
+      if (cancelled()) return;
+      throw Object.assign(Error('Service restart failed.',{cause:error}),{code:'service_restart_failed'});
+    } finally {
+      if (serviceRestart===restart){serviceRestart=null;publishMcpPanel(true);}
+    }
+  }
   async function handleMcpPanel(message) {
     if(!message || typeof message.action!=='string')throw Error('Invalid MCP panel action.');
+    if(serviceMode && message.action==='restartService')return restartService();
     if(message.action==='setModelDefaults') {
       if(!vscode.workspace.isTrusted)throw Object.assign(Error('Workspace trust is required.'),{code:'workspace_untrusted'});
       panelModels.validateDefaults(message.model,message.effort,currentPanelModels());
@@ -449,12 +508,14 @@ function activate(context) {
       const nonce=randomBytes(18).toString('base64'), uri=file=>view.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri,'ui',file));
       view.webview.html=`<!doctype html><html lang="${locale.language}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${uri('mcp-panel.css')}"></head><body><main id="app"></main>${['translations.js','i18n.js','controls.js','mcp-panel.js'].map(file=>`<script nonce="${nonce}" src="${uri(file)}"></script>`).join('')}</body></html>`;
       const listener=view.webview.onDidReceiveMessage(async message=>{
-        if(mcpPanelBusy){await view.webview.postMessage({type:'mcpResult',ok:false,requestId:message?.requestId});return;}
-        mcpPanelBusy=true;
+        const guarded=message?.action!=='restartService';
+        if(guarded && mcpPanelBusy){await view.webview.postMessage({type:'mcpResult',ok:false,requestId:message?.requestId});return;}
+        if(guarded)mcpPanelBusy=true;
         try{const result=await handleMcpPanel(message);await view.webview.postMessage({type:'mcpResult',ok:true,action:message.action,taskId:message.taskId,requestId:message.requestId,...result});}
         catch(error){try{await view.webview.postMessage({type:'mcpResult',ok:false,requestId:message?.requestId,
-          ...(typeof error?.code==='string' && /^[a-z_]{1,40}$/.test(error.code) && typeof error.message==='string'?{error:error.message.slice(0,300)}:{})});}catch{}}
-        finally{mcpPanelBusy=false;}
+          ...(typeof error?.code==='string' && /^[a-z_]{1,40}$/.test(error.code) && typeof error.message==='string'
+            ?{error:error.code==='service_restart_failed'?error.code:error.message.slice(0,300)}:{})});}catch{}}
+        finally{if(guarded)mcpPanelBusy=false;}
       });
       const visible=onVisible(()=>publishMcpPanel(true));
       view.onDidDispose(()=>{listener.dispose();visible.dispose();mcpViews.delete(view);if(mcpEditor===view)mcpEditor=null;});

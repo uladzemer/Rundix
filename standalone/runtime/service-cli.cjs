@@ -62,6 +62,7 @@ class ServiceAppServer extends EventEmitter {
   }
   get binding() { return this.#binding ? {...this.#binding} : null; }
   get authenticated() { return this.#authenticated; }
+  get busy() { return !!(this.#cli?.pending.size || this.#requests.size || this.#auth?.active); }
   get fence() { return {...this.#authority, binding:this.binding}; }
   invalidateProvider() {
     this.#authenticated = false;

@@ -27,7 +27,7 @@ function windowBinding(binding) {
   return {bindingId:randomUUID(), windowId:binding.windowId, folders, spaces};
 }
 
-function createWindowRpc({generation, tasks,core,migration}) {
+function createWindowRpc({generation, tasks,core,migration,retire}) {
   const peers = new Set(), revisions = new Map(), chatRevisions=new Map();
   migration?.onChanged((source,status)=>{for(const peer of peers)if(source===undefined || peer.windowBinding.legacyRoot===source){
     try{peer.send({method:'legacy.changed',params:{generation,status:source===undefined?migration.status(peer.windowBinding.legacyRoot):status}});}catch{peer.close();}
@@ -53,7 +53,7 @@ function createWindowRpc({generation, tasks,core,migration}) {
       peer.chats.clear();
     });
     return {legacyStatus:migration?.status(binding.legacyRoot),bindingId:binding.bindingId, spaces:[...binding.spaces.values()], toolSchemaVersion:1,
-      capabilities:['tasks.v1', 'limitWait.v1', 'spaceSnapshot.v1','taskChat.v1']};
+      capabilities:['tasks.v1', 'limitWait.v1', 'spaceSnapshot.v1','taskChat.v1', ...(retire && binding.folders.length ? ['service.retire'] : [])]};
   }
   function bound(params, peer) {
     return peer.windowBinding?.bindingId === params.bindingId && peer.windowBinding.spaces.has(params.spaceId);

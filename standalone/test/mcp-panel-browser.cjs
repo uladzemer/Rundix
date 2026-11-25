@@ -201,6 +201,43 @@ fs.mkdirSync(artifacts,{recursive:true});
    await page.select('#mcp-effort','medium');
    await page.evaluate(()=>{window.fixture.modelDefaults.effort='medium';window.update();window.dispatchEvent(new MessageEvent('message',{data:{type:'mcpResult',ok:true,action:'setModelDefaults',requestId:window.calls.at(-1).requestId}}));});
    assert.equal(await page.evaluate(()=>document.activeElement.id),'mcp-effort','Successful save restores keyboard focus');
+   const clearLabel=language==='ru'?'Убрать завершённые':'Clear finished';
+   const clearButton=()=>page.evaluate(label=>[...document.querySelectorAll('button')].some(button=>button.textContent===label),clearLabel);
+   await page.evaluate(()=>{
+    Object.assign(window.fixture,{legacyStatus:null,spaceId:'synthetic-space',bridgeRunning:true,archivedCount:107,tasks:[
+     {taskId:'synthetic-current',title:'Synthetic current task',state:'completed'},
+     {taskId:'synthetic-archived',title:'Synthetic archived task',state:'completed',archived:true,closed:false},
+    ]});window.update();
+   });
+   assert.equal(await clearButton(),false,'An older service cannot show Clear finished');
+   assert.equal(await page.$('[data-task-id="synthetic-archived"]'),null);
+   assert.equal(await page.$eval('#task-archive',node=>node.textContent),language==='ru'?'Архив (107)':'Archive (107)');
+   await page.focus('#task-archive');await page.keyboard.press('Enter');
+   assert.deepEqual(await page.evaluate(()=>{const {action,show,spaceId}=window.calls.at(-1);return [action,show,spaceId];}),['archiveView',true,'synthetic-space']);
+   const archiveView=show=>page.evaluate(show=>{
+    window.fixture.archiveView=show;window.update();
+    window.dispatchEvent(new MessageEvent('message',{data:{type:'mcpResult',ok:true,requestId:window.calls.at(-1).requestId}}));
+   },show);
+   await archiveView(true);
+   assert(await page.$('[data-task-id="synthetic-archived"]'));
+   assert.equal(await page.$('[data-task-id="synthetic-current"]'),null);
+   assert.equal(await page.$eval('#task-archive',node=>node.getAttribute('aria-pressed')),'true');
+   assert.equal(await page.evaluate(()=>document.activeElement.id),'task-archive');
+   await page.screenshot({path:path.join(artifacts,`mcp-archive-${language}-${theme}-${width}.png`),fullPage:true});
+   await page.click('#task-archive');await archiveView(false);
+   assert.equal(await page.$('[data-task-id="synthetic-archived"]'),null);
+   await page.evaluate(()=>{window.fixture.serviceCanClearFinished=true;window.update();});
+   assert.equal(await clearButton(),true);
+   await page.evaluate(label=>[...document.querySelectorAll('button')].find(button=>button.textContent===label).click(),clearLabel);
+   assert.deepEqual(await page.evaluate(()=>{const {action,spaceId}=window.calls.at(-1);return [action,spaceId];}),['clearFinished','synthetic-space']);
+   await page.evaluate(()=>{
+    window.fixture.serviceCanClearFinished=false;window.fixture.tasks.shift();window.fixture.archivedCount++;window.update();
+    window.dispatchEvent(new MessageEvent('message',{data:{type:'mcpResult',ok:true,action:'clearFinished',spaceId:'synthetic-space',
+      requestId:window.calls.at(-1).requestId,clearFinished:{archived:1,skipped:2,withUnsent:1}}}));
+   });
+   assert.equal(await clearButton(),false,'No eligible tasks hides Clear finished');
+   assert.match(await page.$eval('[role="status"]',node=>node.textContent),language==='ru'?/Убрано в архив — 1.*Пропущено — 2.*С неотправленным текстом — 1/:/Archived — 1.*Skipped — 2.*With unsent text — 1/);
+   await page.screenshot({path:path.join(artifacts,`mcp-clear-finished-${language}-${theme}-${width}.png`),fullPage:true});
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    assert.deepEqual(errors,[]);await page.close();
   }

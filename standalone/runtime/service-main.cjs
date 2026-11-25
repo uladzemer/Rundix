@@ -28,7 +28,8 @@ async function runService(options = {}) {
     migration=require('./service-migration.cjs').createMigration({root,...options.migrationOptions});
     await migration.sync();
     host = await createHeadlessHost({...options.hostOptions, root, generation:endpoint.generation,onSessionChanged:rpc.sessionChanged,
-      taskOptions:{...options.hostOptions?.taskOptions, scope:rpc.scope, signal:rpc.signal, changed:rpc.changed}});
+      taskOptions:{...options.hostOptions?.taskOptions, scope:rpc.scope, signal:rpc.signal, changed:rpc.changed,
+        archiveChanged:rpc.archiveChanged, chatSubscribed:rpc.chatSubscribed}});
     poller = createLimitPoller({host, ...options.pollerOptions});
     void rootCleanup.then(removed=>{if(removed)host.logger({code:'service_root_cleanup',removed});}).catch(()=>{});
     let disposal,hostStopped=false,retry;
@@ -105,6 +106,7 @@ async function runService(options = {}) {
     function onTick() {
       if (retiring) return true;
       if (!online || disposal || hostStopped) return false;
+      host.mcp.tasks.sweepArchive();
       const time=now(), observed=endpoint.activity()+migration.activity+host.handoverActivity();
       const occupied=busy();
       if (activity!==observed || occupied) quietSince=null;

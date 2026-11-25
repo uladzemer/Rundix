@@ -4,6 +4,7 @@
   let saved=api.getState() || {}, drafts=saved.drafts || {}, selected=saved.selected || null, state=null, pending=false, error='', submission=null, requestId=null;
   const versions={}, attempts=saved.attempts || {};
   let configuration=null,copied=false,settingsFocus=null,restartRequestId=null,restartError=false;
+  let clearResult=null;
   const configurationText={ru:{title:'Подключение Claude Code',hint:'Эти настройки связывают Claude Code с Rundix. Если сервер rundix уже добавлен, перезапустите сессию Claude Code и проверьте /mcp. VS Code должен оставаться открытым.',copy:'Скопировать настройки',copied:'Настройки скопированы'},en:{title:'Connect Claude Code',hint:'These settings connect Claude Code to Rundix. If rundix is already registered, restart your Claude Code session and check /mcp. VS Code must remain open.',copy:'Copy configuration',copied:'Configuration copied'}};
   const words={
     en:{unsent:'Unsent inputs: recover full text with get_task',title:'MCP tasks',subtitle:'Claude Code → Codex',pool:'Connection',local:'Select a companion connection',ready:'Connected',unchecked:'Not checked',bridgeOn:'MCP bridge running',bridgeOff:'MCP bridge stopped',connect:'Connect companion',start:'Start MCP',stop:'Stop MCP',config:'Claude configuration',refresh:'Refresh',empty:'No MCP tasks yet. Start the bridge and submit a task from Claude Code.',open:'Open chat',cancel:'Cancel task',follow:'Continue in the same chat',placeholder:'Clarification or next step…',send:'Send continuation',report:'Final report',result:'Result',files:'Changed files',checks:'Checks performed',issues:'Remaining issues',none:'None reported',approval:'Approval required — open the chat to review the request, or answer in Claude Code.',recovery:'Execution requires verification. Inspect the chat before continuing.',offline:'Tasks are paused while the bridge is stopped.',failed:'Action failed. Check the selected connection, workspace trust and task state.',queued:'Queued',running:'Running',waiting_approval:'Waiting for approval',completed:'Completed',error:'Error',cancelled:'Cancelled',working:'Working…',copy:'Task ID',context:'VS Code must remain open. Tasks use the selected companion and its server limits.'},
@@ -17,6 +18,8 @@
   Object.assign(words.ru,{serviceVersion:'Версия сервиса',outdated:'Сервис старее расширения',legacyRestart:'Для обновления сервиса завершите задачи, отключите MCP-клиентов и закройте подключённые окна или нажмите в них «Остановить MCP». Сервис завершится после пяти минут простоя.',restart:'Перезапустить сервис',restarting:'Перезапуск сервиса…',restartConfirm:'Подтвердите перезапуск в VS Code. Активных задач во всех проектах',service_restart_failed:'Не удалось перезапустить сервис.'});
   words.en.restartConfirmBusy='The service is performing a background operation. Confirm restart in VS Code.';
   words.ru.restartConfirmBusy='Сервис выполняет фоновую операцию. Подтвердите перезапуск в VS Code.';
+  Object.assign(words.en,{archive:'Archive',clearFinished:'Clear finished',archived:'Archived',skipped:'Skipped',withUnsent:'With unsent text',emptyTaskList:'The task list is empty.',emptyArchive:'The archive is empty.'});
+  Object.assign(words.ru,{archive:'Архив',clearFinished:'Убрать завершённые',archived:'Убрано в архив',skipped:'Пропущено',withUnsent:'С неотправленным текстом',emptyTaskList:'Список задач пуст.',emptyArchive:'Архив пуст.'});
   const t=key=>(words[state?.language==='ru'?'ru':'en'][key] || key);
   function element(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;}
   function persist(){api.setState({selected,drafts,attempts});}
@@ -30,8 +33,9 @@
       api.postMessage({action:name,requestId:restartRequestId});return;
     }
     if(pending)return;
+    clearResult=null;
     if(!restartRequestId && !state.serviceRestart)restartError=false;
-    if(name==='setModelDefaults')settingsFocus=document.activeElement?.id || null;
+    if(name==='setModelDefaults' || name==='archiveView')settingsFocus=document.activeElement?.id || null;
     pending=true;error='';submission=name==='continue'?{taskId:extra.taskId,version:versions[extra.taskId] || 0}:null;
     requestId=nextRequestId();
     const payload={action:name,...(state.serviceMode?{spaceId:state.spaceId}:{}),...extra};
@@ -115,8 +119,22 @@
     else if(restart || restartRequestId)showStatus(t('working'));
     else if(restartError)showStatus(t('service_restart_failed'));
     if(error || pending)showStatus(pending?t('working'):error==='failed'?t('failed'):t('failed')+' '+error);
-    const tasks=state.tasks || [];
-    if(!tasks.length){root.append(element('p',t('empty'),'empty'));restore();return;}
+    const rows=state.tasks || [];
+    if(state.serviceMode){
+      if(clearResult && clearResult.spaceId===state.spaceId && state.bridgeRunning){
+        const {archived,skipped,withUnsent}=clearResult.counts;
+        showStatus(`${t('archived')} — ${archived}. ${t('skipped')} — ${skipped}. ${t('withUnsent')} — ${withUnsent}.`);
+      }
+      const actions=element('div',undefined,'actions');
+      if(state.serviceCanClearFinished)actions.append(button(t('clearFinished'),'clearFinished'));
+      if(state.archivedCount || state.archiveView){
+        const toggle=button(`${t('archive')} (${state.archivedCount})`,'archiveView',{show:!state.archiveView});toggle.id='task-archive';
+        toggle.setAttribute('aria-pressed',String(!!state.archiveView));actions.append(toggle);
+      }
+      if(actions.childElementCount)root.append(actions);
+    }
+    const tasks=state.serviceMode ? rows.filter(task=>!!task.archived===!!state.archiveView) : rows;
+    if(!tasks.length){root.append(element('p',t(state.archiveView?'emptyArchive':state.archivedCount?'emptyTaskList':'empty'),'empty'));restore();return;}
     if(!tasks.some(task=>task.taskId===selected)){selected=tasks[0].taskId;persist();}
     const list=element('nav',undefined,'task-list');list.setAttribute('aria-label',t('title'));
     for(const task of tasks){
@@ -175,6 +193,7 @@
       }
       if(pending && message.requestId!==requestId)return;
       pending=false;error=message.ok?'':typeof message.error==='string' && message.error?message.error.slice(0,300):'failed';
+      if(message.ok && message.action==='clearFinished' && message.clearFinished)clearResult={spaceId:message.spaceId,counts:message.clearFinished};
       if(message.ok && message.configuration){configuration=message.configuration;copied=message.action==='copyConfiguration';}
       if(message.ok && message.action==='continue' && submission?.taskId===message.taskId && submission.version===(versions[message.taskId] || 0)){delete drafts[message.taskId];persist();}
       if(message.ok){for(const [key,id]of Object.entries(attempts))if(id===message.requestId)delete attempts[key];persist();}

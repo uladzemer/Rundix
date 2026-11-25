@@ -2,6 +2,68 @@ require('./test-isolation.cjs').isolate();
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const {McpTasks}=require('../runtime/mcp-tasks.cjs');
 const {SessionStore}=require('../runtime/store.cjs');
+async function retention(root){
+ const store=new SessionStore(path.join(root,'retention'));
+ const day=86400000,hour=3600000,space='synthetic-retention';let time=Date.UTC(2026,0,20),tasks,resolveClose;
+ const adapter={assertConnection(){},connection:()=>({id:'synthetic'}),pending:task=>task.taskId==='live-pending'?[{id:'synthetic-request'}]:[],closeChat:()=>new Promise(resolve=>{resolveClose=resolve;})};
+ const logs=[];
+ const record=(id,extra={})=>{
+   const task={taskId:id,space,description:'Synthetic retention',state:'completed',projectDirectory:root,createdAt:time-20*day,updatedAt:time-15*day,operations:[],...extra};
+   store.write('mcp-task',id,task);if(tasks)tasks.tasks.set(id,task);return task;
+ };
+ record('old-closed',{closedAt:time-15*day,state:'cancelled'});record('old-open',{state:'error'});
+ record('fresh',{updatedAt:time-day});record('boundary',{updatedAt:time-14*day});
+ const exclusions={queued:{state:'queued'},running:{state:'running'},approval:{state:'waiting_approval'},limit:{state:'waiting_limit'},
+   recovery:{recoveryRequired:true},'live-pending':{},'saved-pending':{pendingIds:['synthetic-request']},answer:{unknownAnswer:'synthetic-answer'},
+   'async-answer':{awaitingAsync:true},'pending-op':{operations:[{requestId:'synthetic-op',outcome:'pending'}]},
+   queue:{continuations:['Synthetic queued continuation']},next:{nextInput:'Synthetic next input'},auto:{limitContinuation:{state:'pending'}},
+   unsent:{unsentInputs:[{id:'synthetic-input',text:'Synthetic unsent text'}]},subscribed:{chatId:'synthetic-chat'},legacy:{legacy:true},readonly:{readOnly:true}};
+ for(const [id,extra] of Object.entries(exclusions))record(id,extra);
+ tasks=new McpTasks({store,adapter,scope:()=>space,now:()=>time,archiveLog:value=>logs.push(value),chatSubscribed:id=>id==='subscribed'});
+ tasks.schedule=()=>{};
+ try{
+   assert(!tasks.tasks.has('old-closed'));assert(!tasks.tasks.has('old-open'));
+   assert.deepEqual([...tasks.tasks.keys()].sort(),[...Object.keys(exclusions),'fresh','boundary'].sort());
+   const states=['starting','observing','reading','closing','waiting'];for(const id of states)record(id);
+   tasks.starting.add('starting');tasks.observations.set('observing',Promise.resolve());
+   const release=tasks.holdTask(tasks.get('reading'));
+   const closing=tasks.call('close_task',{taskId:'closing'});
+   const controller=new AbortController();tasks.signal=()=>controller.signal;
+   const waiting=tasks.call('wait_task',{taskId:'waiting',afterRevision:0});
+   time+=hour-1;tasks.sweepArchive();assert(tasks.tasks.has('boundary'));
+   time++;tasks.sweepArchive();assert(!tasks.tasks.has('boundary'));
+   for(const id of [...Object.keys(exclusions),...states])assert(tasks.tasks.has(id),id);
+   assert.deepEqual(tasks.clearFinished(space,{dryRun:true}),{archived:2,skipped:Object.keys(exclusions).length+states.length-1,withUnsent:1});
+   controller.abort();await waiting;release();resolveClose(false);await closing;
+   tasks.starting.clear();tasks.observations.clear();
+   time+=hour;tasks.pause();tasks.sweepArchive();assert(tasks.tasks.has('waiting'));tasks.resume();tasks.schedule=()=>{};
+   const oldIds=['partial-first','partial-failed','partial-later'];for(const id of oldIds)record(id);
+   let failed=false;const persist=tasks.archive.persist.bind(tasks.archive);
+   tasks.archive.persist=()=>{if(!failed && tasks.archive.index.has(oldIds[1])){failed=true;throw Error('Synthetic index write failure');}persist();};
+   tasks.sweepArchive();
+   assert(!tasks.tasks.has(oldIds[0]));assert(tasks.tasks.has(oldIds[1]));assert(tasks.tasks.has(oldIds[2]));
+   assert(store.read('mcp-task',oldIds[1]));assert.deepEqual(logs,[{code:'archive_record_unavailable'}]);
+   tasks.sweepArchive();assert(tasks.tasks.has(oldIds[1]));
+   time+=hour;tasks.sweepArchive();for(const id of oldIds)assert(!tasks.tasks.has(id));
+   assert(tasks.tasks.has('unsent'));assert(!tasks.tasks.has('waiting'));assert(tasks.tasks.has('closing'),'Closing refreshes retention age');
+   for(let i=0;i<33;i++)record('bounded-'+i);
+   time+=hour;tasks.sweepArchive();assert(tasks.tasks.has('bounded-32'));
+   tasks.sweepArchive();assert(!tasks.tasks.has('bounded-32'));
+   const submission={requestId:'synthetic-retained-id',description:'Synthetic retained task',acceptanceCriteria:'Synthetic criteria',projectDirectory:root};
+   const {taskId}=tasks.call('submit_task',submission);
+   const finished=tasks.get(taskId);finished.state='completed';
+   finished.report={result:'Synthetic retained report',changedFiles:[],checks:[],remainingIssues:[]};
+   finished.unsentInputs=[{id:'synthetic-retained-input',text:'Synthetic retained text'}];tasks.save(finished);
+   const estimate=tasks.clearFinished(space,{dryRun:true});assert.equal(estimate.withUnsent,2);
+   assert.deepEqual(tasks.clearFinished(space),estimate);
+   assert.equal(tasks.call('submit_task',submission).taskId,taskId);
+   assert.equal(tasks.call('get_task',{taskId}).unsentInputs[0].text,'Synthetic retained text');
+   assert.deepEqual(tasks.call('wait_task',{taskId}).report,finished.report);
+   assert.equal(tasks.call('continue_task',{taskId,requestId:'synthetic-retained-continue',clarification:'Synthetic explicit input'}).state,'queued');
+   assert.equal(tasks.tasks.get(taskId).unsentInputs[0].text,'Synthetic retained text');
+ }finally{tasks.dispose();}
+ console.log('PASS task retention: clock, age boundary, load and periodic sweep, exclusion states, pause and partial write retry');
+}
 async function main(){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-task-archive-synthetic-'));let tasks,space='synthetic-a';
  const store=new SessionStore(path.join(root,'tasks'));
@@ -9,6 +71,7 @@ async function main(){
  const create=()=>{const value=new McpTasks({store,adapter,scope:()=>space,maxStoredPerSpace:2,keepClosed:0});value.schedule=()=>{};return value;};
  const args=id=>({requestId:id,description:'Synthetic archived task',acceptanceCriteria:'Synthetic check',projectDirectory:root});
  try{
+  await retention(root);
   tasks=create();
   if(process.platform==='win32')for(const projectDirectory of ['\\\\.\\C:\\','\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\'])assert.throws(()=>tasks.call('submit_task',{...args('synthetic-device'),projectDirectory}),{code:'invalid_directory'});
   const a=tasks.call('submit_task',args('synthetic-a1'));tasks.call('submit_task',args('synthetic-a2'));
@@ -29,7 +92,7 @@ async function main(){
   const restored=tasks.call('continue_task',{taskId:a.taskId,requestId:'synthetic-reopen',clarification:'Synthetic explicit continuation'});
   assert.equal(restored.state,'queued');assert(tasks.tasks.has(a.taskId));assert.equal(tasks.get(a.taskId).closedAt,undefined);
   assert.throws(()=>tasks.call('submit_task',args('synthetic-a3')),{code:'limit'});
-  const completed=tasks.get(a.taskId);completed.state='completed';completed.recoveryRequired=false;
+  const completed=tasks.get(a.taskId);completed.state='completed';completed.recoveryRequired=false;delete completed.nextInput; // The synthetic continuation is now delivered.
   space='synthetic-b';tasks.save(completed);space='synthetic-a';
   const woke=await waiting;assert.equal(woke.timedOut,false);assert.equal(woke.revision,completed.revision,'Archived waiter follows restored object across event scopes');
   // A damaged archive index must fail closed rather than making the old request executable.

@@ -7,7 +7,7 @@ const budget = (name, args) => ['wait_task', 'wait_tasks'].includes(name)
   ? (Number.isInteger(args?.waitSeconds) ? Math.max(1, Math.min(1500, args.waitSeconds)) : 600) * 1000 + 15000 : 12000;
 const TOOLS = new Set(['submit_task', 'get_task', 'wait_task', 'wait_tasks', 'list_tasks', 'continue_task', 'cancel_task', 'close_task', 'list_models', 'reload_window']);
 const SAFE = new Set(['unknown_task', 'space_not_bound', 'stale_instance', 'invalid_argument', 'invalid_directory', 'request_conflict', 'task_active',
-  'connection_unavailable', 'approval_not_pending', 'approval_rejected', 'delivery_unknown', 'response_too_large', 'storage_unavailable', 'limit', 'unsupported','migration_conflict']);
+  'connection_unavailable', 'approval_not_pending', 'approval_rejected', 'delivery_unknown', 'response_too_large', 'storage_unavailable', 'limit', 'unsupported','migration_conflict','archive_changed']);
 const failure = code => Object.assign(Error(code), {code});
 function createTaskRpc({providerOptions = {}} = {}) {
   const scope = new AsyncLocalStorage(); let host, windows, retire, stopping = false;
@@ -35,7 +35,7 @@ function createTaskRpc({providerOptions = {}} = {}) {
     if (isWindow ? !windows.bound(params, peer) : !binding || params.bindingId !== binding.bindingId || params.spaceId !== binding.spaceId)
       return {error:{code:'space_not_bound', message:'Space is not bound.'}};
     if(isWindow && peer.windowBinding.spaces.get(params.spaceId)?.kind==='legacy' && method==='task.call')return {error:{code:'unknown_task',message:'Unknown taskId'}};
-    if (isWindow && ['space.subscribe','space.unsubscribe','chat.open','chat.subscribe','chat.unsubscribe','chat.history'].includes(method)) {
+    if (isWindow && ['space.subscribe','space.unsubscribe','space.clearFinished','chat.open','chat.subscribe','chat.unsubscribe','chat.history'].includes(method)) {
       try {return {result:await scope.run({spaceId:binding.spaceId,signal:peer.signal},()=>windows.call(method, params, peer))};}
       catch (error) {return {error:{code:SAFE.has(error.code) ? error.code : 'rejected', message:SAFE.has(error.code)?error.code:'Request rejected.'}};}
     }
@@ -60,6 +60,7 @@ function createTaskRpc({providerOptions = {}} = {}) {
   }
   return {scope:() => scope.getStore()?.spaceId, signal:() => scope.getStore()?.signal, hello, call,
     changed:task => {windows?.changed(task.space);windows?.chatChanged(task);},sessionChanged:session=>windows?.sessionChanged(session),
+    archiveChanged:space=>windows?.changed(space),chatSubscribed:id=>!!windows?.chatWindows(id),
     attach:(value, generation,legacy,retireService) => {
       host = value; retire = retireService;
       windows = createWindowRpc({generation, tasks:() => host.mcp.tasks,core:()=>host.core,migration:legacy,retire:!!retire});

@@ -32,6 +32,8 @@ function serviceSnapshot({client,language,installed,selectedSpaceId,error,taskCh
   return {language,serviceMode:true,bridgeRunning:!!peer,serviceVersion,extensionVersion,
     serviceOutdated:compareVersions(serviceVersion,extensionVersion)===-1,
     serviceCanRestart:!!peer?.binding?.capabilities?.includes('service.retire'),
+    serviceCanClearFinished:!!peer?.binding?.capabilities?.includes('space.clearFinished') && !!projection?.clearFinishedCount,
+    archiveView:!!projection?.archiveView,archivedCount:projection?.archivedCount || 0,
     serviceRestart:restart ? {phase:restart.phase,activeTasks:restart.activeTasks} : null,
     configurationAvailable:!!installed,spaces,spaceId,error:error || null,legacyStatus:client?.legacyStatus,
     tasks:projection?.tasks || [],totalTasks:projection?.totalTasks || 0,hasMoreHistory:!!projection?.hasMoreHistory,

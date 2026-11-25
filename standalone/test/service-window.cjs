@@ -134,6 +134,45 @@ async function main() {
     assert.equal(reloaded.snapshots.get(sa).tasks.some(task=>task.taskId===ta.taskId),false,'Corrupt archive record is skipped by space.subscribe');
     assert.equal(reloaded.snapshots.get(sa).totalTasks,1);await wb.refresh(sb);assert.equal(wb.snapshots.get(sb).totalTasks,1,'Corrupt A history does not affect B');
     const empty = window([]); await empty.start(); assert.equal(empty.snapshots.size,0);
+    assert(!empty.peer.binding.capabilities.includes('space.clearFinished'));
+    assert(!pa.binding.capabilities.includes('space.clearFinished'));
+    assert.equal((await pa.call('space.clearFinished',{bindingId:pa.binding.bindingId,spaceId:sa})).error.code,'invalid_argument');
+    assert(reloaded.peer.binding.capabilities.includes('space.clearFinished'));
+    await assert.rejects(reloaded.clearFinished(reloaded.peer,sb,{dryRun:true}),{code:'space_not_bound'});
+    const executor=service.host.mcp.tasks;
+    await reloaded.chat(sa,'chat.subscribe',{taskId:extra.taskId});
+    for(let i=0;i<107;i++){
+      const taskId='synthetic-clear-'+i;
+      const seeded={taskId,sessionKey:taskId,space:sa,state:'completed',description:'Synthetic finished history',projectDirectory:a,
+        createdAt:Date.now()+i,operations:[],report:{result:'Synthetic preserved report',checks:[],changedFiles:[],remainingIssues:[]},
+        ...(i===0?{unsentInputs:[{id:'synthetic-unsent-id',text:'Synthetic preserved unsent text'}]}:{})};
+      executor.save(seeded);executor.tasks.set(taskId,seeded);
+    }
+    await reloaded.refresh(sa);assert.equal(reloaded.snapshots.get(sa).tasks.length,100);
+    const confirmation=await reloaded.clearFinished(reloaded.peer,sa,{dryRun:true});
+    assert.deepEqual(confirmation,{archived:107,skipped:1,withUnsent:1});
+    assert.equal(executor.tasks.get('synthetic-clear-0').report.result,'Synthetic preserved report');
+    await assert.rejects(reloaded.clearFinished(reloaded.peer,sa,{expected:{...confirmation,withUnsent:0}}),{code:'archive_changed'});
+    assert.deepEqual(await reloaded.clearFinished(reloaded.peer,sa,{expected:confirmation}),confirmation);
+    await reloaded.refresh(sa);const cleared=reloaded.snapshots.get(sa);
+    assert.equal(cleared.clearFinishedCount,0);assert.equal(cleared.archivedCount,107);
+    assert(cleared.tasks.some(task=>task.archived && !task.closed),'Archival does not synthesize close');
+    assert(cleared.tasks.some(task=>task.taskId===extra.taskId && !task.archived),'The subscribed chat stays in the task list');
+    await reloaded.setArchiveView(sa,true);
+    assert.equal(reloaded.snapshots.get(sa).tasks.length,100);
+    assert(reloaded.snapshots.get(sa).tasks.every(task=>task.archived));
+    await reloaded.setArchiveView(sa,false);
+    assert.equal(reloaded.snapshots.get(sa).tasks[0].taskId,extra.taskId);
+    const archivedRead=await reloaded.call(sa,'get_task',{taskId:'synthetic-clear-0'});
+    assert.equal(archivedRead.report.result,'Synthetic preserved report');
+    assert.equal(archivedRead.unsentInputs[0].text,'Synthetic preserved unsent text');
+    assert.equal((await reloaded.call(sa,'wait_task',{taskId:'synthetic-clear-0'})).report.result,'Synthetic preserved report');
+    assert.equal((await reloaded.chat(sa,'chat.subscribe',{taskId:'synthetic-clear-0'})).closed,false);
+    assert.equal((await reloaded.call(sa,'close_task',{taskId:'synthetic-clear-0'})).chatClosed,true);
+    assert.equal((await reloaded.chat(sa,'chat.subscribe',{taskId:'synthetic-clear-0'})).closed,true,'Explicit close still closes an archived chat');
+    assert.equal((await reloaded.call(sa,'get_task',{taskId:'synthetic-clear-0'})).unsentInputs[0].text,'Synthetic preserved unsent text');
+    assert(executor.tasks.has(tb.taskId),'Clearing A leaves B active');
+    console.log('PASS clear finished RPC: capability and binding, full-space counts, archived page, readable reports and unsent text, subscribed chat stays active');
     assert.throws(()=>new ServiceWindowClient({trusted:false,workspaceFolders:['synthetic-invalid-uri']}),{code:'workspace_untrusted'});
     for (const [binding,code] of [
       [{trusted:false,workspaceFolders:['synthetic-invalid-uri'],windowId:'synthetic-untrusted'},'workspace_untrusted'],

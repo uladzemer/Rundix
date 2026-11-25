@@ -12,6 +12,7 @@ function createLimitPoller({host, pollMs = 15000, now = Date.now}) {
     const due = tasks.find(task => now() >= Math.max(task.nextCheckAt || 0, task.waitingLimit?.resetAt || 0));
     if (!due) return;
     inFlight = true;
+    const release=host.mcp.tasks.holdTask?.(due);
     try {
       await host.core.connect();
       const result = await host.provider.prepareTurn({taskId:due.taskId, spaceId:due.space,
@@ -61,9 +62,11 @@ function createLimitPoller({host, pollMs = 15000, now = Date.now}) {
       for(const task of affected.filter(task=>task.state==='waiting_limit' && !task.cancelRequested)) {
         task.state='error';task.waitingLimit=null;task.error='action_required: Open companion connection settings and reconnect.';
         task.recoveryRequired=false;host.mcp.tasks.release(task);host.mcp.tasks.save(task);
+        const releaseTask=host.mcp.tasks.holdTask?.(task);
         try {await host.provider.cancelWait?.({waitId:task.waitId,taskId:task.taskId,spaceId:task.space});} catch {}
+        finally {releaseTask?.();}
       }
-    } finally {inFlight = false;}
+    } finally {inFlight = false;release?.();}
   }
   const timer = setInterval(() => {void tick();}, pollMs); timer.unref?.();
   const wake = () => {

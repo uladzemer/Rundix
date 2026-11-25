@@ -15,6 +15,7 @@ class ServiceWindowClient extends EventEmitter {
     this.windowId = binding.windowId;
     this.spaces = [...windowBinding(binding).spaces.values()];
     this.snapshots = new Map(); this.reads = new Map(); this.wanted = new Map();
+    this.archiveViews = new Set();
     this.options = options; this.closed = false; this.delay = 250;
     this.localSpaces=this.spaces.slice();
     this.connection = createServiceConnection(options, {clientKind:'window', binding:{...binding,...(options.legacyRoot?{legacyRoot:options.legacyRoot}:{})}});
@@ -89,17 +90,21 @@ class ServiceWindowClient extends EventEmitter {
     if (!this.spaces.some(space => space.spaceId === spaceId)) return Promise.reject(failure('space_not_bound'));
     if (this.reads.has(spaceId)) return this.reads.get(spaceId);
     const read = (async () => {
+      const archiveView=()=>peer.binding.capabilities.includes('space.clearFinished') && this.archiveViews.has(spaceId);
+      let requested;
       do {
-        const snapshot = unwrap(await peer.call('space.subscribe', {bindingId:peer.binding.bindingId, spaceId}, 12000));
+        requested=archiveView();
+        const snapshot = unwrap(await peer.call('space.subscribe', {bindingId:peer.binding.bindingId, spaceId,
+          ...(requested ? {archiveView:true} : {})}, 12000));
         if (this.peer !== peer || this.closed || peer.closed) return;
         if (snapshot?.generation !== peer.generation || snapshot.schemaVersion !== 1 || snapshot.spaceId !== spaceId ||
             !Number.isSafeInteger(snapshot.viewRevision) || snapshot.viewRevision < 0 || !Array.isArray(snapshot.tasks))
           throw failure('protocol_incompatible');
         const previous = this.snapshots.get(spaceId);
-        if (!previous || snapshot.viewRevision >= previous.viewRevision) {
+        if (requested===archiveView() && (!previous || snapshot.viewRevision >= previous.viewRevision)) {
           this.snapshots.set(spaceId, snapshot); this.emit('changed', spaceId);
         }
-      } while ((this.wanted.get(spaceId) || 0) > this.snapshots.get(spaceId).viewRevision);
+      } while (requested!==archiveView() || (this.wanted.get(spaceId) || 0) > this.snapshots.get(spaceId).viewRevision);
     })().finally(() => {if (this.reads.get(spaceId) === read) this.reads.delete(spaceId);});
     this.reads.set(spaceId, read); return read;
   }
@@ -120,6 +125,23 @@ class ServiceWindowClient extends EventEmitter {
       if (result.reason === undefined || result.reason === reason) return {retiring:false,activeTasks:result.activeTasks,reason};
     }
     throw failure('protocol_incompatible');
+  }
+  async clearFinished(peer, spaceId, {dryRun,expected} = {}) {
+    if (this.closed || this.peer !== peer || !peer || peer.closed) throw failure('service_unavailable');
+    if (!peer.binding.capabilities.includes('space.clearFinished')) throw failure('method_not_supported');
+    if (!this.spaces.some(space=>space.spaceId===spaceId && space.kind!=='legacy')) throw failure('space_not_bound');
+    const result = unwrap(await peer.call('space.clearFinished',{bindingId:peer.binding.bindingId,spaceId,dryRun,expected},12000));
+    if(this.peer!==peer || peer.closed || this.closed)throw failure('stale_instance');
+    if(!['archived','skipped','withUnsent'].every(key=>Number.isSafeInteger(result?.[key]) && result[key]>=0) || result.withUnsent>result.archived)
+      throw failure('protocol_incompatible');
+    return result;
+  }
+  async setArchiveView(spaceId,show) {
+    if(!this.peer?.binding.capabilities.includes('space.clearFinished'))throw failure('method_not_supported');
+    const previous=this.archiveViews.has(spaceId);
+    if(show)this.archiveViews.add(spaceId);else this.archiveViews.delete(spaceId);
+    try {await this.refresh(spaceId);}
+    catch(error){if(previous)this.archiveViews.add(spaceId);else this.archiveViews.delete(spaceId);throw error;}
   }
   waitForGeneration(previous, timeoutMs = 30000) {
     const current = peer => peer && !peer.closed && peer.generation !== previous;

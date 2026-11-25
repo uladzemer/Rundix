@@ -250,7 +250,14 @@ connected VS Code windows or select **Stop MCP** in them. The service exits
 after five idle minutes. Start MCP to connect to the registered version.
 
 
-Service task storage is capped per launch space. Closing finished tasks permits
-automatic archival of older closed records; archived IDs remain readable and
-requestId retries stay idempotent. Archived records leave list_tasks and an
-explicit continuation restores them subject to the same per-space capacity.
+Service task storage is capped per launch space. The service archives finished
+tasks last updated more than 14 days ago, whether their chats were closed or
+left open. It can also archive older closed records to make room at the cap.
+Automatic archival leaves tasks with unsent input in the task list. The service
+panel's **Clear finished** action works across the selected space and asks for
+confirmation before archiving tasks, including those with unsent input. Both
+paths skip tasks with open chat subscriptions, pending work or recovery, and
+imported legacy history. Archived records leave `list_tasks` and appear under
+the panel's **Archive** toggle. The report and unsent text remain readable by
+ID, `requestId` retries stay idempotent, and an explicit continuation restores
+the task subject to the same per-space capacity.

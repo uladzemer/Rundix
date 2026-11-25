@@ -434,6 +434,32 @@ function activate(context) {
   async function handleMcpPanel(message) {
     if(!message || typeof message.action!=='string')throw Error('Invalid MCP panel action.');
     if(serviceMode && message.action==='restartService')return restartService();
+    if(serviceMode && message.action==='archiveView'){
+      const client=serviceClient;
+      if(!vscode.workspace.isTrusted || !client || message.spaceId!==mcpPanelSnapshot().spaceId || typeof message.show!=='boolean')
+        throw Object.assign(Error('Invalid archive view request.'),{code:'invalid_argument'});
+      await client.setArchiveView(message.spaceId,message.show);
+      publishMcpPanel(true);return;
+    }
+    if(serviceMode && message.action==='clearFinished'){
+      const client=serviceClient,peer=client?.peer,spaceId=message.spaceId;
+      const current=()=>vscode.workspace.isTrusted && client===serviceClient && client?.peer===peer && peer && !peer.closed && mcpPanelSnapshot().spaceId===spaceId;
+      const assertCurrent=()=>{if(!current())throw Object.assign(Error('Service binding changed.'),{code:'stale_instance'});};
+      assertCurrent();
+      const expected=await client.clearFinished(peer,spaceId,{dryRun:true});
+      assertCurrent();
+      if(!expected.archived){await client.refresh(spaceId);return;}
+      const ru=locale.language==='ru',label=ru?'Убрать завершённые':'Clear finished';
+      const unsent=expected.withUnsent ? (ru?` Задач с неотправленным текстом: ${expected.withUnsent}.`:` Tasks with unsent text: ${expected.withUnsent}.`) : '';
+      const prompt=(ru?`Из списка будет убрано задач: ${expected.archived}.`:`Tasks to remove from the list: ${expected.archived}.`)+unsent+
+        (ru?' Архивные задачи доступны по ID и вернутся в список при продолжении.':'Archived tasks stay readable by ID and return to the list on continuation.');
+      if(await vscode.window.showWarningMessage(prompt,{modal:true},label)!==label)return;
+      assertCurrent();
+      const clearFinished=await client.clearFinished(peer,spaceId,{expected});
+      await client.refresh(spaceId);
+      assertCurrent();publishMcpPanel(true);
+      return {clearFinished,spaceId};
+    }
     if(message.action==='setModelDefaults') {
       if(!vscode.workspace.isTrusted)throw Object.assign(Error('Workspace trust is required.'),{code:'workspace_untrusted'});
       panelModels.validateDefaults(message.model,message.effort,currentPanelModels());

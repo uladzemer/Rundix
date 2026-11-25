@@ -66,6 +66,32 @@ exports.run = async () => {
     const tabContinued=await call('wait_task',{taskId:task.taskId,waitSeconds:5});assert.equal(tabContinued.chatId,finished.chatId);
     await api.mcp.chatAction(chat,{action:'closeReady',state:{draft:'Synthetic durable tab draft',questionDrafts:{},attempts:{}}});
     await api.mcp.panelAction({action:'openChat',spaceId,taskId:task.taskId});chat=[...api.mcp.serviceChats.values()][0];assert.equal(chat.draftState.draft,'Synthetic durable tab draft');
+    const executor=service.host.mcp.tasks,subscribed=executor.tasks.get(task.taskId);
+    subscribed.updatedAt=Date.now()-15*86400000;executor.nextArchiveSweep=0;executor.sweepArchive();
+    assert(executor.tasks.has(task.taskId),'The sweep preserves the open tab task');
+    const archiveId='synthetic-finished-for-confirmation';
+    const prepared={taskId:archiveId,sessionKey:archiveId,space:spaceId,state:'completed',description:'Synthetic clear task',operations:[],
+      createdAt:Date.now(),projectDirectory:root,unsentInputs:[{id:'synthetic-confirmation-unsent',text:'Synthetic unsent confirmation text'}]};
+    executor.tasks.set(archiveId,prepared);executor.save(prepared);
+    await api.mcp.panelAction({action:'refresh'});
+    assert(api.mcp.panelSnapshot().serviceCanClearFinished);
+    const warning=vscode.window.showWarningMessage;
+    try {
+      let confirm=false,shown=0;
+      vscode.window.showWarningMessage=async (message,options,label)=>{
+        shown++;assert.equal(options.modal,true);
+        assert.match(message,/Tasks to remove from the list: 1|Из списка будет убрано задач: 1/);
+        assert.match(message,/Tasks with unsent text: 1|Задач с неотправленным текстом: 1/);
+        assert.match(message,/readable by ID.*on continuation|доступны по ID.*при продолжении/);
+        return confirm?label:undefined;
+      };
+      await api.mcp.panelAction({action:'clearFinished',spaceId});assert(executor.tasks.has(archiveId));
+      confirm=true;
+      const {clearFinished}=await api.mcp.panelAction({action:'clearFinished',spaceId});
+      assert.deepEqual(clearFinished,{archived:1,skipped:1,withUnsent:1});assert.equal(shown,2);
+    } finally {vscode.window.showWarningMessage=warning;}
+    assert.equal(api.mcp.serviceChats.values().next().value,chat);assert.equal(chat.snapshot.closed,false);
+    assert.equal(api.mcp.panelSnapshot().serviceCanClearFinished,false);report.clearFinishedConfirmation=true;
     const version=require('../package.json').version;
     assert.equal(api.mcp.panelSnapshot().serviceVersion,version);assert.equal(api.mcp.panelSnapshot().serviceCanRestart,true);
     const stub=path.join(root,'versions','synthetic','runtime');

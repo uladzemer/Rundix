@@ -48,6 +48,46 @@ module.exports=async function({page,service=false,language,theme,width,artifacts
   assert.deepEqual((await shown()).map(row=>row[0]),expected);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   if(artifacts)await page.screenshot({path:path.join(artifacts,`${service?'service':'window'}-turn-captions-${language}-${theme}-${width}.png`),fullPage:true});
+  await page.evaluate(()=>{
+    window.captionBase=window.fixture;
+    window.fixture={...window.fixture,turnSelections:window.fixture.turnSelections.map(row=>row.turnId==='synthetic-caption-turn-2'?{...row,steered:true}:row),
+      items:[...window.fixture.items.slice(0,3),{id:'synthetic-interleaved-agent',type:'agentMessage',turnId:'synthetic-other-turn',text:'Synthetic interleaved turn'},...window.fixture.items.slice(3)]};
+    window.fixture.viewRevision++;window.update();
+  });
+  assert.deepEqual(await shown(),[[expected[0],'synthetic-caption-user-1','synthetic-caption-turn-1']],
+    'An attempted steer removes the displayed caption, including its second user row');
+  await page.evaluate(()=>{window.fixture.items.find(item=>item.id==='synthetic-caption-agent-2').text+=' Synthetic next delta';window.fixture.viewRevision++;window.update();});
+  assert.deepEqual((await shown()).map(row=>row[0]),[expected[0]],'Streaming does not restore a steered caption');
+  await page.evaluate(()=>{
+    window.fixture={...window.fixture,generation:'synthetic-clipped-steered-generation',historyTruncated:true,
+      cursor:'synthetic-clipped-page',items:window.fixture.items.filter(item=>item.id==='synthetic-caption-steer')};
+    window.update();
+  });
+  assert.equal((await shown()).length,0,'A clipped later user row of a steered turn has no caption');
+  const earlierSteered=()=>page.evaluate(service=>{
+    const rows=window.captionBase.items.filter(item=>['synthetic-caption-user-2','synthetic-caption-agent-2'].includes(item.id));
+    if(service)window.dispatchEvent(new MessageEvent('message',{data:{type:'chatHistory',data:{items:rows,cursor:null}}}));
+    else{window.fixture.items=[...rows,...window.fixture.items];window.update();}
+  },service);
+  await earlierSteered();
+  assert.equal((await shown()).length,0,'Loading the true first user row does not restore a steered caption');
+  await page.evaluate(()=>{window.fixture.viewRevision++;window.update();});
+  assert.equal((await shown()).length,0,'A later snapshot keeps the steered caption hidden');
+  await page.evaluate(()=>{
+    const text='Synthetic unsteered message',turnId='synthetic-caption-turn-3';
+    window.fixture={...window.fixture,generation:'synthetic-unsteered-generation',items:[
+      {id:'synthetic-caption-user-3',type:'userMessage',turnId,text,content:[{type:'text',text}]},
+      {id:'synthetic-caption-other-turn',type:'agentMessage',turnId:'synthetic-caption-turn-4',text},
+      {id:'synthetic-caption-late-agent',type:'agentMessage',turnId,text}],
+      turnSelections:[{turnId,model:'synthetic-third',displayName:'Synthetic third',effort:'medium'}]};
+    window.update();
+  });
+  const third='Synthetic third · '+(language==='ru'?'Среднее':'Medium');
+  assert.deepEqual(await shown(),[[third,'synthetic-caption-user-3','synthetic-caption-turn-3']],
+    'A clipped unsteered turn has its caption despite non-contiguous T, U, late T rows');
+  await page.evaluate(()=>{window.fixture.items.at(-1).text+=' Synthetic streamed delta';window.fixture.viewRevision++;window.update();});
+  assert.deepEqual(await shown(),[[third,'synthetic-caption-user-3','synthetic-caption-turn-3']]);
+  await page.evaluate(()=>{window.fixture=window.captionBase;delete window.captionBase;window.fixture.viewRevision++;window.update();});
   // Migration from 0.4.21 has exactly the one confirmed selection, never a backfill.
   await page.evaluate(()=>{delete window.fixture.turnSelections;window.fixture.lastSelection={turnId:'synthetic-caption-turn-2',model:'synthetic-second',displayName:'Synthetic second',effort:null};window.fixture.viewRevision++;window.update();});
   assert.deepEqual((await shown()).map(row=>row[0]),['Synthetic second']);

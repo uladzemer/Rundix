@@ -1,5 +1,9 @@
 # Changelog / История изменений
 
+## 0.4.23 — 2026-11-25
+
+- MCP task chats hide per-turn model captions after any steering attempt, including refused or uncertain delivery, so clipped history cannot attach a caption to a later user message. Session-only marks survive restore; task snapshots and header selections stay unchanged.
+
 ## 0.4.22 — 2026-11-24
 
 - Automatic MCP model selection offers the catalog's supported reasoning efforts when the preferred model is unavailable, matching the regular chat fallback used at execution.

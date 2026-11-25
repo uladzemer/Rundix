@@ -324,7 +324,7 @@ class WorkbenchMessages {
         continue;
       desired.push(node.article);
       const selection=item.type==='userMessage' && selections.get(item.turnId);
-      if(selection && !captioned.has(item.turnId)){
+      if(selection && !selection.steered && !captioned.has(item.turnId)){
         captioned.add(item.turnId);
         if(!node.caption){node.caption=document.createElement('small');node.caption.className='turn-model-caption';}
         node.caption.dataset.turnId=item.turnId;

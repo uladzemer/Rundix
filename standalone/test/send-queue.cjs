@@ -102,6 +102,90 @@ async function transportChecks() {
   await assert.rejects(server.request('turn/start'), error => error.deliveryUncertain === false);
 }
 
+async function steerChecks() {
+  const selections=require('../runtime/turn-selections.cjs'),{steer}=require('../runtime/send-queue.cjs');
+  for(const outcome of ['success','refused','uncertain','thrown','recorder-throws','save-throws','ordinary']){
+    const f=fixture(),turnId='synthetic-steered-turn';
+    f.s.mcpTask=outcome!=='ordinary';f.s.turnId=turnId;f.s.busy=true;
+    f.s.attachments=[{id:'synthetic-file'}];
+    f.s.lastSelection={turnId,model:'synthetic-model',displayName:'Synthetic model',effort:'medium'};
+    const lastSelection=clone(f.s.lastSelection),error=outcome==='refused'?Error('No active turn'):outcome==='uncertain'?uncertain():Error('Synthetic steer failure');
+    const mark=selections.markSteered;
+    if(outcome==='recorder-throws')selections.markSteered=()=>{throw Error('Synthetic recorder failure');};
+    f.server.request=async(method,params)=>{
+      assert.equal(method,'turn/steer');
+      assert.deepEqual(params,{threadId:f.s.id,expectedTurnId:turnId,input:[{type:'text',text:'Synthetic steer'}]});
+      if(!['ordinary','recorder-throws'].includes(outcome))assert.deepEqual(f.s.steeredTurns,[turnId],'Marked before RPC, independently of its outcome');
+      if(['refused','uncertain','thrown'].includes(outcome))throw error;
+      return {};
+    };
+    if(outcome==='save-throws')f.failDisk(true);
+    try {
+      if(['uncertain','thrown'].includes(outcome))await assert.rejects(steer(f.context,f.s,'Synthetic steer',f.s.attachments),value=>value===error);
+      else if(outcome==='save-throws')await assert.rejects(steer(f.context,f.s,'Synthetic steer',f.s.attachments),/Synthetic atomic write failure/);
+      else assert.equal(await steer(f.context,f.s,'Synthetic steer',f.s.attachments),outcome!=='refused');
+      assert.deepEqual(f.s.lastSelection,lastSelection,'Task-level lastSelection is unchanged');
+      if(['ordinary','recorder-throws'].includes(outcome)){
+        assert.equal(f.s.steeredTurns,undefined);assert.equal(f.s.turnSelections,undefined);
+      }else{
+        assert.deepEqual(selections.history(f.s),[{...lastSelection,steered:true}]);
+        if(outcome!=='save-throws'){
+          const restored=clone(f.records.get(f.s.key));
+          assert.deepEqual(restored.steeredTurns,[turnId]);assert.deepEqual(selections.history(restored),selections.history(f.s));
+        }
+      }
+      if(outcome==='ordinary')assert.equal(Object.hasOwn(f.records.get(f.s.key),'steeredTurns'),false,'Ordinary chats persist no steering metadata');
+      if(['refused','uncertain','thrown'].includes(outcome))assert.deepEqual(f.s.attachments,[{id:'synthetic-file'}],'Failed steering retains attachments');
+    }finally{selections.markSteered=mark;}
+  }
+  // The turn notification can expose its ID before turn/start is acknowledged.
+  {
+    const f=fixture();f.s.mcpTask=true;
+    f.start(async()=>{
+      f.emit('turn/started');
+      const request=f.server.request;
+      f.server.request=async method=>{assert.equal(method,'turn/steer');return {};};
+      try{assert.equal(await steer(f.context,f.s,'Synthetic early steer',[]),true);}finally{f.server.request=request;}
+      assert.equal(f.s.lastSelection,undefined);assert.deepEqual(f.s.steeredTurns,['synthetic-turn']);
+      f.emit('turn/completed');return {turn:{id:'synthetic-turn'}};
+    });
+    assert.equal((await f.context.send(f.s,'Synthetic input')).turnId,'synthetic-turn');
+    assert.equal(selections.history(f.s)[0].steered,true,'An attempt before ACK applies to the later selection');
+    assert.equal(Object.hasOwn(f.s.lastSelection,'steered'),false);
+    await f.context.save(f.s);assert.equal(selections.history(clone(f.records.get(f.s.key)))[0].steered,true);
+  }
+  {
+    const s={mcpTask:true,lastSelection:{turnId:'synthetic-old',model:'synthetic-model',effort:null}};
+    selections.markSteered(s,'synthetic-old');
+    for(let index=0;index<101;index++)selections.markSteered(s,'synthetic-steer-'+index);
+    assert.equal(s.steeredTurns.length,100);assert.equal(s.steeredTurns[0],'synthetic-steer-1');
+    assert.equal(selections.history(s)[0].steered,true,'A known caption never returns when its ID leaves the bounded list');
+    selections.markSteered(s,'synthetic-steer-1');assert.equal(s.steeredTurns.length,100);assert.equal(s.steeredTurns.at(-1),'synthetic-steer-1');
+    assert.equal(s.steeredTurns.filter(id=>id==='synthetic-steer-1').length,1);
+    assert.equal(selections.append(s,s.lastSelection)[0].steered,true,'A repeated ACK cannot erase known ambiguity');
+    assert.deepEqual(selections.steeredTurns({steeredTurns:[null,7,{},'synthetic-a','synthetic-b','synthetic-a']}),['synthetic-b','synthetic-a']);
+    assert.deepEqual(selections.steeredTurns({steeredTurns:{}}),[]);
+    assert.deepEqual(selections.history({turnSelections:[null,{turnId:7,model:'synthetic-model'},{turnId:'synthetic-a',model:'synthetic-model',steered:'true'}],steeredTurns:[7,{}]}),
+      [{turnId:'synthetic-a',model:'synthetic-model',displayName:undefined,effort:undefined}],'Damaged steering flags and IDs are ignored');
+  }
+  // Even a failing best-effort save cannot replace a steering refusal/uncertain error.
+  for(const refused of [true,false]){
+    const f=fixture(),error=refused?Error('No active turn'):uncertain();f.s.mcpTask=true;f.s.turnId='synthetic-turn';f.failDisk(true);
+    f.server.request=async()=>{throw error;};
+    if(refused)assert.equal(await steer(f.context,f.s,'Synthetic steer',[]),false);
+    else await assert.rejects(steer(f.context,f.s,'Synthetic steer',[]),value=>value===error);
+  }
+  for(const refused of [true,false]){
+    const f=fixture(),error=refused?Error('No active turn'):uncertain(),mark=selections.markSteered;
+    f.s.mcpTask=true;f.s.turnId='synthetic-turn';f.server.request=async()=>{throw error;};
+    selections.markSteered=()=>{throw Error('Synthetic recorder failure');};
+    try{
+      if(refused)assert.equal(await steer(f.context,f.s,'Synthetic steer',[]),false);
+      else await assert.rejects(steer(f.context,f.s,'Synthetic steer',[]),value=>value===error);
+    }finally{selections.markSteered=mark;}
+  }
+}
+
 async function sendChecks() {
   for(const outcome of ['ack','ordinary','unknown-effort','rejected','uncertain','stale','hook-throws','hook-rejects']){
     const f=fixture(),previous={model:'synthetic-previous',displayName:'Synthetic previous',effort:null,turnId:'synthetic-previous-turn'};
@@ -820,6 +904,6 @@ async function limitChecks() {
     await f.context.send(f.s,'Synthetic late notification diagnostic',[]);
     assert.equal(rows.length,1);assert.equal(rows[0].status,'completed');assert.equal(rows[0].category,'none');
   }
-  await rotatedDraftChecks();await transportChecks();await sendChecks();await queueChecks();await movedOnChecks();
+  await rotatedDraftChecks();await transportChecks();await sendChecks();await steerChecks();await queueChecks();await movedOnChecks();
   console.log('Send/queue: uncertain start reconciliation and leases, no follow-up replay, transactional enqueue passed.');
 })().catch(error => { console.error(error);process.exitCode = 1; });

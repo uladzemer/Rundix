@@ -49,6 +49,21 @@ async function scenario(kind){
     const saved=service.host.core.store.session(key);delete saved.turnSelections;service.host.core.store.write('session',key,saved);
     assert.deepEqual(savedSnapshot().turnSelections,[saved.lastSelection],'0.4.21 saved sessions expose only their recorded last turn');
     service.host.core.store.saveSession(session);
+    require('../runtime/turn-selections.cjs').markSteered(session,continuedChat.turnSelections[0].turnId);
+    await service.host.core.save(session);
+    const steeredChat=await wa.chat(sa,'chat.subscribe',{taskId:task.taskId});
+    assert.equal(steeredChat.turnSelections[0].steered,true,'Chat IPC carries the session steering mark');
+    assert.equal(Object.hasOwn(steeredChat.turnSelections[1],'steered'),false);
+    assert.deepEqual(savedSnapshot().turnSelections,steeredChat.turnSelections,'Steering marks survive saved-session projection');
+    await assert.rejects(wb.chat(sb,'chat.open',{taskId:task.taskId}),{code:'unknown_task'},'Steering metadata stays scoped to its space');
+    await wa.refresh(sa);
+    const archived=require('../runtime/service-task-archive.cjs').TaskArchive.prototype.entry.call({store:service.host.mcp.tasks.store},taskRecord).summary;
+    for(const view of [steeredChat,taskRecord,await wa.call(sa,'get_task',{taskId:task.taskId}),await wa.call(sa,'get_task',{taskId:task.taskId,brief:true}),
+      (await wa.call(sa,'list_tasks')).tasks[0],wa.snapshots.get(sa).tasks[0],archived]){
+      assert.equal(Object.hasOwn(view.lastSelection,'steered'),false,'Last selection stays unchanged in every view');
+      assert.equal(Object.hasOwn(view,'steeredTurns'),false,'The independent list is never projected');
+      if(view!==steeredChat)assert.equal(Object.hasOwn(view,'turnSelections'),false,'Task APIs, panel and archive remain history-free');
+    }
     session.items=Array.from({length:250},(_,index)=>({id:'synthetic-item-'+index,type:'agentMessage',text:'😀'.repeat(10000)}));
     service.host.core.store.saveSession(session);
     const bounded=await wa.chat(sa,'chat.subscribe',{taskId:task.taskId});

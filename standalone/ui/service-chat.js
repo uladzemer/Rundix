@@ -69,7 +69,7 @@
     const selections=new Map((state?.turnSelections ?? (state?.lastSelection?[state.lastSelection]:[])).map(value=>[value.turnId,value])),used=new Set();
     for(const article of [...transcript.children]){
       const item=items.get(article.dataset.itemId)?.item,selection=item?.type==='userMessage' && selections.get(item.turnId);
-      if(!selection || used.has(item.turnId))continue;
+      if(!selection || selection.steered || used.has(item.turnId))continue;
       used.add(item.turnId);
       let caption=captions.get(item.turnId);
       if(!caption){caption=el('small',null,'turn-model-caption');caption.dataset.turnId=item.turnId;captions.set(item.turnId,caption);}

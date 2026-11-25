@@ -8,7 +8,7 @@ async function save(deps, s) {
     model: s.model,
     effort: s.effort,
     lastSelection: s.lastSelection || null,
-    ...(s.mcpTask?{turnSelections:require('./turn-selections.cjs').history(s)}:{}),
+    ...(s.mcpTask?{turnSelections:require('./turn-selections.cjs').history(s),steeredTurns:require('./turn-selections.cjs').steeredTurns(s)}:{}),
     prefs: s.prefs,
     draft: s.draft || "",
     draftRevision:s.draftRevision || null,

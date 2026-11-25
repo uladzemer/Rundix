@@ -371,11 +371,15 @@ async function queueFollowUp(deps, s,text,attachments){
 async function steer(deps, s,text,attachments){
   if(!s.id || !s.turnId || s.compacting)return false;
   const expectedTurnId=s.turnId;
+  // An attempted steer may be accepted even when its reply is lost.
+  try {if(s.mcpTask)require('./turn-selections.cjs').markSteered(s,expectedTurnId);} catch {}
   try{
     await deps.server.request('turn/steer',{threadId:s.id,expectedTurnId,input:deps.buildInput(text,attachments)});
     const consumed=new Set(attachments.map(file=>file.id));s.attachments=s.attachments.filter(file=>!consumed.has(file.id));
     await deps.save(s);deps.publish(s);return true;
   }catch(error){
+    // Preserve the attempt on refusals and uncertain delivery too, without changing the outcome.
+    try {if(s.mcpTask)await deps.save(s);} catch {}
     // Only a definite refusal can be queued; a timeout might already have been accepted.
     if(/no active turn|not active|expected.*turn.*(?:match|different)|turn.*mismatch/i.test(error.message))return false;
     throw error;

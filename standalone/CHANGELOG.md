@@ -1,5 +1,11 @@
 # Changelog / История изменений
 
+## 0.4.26 — 2026-11-25
+
+- In service mode, a manual input is recorded together with its dispatch checkpoint. If delivery stays unknown (timeout, lost connection, service restart), `get_task` lists it with `possiblyNotDelivered: true`, compact responses add `possiblyNotDeliveredCount`, and the MCP panels label it. Proof of delivery removes the entry; a confirmed CLI exit or a definite refusal turns it into an ordinary unsent input. Nothing is re-sent automatically.
+- Finished service tasks untouched for 14 days move to the archive automatically, except tasks with unsent input, a subscribed chat, pending work or recovery. The MCP panel adds **Clear finished** with a confirmation that states how many tasks hold unsent text, and hides archived tasks behind an **Archive** toggle. Archived tasks stay readable by ID and return on continuation.
+- The service removes its own crashed temporary files and old registry backups older than 30 days from the service root, keeping the newest backup.
+
 ## 0.4.25 — 2026-11-25
 
 - In service mode, an input whose delivery was not confirmed when the CLI exited is kept as a recoverable unsent input instead of being silently replaced by the next continuation. Nothing is re-sent automatically.

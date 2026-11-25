@@ -19,7 +19,7 @@ function harness(name,service,adapter,now=Date.now,maxParallel=()=>1){
   tasks.schedule=()=>{};return tasks;
 }
 async function step(tasks){await tasks.tick();await tasks.idle();}
-async function until(host,check){const deadline=Date.now()+10000;while(Date.now()<deadline){await step(host.mcp.tasks);if(check())return;await pause(15);}throw Error('Synthetic review regression deadline: '+JSON.stringify([...host.mcp.tasks.tasks.values()].map(row=>({state:row.state,progress:row.progress,error:row.error,phase:row.deliveryPhase,pending:row.limitContinuation,budget:row.serviceReadiness}))));}
+async function until(host,check,waitForIdle=true){const deadline=Date.now()+10000;while(Date.now()<deadline){await host.mcp.tasks.tick();if(waitForIdle)await host.mcp.tasks.idle();if(check())return;await pause(15);}throw Error('Synthetic review regression deadline: '+JSON.stringify([...host.mcp.tasks.tasks.values()].map(row=>({state:row.state,progress:row.progress,error:row.error,phase:row.deliveryPhase,pending:row.limitContinuation,budget:row.serviceReadiness}))));}
 
 async function queuedInput(){
   for(const service of [false,true]){
@@ -129,6 +129,139 @@ async function repeatedLimit(){
     await poller.tick();
     await until(host,()=>row.state==='completed');assert.equal(row.autoLimit,undefined,'An intervening successful turn resets the consecutive budget');
   }finally{poller?.dispose();await host?.dispose({force:true});await data.close();}
+}
+
+async function exitDuringLimit(kind){
+  const directory=project(kind),gate=path.join(directory,'synthetic-dispatch-gate');
+  const automatic=kind!=='clarification-at-limit', nextLimit=kind!=='automatic-exit-without-limit';
+  const data=fixture(directory,{cliEnv:{RUNDIX_SYNTHETIC_DISPATCH_GATE:gate,...(automatic?{RUNDIX_SYNTHETIC_LIMIT_ONCE:'1'}:{})}});
+  const makeCli=data.hostOptions.providerOptions.createCli,sent=[];
+  let now=Date.now(),host,poller,held;
+  const lostAck=()=>Object.assign(Error('Synthetic lost ACK'),{deliveryUncertain:true});
+  data.hostOptions.providerOptions.createCli=options=>{
+    const cli=makeCli(options),request=cli.request.bind(cli);
+    cli.request=async(method,params,...args)=>{
+      if(method!=='turn/start')return request(method,params,...args);
+      sent.push(params.input[0].text);
+      const attempt=sent.length,result=await request(method,params,...args);
+      if(attempt!==(automatic?2:1))return result;
+      // Hold the RPC response at the transport boundary while the real synthetic turn is live.
+      return new Promise((_,reject)=>{held={cli,turnId:result.turn.id,reject};});
+    };return cli;
+  };
+  try{
+    host=await createHeadlessHost({root:directory,generation:'synthetic-'+kind,clock:{now:()=>now,setTimeout,clearTimeout},taskOptions:{scope:()=> 'synthetic-space'},...data.hostOptions});
+    const tasks=host.mcp.tasks;tasks.schedule=()=>{};
+    if(!automatic)fs.writeFileSync(gate,'ack');
+    const {taskId}=await tasks.call('submit_task',{requestId:'synthetic-exit-limit',description:'Synthetic limit task',acceptanceCriteria:'Synthetic check',projectDirectory:directory});
+    const row=tasks.get(taskId),recoveryTexts=()=>tasks.call('get_task',{taskId}).unsentInputs.map(item=>item.text);
+    let firstLimit;
+    if(automatic){
+      await until(host,()=>row.state==='waiting_limit');
+      firstLimit=row.limitContinuation.exhaustedTurnId;
+      fs.writeFileSync(gate,'ack');
+      poller=createLimitPoller({host,now:()=>now,pollMs:1000000});
+      await poller.tick();
+      if(nextLimit){
+        const write=tasks.store.write.bind(tasks.store);
+        let beforeDispatch;
+        tasks.store.write=(type,id,value)=>{
+          if(!beforeDispatch && type==='mcp-task' && id===taskId && value.deliveryPhase==='dispatching'){
+            beforeDispatch=tasks.store.read(type,id);
+            throw Error('Synthetic dispatch checkpoint write failure');
+          }
+          return write(type,id,value);
+        };
+        await until(host,()=>beforeDispatch && row.state==='queued');
+        const afterFailure=tasks.store.read('mcp-task',taskId);
+        for(const key of ['nextInput','queuedRecoveryInput','deliveryPhase','lastActivityAt','limitContinuation','autoLimit'])
+          assert.deepEqual(afterFailure[key],beforeDispatch[key],key+' survives the failed checkpoint');
+        assert.equal(afterFailure.revision,beforeDispatch.revision+1,'Only the retry state advances the revision');
+        assert.equal(sent.length,1,'The failed checkpoint did not send');
+        row.blockedUntil=0;
+      }
+    }
+    await until(host,()=>held && host.core.sessions.get(row.sessionKey)?.lastStartedTurnId===held.turnId,false);
+    assert.equal(row.deliveryPhase,'dispatching');
+    const clarification='Synthetic queued clarification at limit';
+    if(automatic){
+      assert.equal(row.limitContinuation.state,'dispatching');
+      assert.equal(row.autoLimit.consecutive,1);
+      assert.equal(sent.at(-1),recovery.CONTINUE);
+    }else{
+      held.reject(lostAck());await tasks.idle();
+      assert.equal(row.state,'error');assert.equal(row.recoveryRequired,true);
+      assert.equal(host.provider.cli,held.cli,'The uncertain turn still owns the live CLI');
+      await tasks.call('continue_task',{taskId,requestId:'synthetic-queued-at-limit',clarification});
+      assert.equal(row.nextInput,clarification);assert.equal(row.queuedRecoveryInput,true);
+      assert.deepEqual(recoveryTexts(),[],'Uncertainty without confirmed exit stays out of recovery');
+    }
+    if(nextLimit){
+      const signalLimit=turnId=>held.cli.emit('notification',{method:'error',params:{threadId:row.chatId,turnId,
+        error:{message:'Synthetic usage limit',codexErrorInfo:'usageLimitExceeded'},willRetry:false}});
+      signalLimit(held.turnId);
+      assert.equal(row.exhaustedTurnId,held.turnId);
+      if(automatic){
+        signalLimit(firstLimit);
+        assert.equal(row.exhaustedTurnId,held.turnId,'A stale limit cannot replace the current turn limit while its ACK is missing');
+      }
+    }
+    await held.cli.stop();
+    held.reject(lostAck());await tasks.idle();
+    fs.unlinkSync(gate);
+    const saved=tasks.store.read('mcp-task',taskId);
+    assert.equal(saved.recoveryRequired,false);
+    const expected=automatic?[]:[sent[0],clarification];
+    assert.deepEqual(recoveryTexts(),expected);
+    assert.deepEqual((saved.unsentInputs || []).map(item=>item.text),expected);
+    if(nextLimit){
+      assert.equal(saved.state,'waiting_limit');
+      assert.deepEqual(saved.limitContinuation,{exhaustedTurnId:held.turnId,state:'pending'});
+      assert.equal(saved.nextInput,recovery.CONTINUE);
+      if(automatic){
+        assert.notEqual(held.turnId,firstLimit);
+        await poller.tick();await step(tasks);assert.equal(sent.length,2,'The fixed continuation waits for the cooldown');
+        now+=60000;await poller.tick();
+        await until(host,()=>row.state==='completed');
+        assert.deepEqual(sent.slice(1),[recovery.CONTINUE,recovery.CONTINUE],'Only the new limit arms another fixed continuation');
+        assert.deepEqual(recoveryTexts(),[]);
+      }
+    }else{
+      assert.equal(saved.state,'error');assert.equal(saved.nextInput,undefined);
+      await poller.tick();await step(tasks);
+      assert.equal(sent.length,2,'An interrupted automatic send is not replayed without a new limit event');
+    }
+  }finally{held?.reject(lostAck());poller?.dispose();await host?.dispose({force:true});await data.close();}
+}
+
+async function replyWithQueuedInput(sameText){
+  const directory=project('reply-with-queued-input-'+sameText),gate=path.join(directory,'synthetic-dispatch-gate');
+  const data=fixture(directory,{cliEnv:{RUNDIX_SYNTHETIC_DISPATCH_GATE:gate}});
+  let host;
+  try{
+    host=await createHeadlessHost({root:directory,generation:'synthetic-reply-exit',taskOptions:{scope:()=> 'synthetic-space'},...data.hostOptions});
+    const tasks=host.mcp.tasks;tasks.schedule=()=>{};
+    const {taskId}=await tasks.call('submit_task',{requestId:'synthetic-reply-task',description:'Synthetic question task',acceptanceCriteria:'Synthetic check',projectDirectory:directory});
+    const row=tasks.get(taskId);await until(host,()=>row.state==='completed');
+    const question={id:'synthetic-async-question',type:'agentMessage',turnId:row.turnId,questions:[{title:'Synthetic question'}]};
+    const answers={0:'Synthetic answer'};
+    const clarification=sameText?require('../runtime/async-questions.cjs').buildReply(question,answers):'Synthetic unrelated clarification';
+    await tasks.call('continue_task',{taskId,requestId:'synthetic-unrelated',clarification});
+    const {core}=host,session=core.sessions.get(row.sessionKey) || core.createSession({key:row.sessionKey,saved:core.store.session(row.sessionKey)});
+    session.items.push(question);
+    await core.save(session);
+    await tasks.observe(row);assert.equal(row.state,'waiting_approval');
+    fs.writeFileSync(gate,'ack');
+    const questionTurn=row.turnId;
+    await tasks.call('continue_task',{taskId,requestId:'synthetic-reply',approval:{id:'async-question:'+question.id,answers}});
+    assert.equal(row.deliveryPhase,'confirmed','The unrelated reply used turn/start and received an ACK');
+    assert.notEqual(row.turnId,questionTurn);
+    assert.equal(row.nextInput,clarification);assert.equal(row.queuedRecoveryInput,true);
+    await host.provider.cli.stop();
+    const saved=tasks.store.read('mcp-task',taskId);
+    assert.equal(saved.state,'error');assert.equal(saved.nextInput,undefined);
+    assert.deepEqual(saved.unsentInputs.map(item=>item.text),[clarification],'The exit preserves the queued text independently of the reply ACK');
+  }finally{await host?.dispose({force:true});await data.close();}
 }
 
 async function historyRecovery(){
@@ -350,5 +483,6 @@ async function emptyThreadServiceRestart(){
 }
 
 (async()=>{try{await emptyThreadServiceRestart();await restartInterruption();await lostEmptyThread();await queuedInput();await windowsAndSlowRecovery();await lightweightStatus();await repeatedLimit();await historyRecovery();await preparingRestart();await generationAndPredispatchExit(false);await generationAndPredispatchExit(true);await freshThreadGenerationChange();
- console.log('PASS review regressions: unchanged window recovery, lossless preparing restart, slow retries/free slots, lightweight status, bounded limits, concurrent history, generation config and CLI exit before dispatch.');
+  await exitDuringLimit('clarification-at-limit');await exitDuringLimit('automatic-exit-without-limit');await exitDuringLimit('automatic-exit-with-new-limit');await replyWithQueuedInput(false);await replyWithQueuedInput(true);
+  console.log('PASS review regressions: unchanged window recovery, lossless preparing restart, slow retries/free slots, lightweight status, bounded limits, concurrent history, generation config, dispatch checkpoint rollback, CLI exits at limits and unrelated reply delivery.');
 }finally{assert.equal(path.dirname(root),os.tmpdir());assert(path.basename(root).startsWith('rundix-review-regression-synthetic-'));fs.rmSync(root,{recursive:true,force:true});}})().catch(error=>{console.error(error);process.exitCode=1;});

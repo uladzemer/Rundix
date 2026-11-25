@@ -13,8 +13,9 @@ const {parseStrict} = require('./service-json.cjs');
 const {boundedRead, actionRequired} = require('./service-provider-config.cjs');
 
 const {plainSettings}=require('./service-settings.cjs');
-const {startupFailure,attempt,ready,remaining,dispatched}=require('./service-readiness.cjs');
+const {startupFailure,attempt,ready,remaining,isTaskAttempt,dispatched}=require('./service-readiness.cjs');
 const recovery = require('./task-recovery.cjs');
+const inputRecovery = require('./mcp-input-recovery.cjs');
 function boundedLogger(root) {
   const directory = path.join(root, 'diagnostics'); fs.mkdirSync(directory, {recursive:true, mode:0o700});
   const file = index => path.join(directory, 'service-' + index + '.log');
@@ -86,13 +87,16 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
         const row = runs.get(message.params?.threadId);
         const task=row && mcp.tasks.tasks.get(row.taskId);
         if(task)task.lastActivityAt=clock.now();
+        if(row?.dispatchedInput && message.method==='turn/started' && message.params.turn?.id!==row.dispatchedInput.previousTurnId)
+          row.observedTurnId ||= message.params.turn?.id;
         if (row && message.params?.willRetry!==true && recovery.usageLimit(message.params?.error || message.params?.turn?.error)) {
           const turnId=message.params?.turn?.id || message.params?.turnId || row.turnId;
           if (turnId && (!row.turnId || row.turnId===turnId)) {
-            try{provider.noteUsageLimit({turnLeaseId:row.grant.leaseId,turnId});}catch{logger({code:'host_error'});}
-            row.limitTurnId=turnId;
-            const task=mcp.tasks.tasks.get(row.taskId);
-            if(task){task.exhaustedTurnId=turnId;mcp.tasks.save(task);}
+            try{
+              provider.noteUsageLimit({turnLeaseId:row.grant.leaseId,turnId});
+              row.limitTurnId=turnId;
+              if(task){task.exhaustedTurnId=turnId;mcp.tasks.save(task);}
+            }catch{logger({code:'host_error'});}
           }
         }
         if (row && message.method === 'turn/completed') {
@@ -139,10 +143,13 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
       }
       const task = taskForThread(params.threadId);
       if (!task || runs.has(params.threadId)) throw Object.assign(actionRequired('BUSY_ACTIVE'), {notSent:true, deliveryUncertain:false});
+      // A reply or follow-up can have the same text without owning the task's input slot.
+      const requestText=isTaskAttempt(task) && params.input?.length===1 && params.input[0]?.type==='text'?params.input[0].text:null;
+      const automaticInput=()=>requestText===recovery.CONTINUE && task.nextInput===requestText && task.limitContinuation?.state==='pending';
       // Persist the thread before any admission/reconnect; task.chatId may lag
       // the already durable session after a crash before turn/start's ACK.
       task.chatId=params.threadId;task.deliveryPhase='preparing';mcp.tasks.save(task);
-      if(task.limitContinuation?.state==='pending' && task.nextInput===recovery.CONTINUE && (recovery.continuationBlocked(task) || recovery.continuationNotBefore(task)>clock.now()))
+      if(automaticInput() && (recovery.continuationBlocked(task) || recovery.continuationNotBefore(task)>clock.now()))
         throw Object.assign(actionRequired('BUSY_ACTIVE'),{notSent:true,deliveryUncertain:false,providerWait:{resetAt:null,reason:'exhausted',retryAfterMs:Math.max(60000,recovery.continuationNotBefore(task)-clock.now())}});
       const generationBefore=this.cli.binding?.appServerGeneration;
       let outcome;
@@ -191,27 +198,40 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
           for(const session of core.sessions.values())session.loaded=false;
         }
         if(row.exited || !this.cli)throw Object.assign(Error('CLI changed before dispatch.'),{notSent:true,deliveryUncertain:false});
-        task.deliveryPhase='dispatching';
-        task.queuedRecoveryInput=false;
-        task.lastActivityAt=clock.now();
-        if(task.limitContinuation?.state==='pending' && task.nextInput===recovery.CONTINUE){
-          task.autoLimit={consecutive:(task.autoLimit?.consecutive || 0)+1,lastSentAt:clock.now()};
-          task.limitContinuation.state='dispatching';
+        const ownsInput=typeof requestText==='string' && requestText===task.nextInput;
+        const automatic=automaticInput();
+        const dispatchState={deliveryPhase:'dispatching',lastActivityAt:clock.now()};
+        if(ownsInput)dispatchState.queuedRecoveryInput=false;
+        if(automatic){
+          dispatchState.autoLimit={consecutive:(task.autoLimit?.consecutive || 0)+1,lastSentAt:clock.now()};
+          dispatchState.limitContinuation={...task.limitContinuation,state:'dispatching'};
         }
-        mcp.tasks.save(task);
+        const beforeDispatch={...task};
+        Object.assign(task,dispatchState);
+        try{mcp.tasks.save(task);}catch(error){
+          // No RPC was attempted and save() can also change the in-memory revision.
+          for(const key of [...Object.keys(dispatchState),'updatedAt','revision']){
+            if(Object.hasOwn(beforeDispatch,key))task[key]=beforeDispatch[key];
+            else delete task[key];
+          }
+          throw error;
+        }
+        const session=core.sessions.get(task.sessionKey);
+        row.dispatched=true;
+        if(ownsInput)row.dispatchedInput={text:requestText,baselineItems:task.baselineItems,
+          previousTurnId:session?.lastStartedTurnId,automatic};
         dispatched();
         const result = await provider.dispatchTurn(outcome.grant, params); row.turnId = result.turn.id;
-        const session=core.sessions.get(task.sessionKey);
-        if(session)session.cliGeneration=this.cli.binding?.appServerGeneration;
+        if(session)session.cliGeneration=this.cli?.binding?.appServerGeneration;
         task.deliveryPhase='confirmed';task.needsReconcile=false;task.lastStatusReadAt=clock.now();
-        if(task.limitContinuation?.state==='dispatching') {
+        if(automatic && task.limitContinuation===dispatchState.limitContinuation) {
           task.limitContinuation.state='delivered';task.limitContinuation.turnId=result.turn.id;
         }
         delete task.waitId; task.waitingLimit = null;
         if (row.completed.has(row.turnId)) finishRun(row, row.turnId);
         return result;
       } catch (error) {
-        if(task.deliveryPhase==='preparing') {
+        if(!row.dispatched) {
           if(!row.exited)try{provider.releaseReserved(outcome.grant);}catch{}
           runs.delete(params.threadId);
           throw Object.assign(error,{notSent:true,deliveryUncertain:false,retryable:true});
@@ -220,7 +240,7 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
         if (error.deliveryUncertain === false) {
           // A definite refusal sent nothing: the same continuation may be retried.
           task.deliveryPhase='preparing';
-          if(task.limitContinuation?.state==='dispatching'){task.limitContinuation.state='pending';task.autoLimit.consecutive=Math.max(0,task.autoLimit.consecutive-1);}
+          if(row.dispatchedInput?.automatic && task.limitContinuation?.state==='dispatching'){task.limitContinuation.state='pending';task.autoLimit.consecutive=Math.max(0,task.autoLimit.consecutive-1);}
           runs.delete(params.threadId);
         }
         else {
@@ -294,19 +314,43 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     if(!row)return;
     row.exited=true;runs.delete(row.threadId);
     const task=mcp.tasks?.tasks.get(taskId);if(!task)return;
-    if(task.deliveryPhase==='preparing') {
+    if(!row.dispatched) {
       if(task.limitContinuation?.state==='pending'){task.waitId ||= randomUUID();recovery.enterLimitWait(task,clock.now());}
       else {task.state='queued';task.recoveryRequired=false;task.needsReconcile=false;task.progress='CLI changed before dispatch; retry queued';}
       mcp.tasks.save(task);mcp.tasks.schedule();return;
     }
+    const session=core.sessions.get(task.sessionKey);
+    if(row.dispatchedInput) {
+      const {text,baselineItems,automatic}=row.dispatchedInput;
+      // A user message from this attempt can reach the chat before the ACK.
+      const turnId=row.turnId || row.observedTurnId;
+      const inChat=turnId && session?.id===row.threadId && baselineItems && session.items.some(item=>
+        item.type==='userMessage' && item.turnId===turnId && !baselineItems.includes(item.id) &&
+        item.content?.length===1 && item.content[0]?.type==='text' && item.content[0].text===text);
+      if(inChat)void core.save(session).catch(()=>logger({code:'host_error'}));
+      if(row.turnId || inChat)inputRecovery.delivered(task,text);
+      else if(!automatic)inputRecovery.remember(task,text);
+      // A later explicit continuation may already own the queue slot.
+      if(!task.queuedRecoveryInput && task.nextInput===text) {
+        if(inChat)task.deliveryPhase='confirmed';
+        delete task.nextInput;
+        delete task.queuedRecoveryInput;
+      }
+    }
     task.state='error';task.error='Execution stopped after confirmed CLI exit. Continue explicitly after checking the chat.';
     task.recoveryRequired=false;task.needsReconcile=true;
+    const queuedInput=task.queuedRecoveryInput && task.nextInput;
+    const queuedAutomatic=queuedInput===recovery.CONTINUE && task.limitContinuation?.state==='pending';
     if(row.limitTurnId && !task.cancelRequested && recovery.continueAfterLimit(task,row.limitTurnId)) {
+      if(queuedInput && !queuedAutomatic)inputRecovery.remember(task,queuedInput);
+      delete task.queuedRecoveryInput;
       task.waitId=randomUUID();recovery.enterLimitWait(task,clock.now());
     }
-    const session=core.sessions.get(task.sessionKey);if(session){session.loaded=false;session.busy=false;session.turnId=null;}
+    if(session){session.loaded=false;session.busy=false;session.turnId=null;}
     try{mcp.tasks.release(task);}catch{logger({code:'host_error'});}
-    mcp.tasks.save(task);
+    // The pending request can already have unwound, or the host can be shutting down.
+    // Retry a transient store failure here, before teardown can close the store.
+    try{mcp.tasks.save(task);}catch{mcp.tasks.save(task);}
     mcp.tasks.schedule();
     }catch{logger({code:'host_error'});}
   });

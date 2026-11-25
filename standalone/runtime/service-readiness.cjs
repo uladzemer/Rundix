@@ -15,6 +15,7 @@ function remaining(){
   if(!context?.active)return undefined;
   const ms=context.deadline-Date.now();if(ms<=0)throw exhausted();return ms;
 }
+function isTaskAttempt(task){const context=scope.getStore();return context?.active===true && context.task===task;}
 // The budget proves only that bootstrap has not sent a model request. After
 // dispatch it must never block acknowledgements, interrupts or reconciliation.
 function dispatched(){const context=scope.getStore();if(context)context.active=false;}
@@ -35,7 +36,7 @@ async function attempt(task,checkpoint,operation){
     budget.attempts>=MAX_ATTEMPTS || Date.now()-budget.startedAt>=BUDGET_MS)throw exhausted();
   budget.attempts++;checkpoint();
   try{
-    const context={deadline:budget.startedAt+BUDGET_MS,active:true};
+    const context={task,deadline:budget.startedAt+BUDGET_MS,active:true};
     let result;
     try{result=await scope.run(context,operation);}finally{context.active=false;}
     delete task.serviceReadiness;return result;
@@ -50,4 +51,4 @@ async function attempt(task,checkpoint,operation){
     throw error;
   }
 }
-module.exports={startupFailure,attempt,ready,remaining,dispatched,MAX_ATTEMPTS,BUDGET_MS,progress};
+module.exports={startupFailure,attempt,ready,remaining,isTaskAttempt,dispatched,MAX_ATTEMPTS,BUDGET_MS,progress};

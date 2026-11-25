@@ -83,7 +83,11 @@ Only the session stores `turnSelections: [{turnId, model, displayName, effort, s
 
 The session also retains the newest 100 distinct attempted steering turn IDs independently of acknowledgements. A matching history entry carries `steered: true`, retained even after its ID leaves that list; failed or uncertain steering attempts also suppress captions. Ordinary chats record neither list.
 
-Every task snapshot includes `unsentInputCount`, without recovery text. Only `get_task` without `brief:true` returns `unsentInputs: [{id, text}]` and `nextUnsentCursor`; wait/submit/continue/cancel snapshots and brief reads include the count only. Definite pre-send refusals and cancelled queued inputs remain recoverable even after a newer continuation replaces `nextInput`, preserving a separate user composer draft. Recovery keeps the newest 50 distinct entries within 2 MiB of serialized JSON per task, dropping oldest entries to meet either bound. Pages contain at most 10 entries and approximately 512 KiB of JSON (one larger entry is returned intact); pass `nextUnsentCursor` as `get_task.unsentAfter` for the next page. Use recovery pagination to limit response size; `brief:true` omits recovery text entirely. Delivering the same input removes it from recovery; unknown delivery is never marked safe to resend. The MCP panel shows previews of the three latest recoverable inputs.
+Task snapshots and `list_tasks` include `unsentInputCount`. Only `get_task` without `brief:true` returns `unsentInputs: [{id, text}]` and `nextUnsentCursor`. `brief:true` omits recovery text entirely. Definite pre-send refusals and cancelled queued inputs remain recoverable even after a newer continuation replaces `nextInput`, preserving a separate user composer draft.
+
+In service mode, a confirmed CLI exit also preserves the first task input or a clarification if its dispatch was interrupted and delivery was unconfirmed. While delivery remains uncertain, Rundix adds no recovery entry for that dispatch until the CLI exit is confirmed. If the same exit starts a limit wait, any explicit clarification displaced by the fixed continuation remains recoverable. Recovery survives a service restart and a manual continuation with different text. Rundix never marks an unknown delivery safe to resend and never replays it automatically. Check the chat before deciding whether to resend. Acknowledged input and input already observed in the chat are excluded from recovery.
+
+Recovery keeps the newest 50 distinct entries within 2 MiB of serialized JSON per task, dropping oldest entries to meet either bound. Pages contain at most 10 entries and approximately 512 KiB of JSON (one larger entry is returned intact). Pass `nextUnsentCursor` as `get_task.unsentAfter` for the next page. Delivering the same input removes it from recovery. The service MCP panel displays the count of recoverable inputs. The window MCP panel shows previews of the three latest entries.
 
 The HTTP bridge limits each request and response to **1 MiB of UTF-8 bytes**, including its JSON envelope. A combined `wait_tasks` response with many full reports can exceed this limit: `response_too_large` tells the client to retry with `brief:true`, or fewer `taskIds` if the compact response is still too large. Full reports remain available individually through `get_task` within the same limit.
 
@@ -212,6 +216,18 @@ with automatic handover exits after 60 continuous seconds of full quiescence
 when the registration points to a validated, strictly newer copy. Connected
 clients can remain open. An enabled VS Code window and the background waiter
 reconnect automatically. An ordinary adapter reconnects on its next request.
+
+Launcher installation tries to refresh the registered and outgoing copies'
+directory timestamps and prunes old copies under `versions/` only when that
+refresh succeeds. If a service descriptor is present, it must identify a valid
+copy before cleanup can proceed. Without a descriptor, there is no running
+copy to protect. Cleanup keeps the registered and running copies. It also keeps
+the two newest complete copies besides the registered copy and all complete
+copies with timestamps within 14 days or in the future. Incomplete copies are
+eligible for cleanup after one hour.
+Failed deletions are retried on a later installation once the copy is eligible.
+An adapter still running more than 14 days after its copy stopped being the
+target may fail to load a module after cleanup and must then be restarted.
 
 The MCP panel shows the running service version and warns when it is older
 than the extension. On a capable service, **Restart service** is available

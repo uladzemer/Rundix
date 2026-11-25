@@ -1,5 +1,10 @@
 # Changelog / История изменений
 
+## 0.4.25 — 2026-11-25
+
+- In service mode, an input whose delivery was not confirmed when the CLI exited is kept as a recoverable unsent input instead of being silently replaced by the next continuation. Nothing is re-sent automatically.
+- Old service copies are pruned during launcher installation even while the service runs. The registered copy, the running copy, the two newest complete copies and copies used within the last 14 days are kept.
+
 ## 0.4.24 — 2026-11-25
 
 - The background MCP service hands over to a validated newer installation after 60 seconds of quiescence, even with clients connected.

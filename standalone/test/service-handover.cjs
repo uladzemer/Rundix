@@ -246,18 +246,25 @@ async function failedAutomatic(root) {
     assert.equal(readDiscovery(locations({root})).generation,adapter.generation);
   } finally {adapter.close();await service.shutdown();await data.close();}
 }
-async function forced(root, dispatching) {
+async function forced(root, phase) {
   const repo=path.join(root,'synthetic-project'), second=path.join(root,'synthetic-second-project');
   for (const dir of [repo,second]) fs.mkdirSync(dir,{recursive:true});
   const dispatchGate=path.join(root,'synthetic-dispatch-gate');
-  const cliEnv={RUNDIX_SYNTHETIC_HOLD:dispatching?'0':'1',RUNDIX_SYNTHETIC_DISPATCH_GATE:dispatchGate};
+  const superseded=phase==='superseded', clarification=phase==='clarification' || superseded;
+  const recover=clarification || phase==='initial';
+  const cliEnv={RUNDIX_SYNTHETIC_DISPATCH_GATE:dispatchGate};
   const data=fixture(root,{cliEnv}), sends=[];
+  const timeout=deferred();
   const makeCli=data.hostOptions.providerOptions.createCli;
   data.hostOptions.providerOptions.createCli=options=>{
     const cli=makeCli(options), request=cli.request.bind(cli);
     cli.request=(method,params,...args)=>{
-      if(method==='turn/start')sends.push(params.input);
-      return request(method,params,...args);
+      if(method!=='turn/start')return request(method,params,...args);
+      sends.push(params.input);
+      const pending=request(method,params,...args);
+      return superseded && sends.length===2?Promise.race([pending,timeout.promise.then(()=>{
+        throw Object.assign(Error('Synthetic missing ACK'),{deliveryUncertain:true});
+      })]):pending;
     };
     return cli;
   };
@@ -273,19 +280,43 @@ async function forced(root, dispatching) {
     await assert.rejects(retire(adapter,true),{code:'method_not_supported'});
     await assert.rejects(window.request('service.retire',{force:true,bindingId:window.binding.bindingId,generation:'synthetic-wrong'}),{code:'stale_instance'});
     const args={requestId:'synthetic-first',description:'Synthetic initial input',acceptanceCriteria:'Synthetic checks',projectDirectory:repo};
+    if(!clarification)fs.writeFileSync(dispatchGate,recover?'waiting':phase==='observed'?'deliver':'ack');
     const submitted=await taskCall(adapter,'submit_task',args);
     const oldTasks=service.host.mcp.tasks, oldTask=oldTasks.tasks.get(submitted.taskId);
-    if(dispatching){
+    if(clarification){
       await until(()=>oldTask.state==='completed');
       fs.writeFileSync(dispatchGate,'waiting');
       await taskCall(adapter,'continue_task',{taskId:oldTask.taskId,requestId:'synthetic-ambiguous',clarification:'Synthetic ambiguous input'});
+    }
+    if(recover){
       await until(()=>oldTask.deliveryPhase==='dispatching' && fs.readFileSync(dispatchGate,'utf8')==='received');
-    }else await until(()=>oldTask.deliveryPhase==='confirmed');
+    }else if(phase==='observed')await until(()=>oldTask.deliveryPhase==='dispatching' && service.host.core.sessions.get(oldTask.sessionKey)?.items.some(item=>item.type==='userMessage'));
+    else await until(()=>oldTask.deliveryPhase==='confirmed');
+    const interruptedInput=sends.at(-1)[0].text;
     const otherTask=await taskCall(other,'submit_task',{...args,requestId:'synthetic-other',projectDirectory:repo});
     assert.deepEqual(await retire(window,false),{result:{retiring:false,activeTasks:2,reason:'tasks'}});
     assert.equal((await taskCall(adapter,'get_task',{taskId:oldTask.taskId})).state,'running');
     await taskCall(other,'cancel_task',{taskId:otherTask.taskId,requestId:'synthetic-cancel-other'});
+    const replacement='Synthetic queued replacement';
+    if(superseded){
+      oldTasks.pause();
+      timeout.resolve();
+      await until(()=>oldTask.state==='error');
+      await taskCall(adapter,'continue_task',{taskId:oldTask.taskId,requestId:'synthetic-replacement',clarification:replacement});
+      assert.equal(oldTask.nextInput,replacement,'The later clarification now owns the slot while the old run is still live');
+    }
     const generation=window.generation, sent=sends.length;
+    let failedRecoveryWrite=false;
+    if(phase==='clarification'){
+      const write=oldTasks.store.write.bind(oldTasks.store);
+      oldTasks.store.write=(kind,id,value)=>{
+        if(!failedRecoveryWrite && kind==='mcp-task' && id===oldTask.taskId && value.unsentInputs?.length){
+          failedRecoveryWrite=true;
+          throw Error('Synthetic transient recovery write failure');
+        }
+        return write(kind,id,value);
+      };
+    }
     const providerChild=data.children.find(row=>row.child.spawnargs.some(arg=>arg.endsWith('provider-entry.cjs'))).child;
     const killProvider=providerChild.kill.bind(providerChild);
     let delayedKill, providerClosed=false;
@@ -293,8 +324,8 @@ async function forced(root, dispatching) {
     providerChild.kill=()=>{delayedKill ??= setTimeout(killProvider,250);return true;};
     assert.deepEqual(await retire(window,true),{result:{retiring:true}},'Retire ACK arrives before the transport closes');
     await until(()=>!readDiscovery(locations({root})));
-    if(dispatching)fs.unlinkSync(dispatchGate);
-    cliEnv.RUNDIX_SYNTHETIC_HOLD='0';
+    if(phase==='clarification')assert(failedRecoveryWrite,'The exit handler encountered the injected recovery write failure');
+    fs.unlinkSync(dispatchGate);
     service=await runService({root,hostOptions:data.hostOptions});
     assert(providerClosed,'The old provider closed before the successor can start a provider');
     adapter=await connectService({root,hello:hello(repo,'adapter')});
@@ -304,12 +335,29 @@ async function forced(root, dispatching) {
     const store=new SessionStore(path.join(root,'sessions-v1'));
     assert(!fs.readdirSync(store.directory).some(name=>name.startsWith('task-directory-')),'Confirmed CLI exit releases the directory');
     assert.equal(sends.length,sent,'New generation never replays the interrupted call');
-    if(dispatching){
-      const record=service.host.mcp.tasks.tasks.get(task.taskId);
+    const record=service.host.mcp.tasks.tasks.get(task.taskId);
+    const expected=recover?[interruptedInput]:[];
+    if(superseded)expected.push(replacement);
+    assert.deepEqual(task.unsentInputs.map(item=>item.text),expected,'Only unconfirmed and queued inputs are recoverable after restart');
+    assert.equal(record.nextInput,undefined,'An interrupted input is removed from the execution slot');
+    assert.equal(task.unsentInputCount,expected.length);
+    if(recover){
       const session=service.host.core.store.session(record.sessionKey);
-      assert.equal(record.nextInput,'Synthetic ambiguous input','Existing forced path retains the hidden raw input until Continue');
-      assert.equal(task.unsentInputs.some(item=>item.text==='Synthetic ambiguous input'),false,'Existing recovery projection does not expose that input');
-      assert(!JSON.stringify(session?.items || []).includes('Synthetic ambiguous input'),'Synthetic CLI never accepted that input into its chat');
+      assert(!JSON.stringify(session?.items || []).includes(interruptedInput),'Synthetic CLI never accepted that input into its chat');
+    }
+    const waited=await taskCall(adapter,'wait_task',{taskId:task.taskId,waitSeconds:1});
+    const listed=(await taskCall(adapter,'list_tasks')).tasks.find(item=>item.taskId===task.taskId);
+    assert.equal(waited.unsentInputCount,task.unsentInputCount);
+    assert.equal(listed.unsentInputCount,task.unsentInputCount);
+    window=await connectService({root,hello:hello(repo,'window')});
+    const binding={bindingId:window.binding.bindingId,spaceId:adapter.binding.spaceId};
+    const panel=await window.call('space.subscribe',binding);
+    const panelTask=panel.result.tasks.find(item=>item.taskId===task.taskId);
+    assert.equal(panelTask.unsentInputCount,task.unsentInputCount);
+    for(const view of [waited,listed,panelTask])assert.equal(Object.hasOwn(view,'unsentInputs'),false);
+    if(phase==='observed'){
+      const chat=await window.call('chat.open',{...binding,taskId:task.taskId});
+      assert(chat.result.items.some(item=>item.type==='userMessage' && item.text===interruptedInput),'The delivered input stays visible in the chat after restart');
     }
     const resumed=await taskCall(adapter,'continue_task',{taskId:task.taskId,requestId:'synthetic-resume',clarification:'Synthetic manual continuation'});
     assert.equal(resumed.taskId,task.taskId);
@@ -317,8 +365,8 @@ async function forced(root, dispatching) {
     oldTasks.save(oldTask);
     assert.equal(service.host.mcp.tasks.store.read('mcp-task',task.taskId).state,'completed','A disposed generation cannot overwrite a recovered task');
     assert.equal(sends.filter(input=>JSON.stringify(input).includes('Synthetic manual continuation')).length,1);
-    assert.equal(sends.filter(input=>JSON.stringify(input).includes('Synthetic ambiguous input')).length,dispatching?1:0);
-    if(dispatching)assert.notEqual(service.host.mcp.tasks.tasks.get(task.taskId).nextInput,'Synthetic ambiguous input','Manual Continue replaces the hidden raw input');
+    assert.equal(sends.filter(input=>input[0].text===interruptedInput).length,1,'The interrupted input is never replayed');
+    assert.deepEqual((await taskCall(adapter,'get_task',{taskId:task.taskId})).unsentInputs,task.unsentInputs,'Manual Continue preserves the recovery entries');
   } finally {adapter?.close();window?.close();other?.close();await service?.shutdown();await data.close();}
 }
 async function main() {
@@ -332,8 +380,11 @@ async function main() {
     await failedAutomatic(path.join(base,'failed-automatic'));
     fs.mkdirSync(path.join(base,'graceful'));
     await graceful(path.join(base,'graceful'));
-    await forced(path.join(base,'running'),false);
-    await forced(path.join(base,'dispatching'),true);
+    await forced(path.join(base,'running'),'acknowledged');
+    await forced(path.join(base,'dispatching'),'clarification');
+    await forced(path.join(base,'first-input'),'initial');
+    await forced(path.join(base,'observed'),'observed');
+    await forced(path.join(base,'superseded'),'superseded');
   } finally {assert.equal(path.dirname(base),os.tmpdir());assert(path.basename(base).startsWith('rundix-handover-synthetic-'));fs.rmSync(base,{recursive:true,force:true});}
   console.log('PASS service handover: target validation, quiescence gates, contention, retire authorization, ACK and actual forced shutdown/recovery.');
 }

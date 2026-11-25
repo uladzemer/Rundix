@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const {randomUUID,createHash} = require('node:crypto');
-const {locations, protectDirectory} = require('./service-endpoint.cjs');
+const {locations, protectDirectory, readDiscovery} = require('./service-endpoint.cjs');
 const {parseStrict} = require('./service-json.cjs');
 const {SessionStore}=require('./store.cjs');
 
@@ -26,8 +26,77 @@ function registration(root) {
     return value;
   } catch { throw Object.assign(Error('Install the service launcher from Rundix first.'), {code:'service_install_required'}); }
 }
-function installLauncher({source = path.join(__dirname, '..'), nodePath = process.execPath, root,legacyRoot} = {}) {
-  root = locations({root}).directory;
+const copyName = /^[0-9][\w.-]+$/;
+const retentionMs = 14 * 24 * 60 * 60 * 1000;
+const incompleteGraceMs = 60 * 60 * 1000;
+
+function copyForEntry(versions, entryPath) {
+  if (typeof entryPath !== 'string' || !path.isAbsolute(entryPath)) throw Error();
+  const relative = path.relative(versions, entryPath);
+  const [name, ...rest] = relative.split(path.sep);
+  if (!copyName.test(name) || !rest.length || path.isAbsolute(relative)) throw Error();
+  const copy = path.join(versions, name);
+  if (!fs.lstatSync(copy).isDirectory() ||
+      path.relative(path.join(fs.realpathSync(versions), relative), fs.realpathSync(entryPath)) ||
+      !fs.lstatSync(entryPath).isFile()) throw Error();
+  return copy;
+}
+
+function refreshCopy(copy, now) {
+  const info = fs.lstatSync(copy);
+  if (!info.isDirectory() || !Number.isFinite(info.mtimeMs)) throw Error();
+  if (info.mtimeMs < now) fs.utimesSync(copy, info.atime, now / 1000);
+}
+
+function refreshTargets(root, versions, target, now) {
+  if (!Number.isFinite(now) || now <= 0 || !fs.lstatSync(versions).isDirectory()) return false;
+  let previousRefreshed = true;
+  try {
+    if (fs.lstatSync(path.join(root, 'installation.json'), {throwIfNoEntry:false})) {
+      // An adapter may have started just before this registration is replaced.
+      const previous = copyForEntry(versions, registration(root).entryPath);
+      if (path.relative(target, previous)) refreshCopy(previous, now);
+    }
+  } catch { previousRefreshed = false; }
+  refreshCopy(target, now);
+  return previousRefreshed;
+}
+
+// Both the installation and service-startup leases are held here.
+function pruneCopies(where, versions, target, now) {
+  if (!fs.lstatSync(versions).isDirectory()) return;
+  let running;
+  if (fs.lstatSync(where.descriptor, {throwIfNoEntry:false})) {
+    // A present descriptor that cannot identify its copy makes pruning unsafe.
+    running = copyForEntry(versions, readDiscovery(where)?.entryPath);
+  }
+  const entries = [];
+  for (const name of fs.readdirSync(versions)) {
+    if (!copyName.test(name)) continue;
+    const file = path.join(versions, name);
+    if (!path.relative(target, file)) continue;
+    const info = fs.lstatSync(file);
+    if (info.isDirectory() && Number.isFinite(info.mtimeMs) && info.mtimeMs > 0) {
+      const marker = path.join(file, 'complete.json');
+      const complete = fs.lstatSync(marker, {throwIfNoEntry:false})?.isFile();
+      entries.push({file, marker, complete, mtime:info.mtimeMs});
+    }
+  }
+  entries.sort((a, b) => b.mtime - a.mtime);
+  let completeCopies = 0;
+  for (const {file, marker, complete, mtime} of entries) {
+    if (complete && completeCopies++ < 2) continue;
+    if (mtime >= now - (complete ? retentionMs : incompleteGraceMs) ||
+        (running && !path.relative(running, file))) continue;
+    // A later installation must rebuild a copy left behind by partial removal.
+    try { fs.unlinkSync(marker); } catch (error) { if (error.code !== 'ENOENT') continue; }
+    try { fs.rmSync(file, {recursive:true, force:true}); } catch {}
+  }
+}
+
+function installLauncher({source = path.join(__dirname, '..'), nodePath = process.execPath, root,legacyRoot, now} = {}) {
+  const where = locations({root});
+  root = where.directory;
   protectDirectory(root);
   if(legacyRoot)require('./service-migration.cjs').registerRoot(root,legacyRoot);
   const store=new SessionStore(root),until=Date.now()+10000;let unlock;
@@ -37,7 +106,8 @@ function installLauncher({source = path.join(__dirname, '..'), nodePath = proces
   // Keep running versions intact. The registration switches only after a complete copy.
   const files=['package.json',...['runtime','ui'].flatMap(dir=>fs.readdirSync(path.join(source,dir)).filter(file=>dir==='runtime'?/\.cjs$/.test(file)||file==='cli-manifest.json':/\.js$/.test(file)).sort().map(file=>dir+'/'+file))];
   const hash=createHash('sha256');for(const file of files)hash.update(file+'\0').update(fs.readFileSync(path.join(source,file)));
-  const target = path.join(root, 'versions', version + '-' + hash.digest('hex').slice(0,24));
+  const versions = path.join(root, 'versions');
+  const target = path.join(versions, version + '-' + hash.digest('hex').slice(0,24));
   if(!fs.existsSync(path.join(target,'complete.json'))) {
   fs.mkdirSync(target, {recursive:true, mode:0o700});
   for (const dir of ['runtime','ui']) {
@@ -50,6 +120,9 @@ function installLauncher({source = path.join(__dirname, '..'), nodePath = proces
   fs.copyFileSync(path.join(source, 'package.json'), path.join(target, 'package.json'));
   atomic(path.join(target,'complete.json'),JSON.stringify({version}));
   }
+  now ??= Date.now();
+  let canPrune = false;
+  try { canPrune = refreshTargets(root, versions, target, now); } catch {}
   const value = {schemaVersion:1, version, nodePath,
     entryPath:path.join(target, 'runtime', 'service-main.cjs'), adapterPath:path.join(target, 'runtime', 'service-adapter.cjs')};
   const bin = path.join(root, 'bin'); fs.mkdirSync(bin, {recursive:true, mode:0o700});
@@ -57,20 +130,11 @@ function installLauncher({source = path.join(__dirname, '..'), nodePath = proces
   // Paths derive from this stable shim, preserving the caller's cwd and environment.
   atomic(launcher, "const fs=require('node:fs'),path=require('node:path');\nconst root=path.resolve(__dirname,'..');\ntry{const r=JSON.parse(fs.readFileSync(path.join(root,'installation.json'),'utf8'));require(r.adapterPath).main({root});}catch{process.stderr.write('service_install_required\\n');process.exitCode=1;}\n");
   atomic(path.join(root, 'installation.json'), JSON.stringify(value));
-  // Prune only under the startup guard while there is no published owner.
-  // Retain recent/registered runtimes; an active service prevents all pruning.
   let startup;
   try {
-    startup=store.acquire('service-startup');
-    if(!fs.existsSync(path.join(root,'bridge.json'))) {
-      const versions=path.join(root,'versions');
-      const entries=fs.readdirSync(versions).filter(name=>/^[0-9][\w.-]+$/.test(name)).map(name=>path.join(versions,name))
-        .filter(file=>{const info=fs.lstatSync(file);return info.isDirectory()&&!info.isSymbolicLink();})
-        .sort((a,b)=>fs.statSync(b).mtimeMs-fs.statSync(a).mtimeMs);
-      for(const file of entries.filter(file=>file!==target).slice(2)) {
-        const relative=path.relative(path.resolve(versions),path.resolve(file));
-        if(relative && !relative.startsWith('..') && !path.isAbsolute(relative))fs.rmSync(file,{recursive:true,force:true});
-      }
+    if (canPrune) {
+      startup = store.acquire('service-startup');
+      pruneCopies(where, versions, target, now);
     }
   } catch {} finally {startup?.();}
   return {root, launcher, configuration:{mcpServers:{rundix:{command:nodePath, args:[launcher, '--service'], env:{ELECTRON_RUN_AS_NODE:'1'}}}}};

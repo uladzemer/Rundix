@@ -536,15 +536,9 @@ class McpTasks {
       task.chatId=this.adapter.chatId(task); this.save(task);
     } catch (error) {
       if(this.closed && this.serviceRecovery)return;
+      // The service exit handler owns settlement, including any new queued input.
+      if(this.serviceRecovery && error?.confirmedCliExit)return;
       if(this.serviceRecovery)task.chatId=this.adapter.chatId(task) || task.chatId;
-      if(this.scope && error?.confirmedCliExit) {
-        if(task.state==='waiting_limit' && task.limitContinuation?.state==='pending' && !task.cancelRequested) {
-          this.save(task);return;
-        }
-        task.state='error';task.recoveryRequired=false;task.needsReconcile=false;
-        task.error='Execution stopped after confirmed CLI exit. Continue explicitly after checking the chat.';
-        this.release(task);this.save(task);return;
-      }
       if(error?.providerWait && !task.cancelRequested){
         inputRecovery.remember(task,input); task.nextInput=input;
         task.state='waiting_limit';task.recoveryRequired=false;task.needsReconcile=false;

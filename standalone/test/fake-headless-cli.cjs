@@ -1,5 +1,5 @@
-// Explicitly synthetic app-server for headless-host/IPC tests. No network/auth
-// files; input is ignored and every report is a fixed synthetic record.
+// Explicitly synthetic app-server for headless-host/IPC tests. No network or
+// auth files. Every report is a fixed synthetic record.
 const readline = require('node:readline');
 const fs=require('node:fs'),path=require('node:path');
 const instance=require('node:crypto').randomUUID();
@@ -84,10 +84,18 @@ readline.createInterface({input:process.stdin}).on('line', line => {
   if (message.method === 'turn/start') {
     if(!thread || !loaded.has(thread.id)){output({id:message.id,error:{code:-32000,message:'Synthetic thread must be resumed'}});return;}
     const dispatchGate=process.env.RUNDIX_SYNTHETIC_DISPATCH_GATE;
-    if(dispatchGate && fs.existsSync(dispatchGate)){fs.writeFileSync(dispatchGate,'received');return;}
+    const gate=dispatchGate && fs.existsSync(dispatchGate) ? fs.readFileSync(dispatchGate,'utf8') : null;
+    if(gate==='waiting'){fs.writeFileSync(dispatchGate,'received');return;}
     const turn = {id:'synthetic-turn-' + instance + '-' + ++turnSequence, status:'inProgress'}; thread.turns.push(turn);persist(thread);
-    output({id:message.id, result:{turn}});
+    if(gate!=='deliver')output({id:message.id, result:{turn}});
     output({method:'turn/started', params:{threadId:thread.id, turn:{...turn}}});
+    if(gate==='ack')return;
+    if(gate==='deliver'){
+      const item={id:'synthetic-user-'+turn.id,type:'userMessage',turnId:turn.id,content:params.input};
+      thread.items.push(item);persist(thread);
+      output({method:'item/completed',params:{threadId:thread.id,turnId:turn.id,item}});
+      return;
+    }
     if((process.env.RUNDIX_SYNTHETIC_LIMIT_ALWAYS==='1' || process.env.RUNDIX_SYNTHETIC_LIMIT_ONCE==='1' && thread.turns.length===1) && (()=>{try{return JSON.parse(fs.readFileSync(process.env.RUNDIX_SYNTHETIC_TURN_POLICY,'utf8')).limit!==false;}catch{return true;}})()) {
       setTimeout(()=>{
         turn.status='failed';turn.error={message:'Synthetic usage limit',codexErrorInfo:'usageLimitExceeded'};persist(thread);

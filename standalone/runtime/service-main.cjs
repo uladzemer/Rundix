@@ -125,6 +125,7 @@ async function runService(options = {}) {
     idle = idleExit({clients:() => endpoint.clients(), busy:() => endpoint.busy() || host.busy(), onIdle:dispose,onTick,
       idleMs:options.idleMs, pollMs:options.pollMs, log:host.logger});
     await endpoint.ready();
+    host.mcp.tasks.delayArchiveSweep();
     online=true;
     return {status:'owner', host, endpoint, poller, dispose, shutdown};
   } catch (error) { cleanupStop.abort();idle?.dispose(); poller?.dispose(); await endpoint.dispose();await migration?.close(); throw error; }

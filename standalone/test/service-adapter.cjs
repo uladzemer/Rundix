@@ -216,6 +216,7 @@ async function main() {
     const cwd = path.join(root, 'synthetic-cwd'), envRoot = path.join(root, 'synthetic-env'); fs.mkdirSync(cwd); fs.mkdirSync(envRoot);
     const a = createServiceClient({root, cwd, env:{}}), b = createServiceClient({root, cwd, env:{CLAUDE_PROJECT_DIR:envRoot}}); clients.push(a,b);
     const schemas = await a.getTools();
+    assert.match(schemas.find(tool=>tool.name==='get_task').description,/possiblyNotDelivered:true means delivery is unknown.*inspect the chat before re-sending/i);
     assert(!schemas.some(t => t.name === 'reload_window'));
     assert(schemas.find(t => t.name === 'list_tasks').inputSchema.properties.state.enum.includes('waiting_limit'));
     const ar = await a.call(null, 'list_tasks', {}), br = await b.call(null, 'list_tasks', {});

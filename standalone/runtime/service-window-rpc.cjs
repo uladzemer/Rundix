@@ -113,7 +113,7 @@ function createWindowRpc({generation, tasks,core,migration,retire}) {
     if(method==='space.clearFinished'){
       if(!tasks().archive || peer.windowBinding.spaces.get(params.spaceId)?.kind==='legacy')throw failure('unsupported');
       const {dryRun=false,expected}=params;
-      if(typeof dryRun!=='boolean' || expected!==undefined && (!Number.isSafeInteger(expected?.archived) || expected.archived<0 ||
+      if(typeof dryRun!=='boolean' || !dryRun && expected===undefined || expected!==undefined && (!Number.isSafeInteger(expected?.archived) || expected.archived<0 ||
         !Number.isSafeInteger(expected?.withUnsent) || expected.withUnsent<0))throw failure('invalid_argument');
       return tasks().clearFinished(params.spaceId,{dryRun,expected});
     }

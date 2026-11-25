@@ -241,6 +241,9 @@ fs.mkdirSync(artifacts,{recursive:true});
    assert.equal(await clearButton(),true);
    await page.evaluate(label=>[...document.querySelectorAll('button')].find(button=>button.textContent===label).click(),clearLabel);
    assert.deepEqual(await page.evaluate(()=>{const {action,spaceId}=window.calls.at(-1);return [action,spaceId];}),['clearFinished','synthetic-space']);
+   await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'mcpResult',ok:false,error:'archive_changed',requestId:window.calls.at(-1).requestId}})));
+   assert.equal(await page.$eval('[role="status"]',node=>node.textContent),language==='ru'?'Список задач изменился. Повторите попытку.':'The task list changed. Try again.');
+   await page.evaluate(label=>[...document.querySelectorAll('button')].find(button=>button.textContent===label).click(),clearLabel);
    await page.evaluate(()=>{
     window.fixture.serviceCanClearFinished=false;window.fixture.tasks.shift();window.fixture.archivedCount++;window.update();
     window.dispatchEvent(new MessageEvent('message',{data:{type:'mcpResult',ok:true,action:'clearFinished',spaceId:'synthetic-space',

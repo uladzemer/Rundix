@@ -18,6 +18,8 @@
   Object.assign(words.ru,{serviceVersion:'Версия сервиса',outdated:'Сервис старее расширения',legacyRestart:'Для обновления сервиса завершите задачи, отключите MCP-клиентов и закройте подключённые окна или нажмите в них «Остановить MCP». Сервис завершится после пяти минут простоя.',restart:'Перезапустить сервис',restarting:'Перезапуск сервиса…',restartConfirm:'Подтвердите перезапуск в VS Code. Активных задач во всех проектах',service_restart_failed:'Не удалось перезапустить сервис.'});
   words.en.restartConfirmBusy='The service is performing a background operation. Confirm restart in VS Code.';
   words.ru.restartConfirmBusy='Сервис выполняет фоновую операцию. Подтвердите перезапуск в VS Code.';
+  words.en.archive_changed='The task list changed. Try again.';
+  words.ru.archive_changed='Список задач изменился. Повторите попытку.';
   Object.assign(words.en,{archive:'Archive',clearFinished:'Clear finished',archived:'Archived',skipped:'Skipped',withUnsent:'With unsent text',emptyTaskList:'The task list is empty.',emptyArchive:'The archive is empty.'});
   Object.assign(words.ru,{archive:'Архив',clearFinished:'Убрать завершённые',archived:'Убрано в архив',skipped:'Пропущено',withUnsent:'С неотправленным текстом',emptyTaskList:'Список задач пуст.',emptyArchive:'Архив пуст.'});
   const t=key=>(words[state?.language==='ru'?'ru':'en'][key] || key);
@@ -120,7 +122,7 @@
     else if(restart?.phase==='confirming')showStatus(restart.activeTasks?t('restartConfirm')+': '+restart.activeTasks:t('restartConfirmBusy'));
     else if(restart || restartRequestId)showStatus(t('working'));
     else if(restartError)showStatus(t('service_restart_failed'));
-    if(error || pending)showStatus(pending?t('working'):error==='failed'?t('failed'):t('failed')+' '+error);
+    if(error || pending)showStatus(pending?t('working'):error==='archive_changed'?t(error):error==='failed'?t('failed'):t('failed')+' '+error);
     const rows=state.tasks || [];
     if(state.serviceMode){
       if(clearResult && clearResult.spaceId===state.spaceId && state.bridgeRunning){

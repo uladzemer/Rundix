@@ -151,6 +151,8 @@ async function main() {
     await reloaded.refresh(sa);assert.equal(reloaded.snapshots.get(sa).tasks.length,100);
     const confirmation=await reloaded.clearFinished(reloaded.peer,sa,{dryRun:true});
     assert.deepEqual(confirmation,{archived:107,skipped:1,withUnsent:1});
+    await assert.rejects(reloaded.clearFinished(reloaded.peer,sa),{code:'invalid_argument'});
+    await assert.rejects(reloaded.clearFinished(reloaded.peer,sa,{dryRun:false}),{code:'invalid_argument'});
     assert.equal(executor.tasks.get('synthetic-clear-0').report.result,'Synthetic preserved report');
     await assert.rejects(reloaded.clearFinished(reloaded.peer,sa,{expected:{...confirmation,withUnsent:0}}),{code:'archive_changed'});
     assert.deepEqual(await reloaded.clearFinished(reloaded.peer,sa,{expected:confirmation}),confirmation);

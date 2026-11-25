@@ -4,7 +4,7 @@ const {McpTasks}=require('../runtime/mcp-tasks.cjs');
 const {SessionStore}=require('../runtime/store.cjs');
 async function retention(root){
  const store=new SessionStore(path.join(root,'retention'));
- const day=86400000,hour=3600000,space='synthetic-retention';let time=Date.UTC(2026,0,20),tasks,resolveClose;
+ const day=86400000,hour=3600000,grace=300000,space='synthetic-retention';let time=Date.UTC(2026,0,20),tasks,resolveClose,reconnected=false;
  const adapter={assertConnection(){},connection:()=>({id:'synthetic'}),pending:task=>task.taskId==='live-pending'?[{id:'synthetic-request'}]:[],closeChat:()=>new Promise(resolve=>{resolveClose=resolve;})};
  const logs=[];
  const record=(id,extra={})=>{
@@ -12,17 +12,22 @@ async function retention(root){
    store.write('mcp-task',id,task);if(tasks)tasks.tasks.set(id,task);return task;
  };
  record('old-closed',{closedAt:time-15*day,state:'cancelled'});record('old-open',{state:'error'});
- record('fresh',{updatedAt:time-day});record('boundary',{updatedAt:time-14*day});
+ record('fresh',{updatedAt:time-day});record('boundary',{updatedAt:time+grace-14*day});
  const exclusions={queued:{state:'queued'},running:{state:'running'},approval:{state:'waiting_approval'},limit:{state:'waiting_limit'},
    recovery:{recoveryRequired:true},'live-pending':{},'saved-pending':{pendingIds:['synthetic-request']},answer:{unknownAnswer:'synthetic-answer'},
    'async-answer':{awaitingAsync:true},'pending-op':{operations:[{requestId:'synthetic-op',outcome:'pending'}]},
    queue:{continuations:['Synthetic queued continuation']},next:{nextInput:'Synthetic next input'},auto:{limitContinuation:{state:'pending'}},
    unsent:{unsentInputs:[{id:'synthetic-input',text:'Synthetic unsent text'}]},subscribed:{chatId:'synthetic-chat'},legacy:{legacy:true},readonly:{readOnly:true}};
  for(const [id,extra] of Object.entries(exclusions))record(id,extra);
- tasks=new McpTasks({store,adapter,scope:()=>space,now:()=>time,archiveLog:value=>logs.push(value),chatSubscribed:id=>id==='subscribed'});
+ tasks=new McpTasks({store,adapter,scope:()=>space,now:()=>time,keepClosed:0,archiveLog:value=>logs.push(value),chatSubscribed:id=>reconnected && id==='subscribed'});
+ tasks.keepClosed=100;
  tasks.schedule=()=>{};
  try{
-   assert(!tasks.tasks.has('old-closed'));assert(!tasks.tasks.has('old-open'));
+   assert(tasks.tasks.has('old-closed'));assert(tasks.tasks.has('old-open'));
+   tasks.sweepArchive();assert(tasks.tasks.has('subscribed'),'The first tick allows windows to reconnect');
+   reconnected=true;
+   time+=grace-1;tasks.sweepArchive();assert(tasks.tasks.has('old-open'));
+   time++;tasks.sweepArchive();assert(!tasks.tasks.has('old-closed'));assert(!tasks.tasks.has('old-open'));
    assert.deepEqual([...tasks.tasks.keys()].sort(),[...Object.keys(exclusions),'fresh','boundary'].sort());
    const states=['starting','observing','reading','closing','waiting'];for(const id of states)record(id);
    tasks.starting.add('starting');tasks.observations.set('observing',Promise.resolve());
@@ -62,7 +67,40 @@ async function retention(root){
    assert.equal(tasks.call('continue_task',{taskId,requestId:'synthetic-retained-continue',clarification:'Synthetic explicit input'}).state,'queued');
    assert.equal(tasks.tasks.get(taskId).unsentInputs[0].text,'Synthetic retained text');
  }finally{tasks.dispose();}
- console.log('PASS task retention: clock, age boundary, load and periodic sweep, exclusion states, pause and partial write retry');
+ console.log('PASS task retention: reconnect grace, age boundary, periodic sweep, exclusion states, pause and partial write retry');
+}
+async function closedAtCap(root,approval=false){
+ const store=new SessionStore(path.join(root,'cap-'+approval)),space='synthetic-cap';
+ let rejectCancel,acceptApproval;
+ const tasks=new McpTasks({store,scope:()=>space,maxStoredPerSpace:1,chatSubscribed:()=>true,
+   adapter:{connection:()=>({id:'synthetic'}),assertConnection(){},
+     pending:task=>task.state==='waiting_approval'?[{id:'synthetic-approval'}]:[],
+     answer:()=>new Promise(resolve=>{acceptApproval=resolve;}),cancel:()=>new Promise((_,reject)=>{rejectCancel=reject;})}});
+ tasks.schedule=()=>{};
+ try{
+   const entry={id:'synthetic-cap-input',text:'Synthetic unsent at capacity'};
+   const old={taskId:'synthetic-closed-cap',space,projectDirectory:root,operations:[],state:approval?'waiting_approval':'running',createdAt:1,closedAt:2,
+     needsReconcile:true,unsentInputs:[entry]};
+   tasks.save(old);tasks.tasks.set(old.taskId,old);
+   const response=approval?tasks.call('continue_task',{taskId:old.taskId,requestId:'synthetic-cap-answer',approval:{id:'synthetic-approval'}})
+     : tasks.call('cancel_task',{taskId:old.taskId,requestId:'synthetic-cap-cancel'});
+   await Promise.resolve();
+   old.state='cancelled';tasks.save(old);
+   assert.equal(tasks.clearFinished(space,{dryRun:true}).archived,0,'The manual action still honors chat subscriptions');
+   const {taskId}=tasks.call('submit_task',{requestId:'synthetic-cap-next',projectDirectory:root,description:'Synthetic next task',acceptanceCriteria:'Synthetic criteria'});
+   assert(!tasks.tasks.has(old.taskId));
+   assert.deepEqual(tasks.call('get_task',{taskId:old.taskId}).unsentInputs,[entry]);
+   const replacement=tasks.get(taskId);replacement.state='completed';replacement.closedAt=Date.now();tasks.save(replacement);
+   const continuation='Synthetic restored cap continuation';
+   tasks.call('continue_task',{taskId:old.taskId,requestId:'synthetic-cap-restore',clarification:continuation});
+   if(approval){acceptApproval();await response;}
+   else {rejectCancel(Error('Synthetic delayed cancellation failure'));await new Promise(resolve=>setImmediate(resolve));}
+   const restored=store.read('mcp-task',old.taskId);
+   assert.equal(restored.nextInput,continuation,'A late outcome must preserve a restored continuation');
+   assert.equal(restored.state,'queued');
+   assert(restored.operations.some(op=>op.requestId==='synthetic-cap-restore'));
+   if(approval)assert.equal(restored.operations.find(op=>op.requestId==='synthetic-cap-answer').outcome,'applied');
+ }finally{tasks.dispose();}
 }
 async function main(){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'rundix-task-archive-synthetic-'));let tasks,space='synthetic-a';
@@ -72,6 +110,8 @@ async function main(){
  const args=id=>({requestId:id,description:'Synthetic archived task',acceptanceCriteria:'Synthetic check',projectDirectory:root});
  try{
   await retention(root);
+  await closedAtCap(root);
+  await closedAtCap(root,true);
   tasks=create();
   if(process.platform==='win32')for(const projectDirectory of ['\\\\.\\C:\\','\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\'])assert.throws(()=>tasks.call('submit_task',{...args('synthetic-device'),projectDirectory}),{code:'invalid_directory'});
   const a=tasks.call('submit_task',args('synthetic-a1'));tasks.call('submit_task',args('synthetic-a2'));

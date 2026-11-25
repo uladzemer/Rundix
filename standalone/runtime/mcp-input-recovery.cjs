@@ -14,14 +14,14 @@ function prune(task) {
 function remember(task,text) {
   task.unsentInputs ||= [];
   let id;
-  if(!task.unsentInputs.some(row=>!row.attempt && row.text===text)){
+  if(!task.unsentInputs.some(row=>!row.possiblyNotDelivered && row.text===text)){
     id=randomUUID();task.unsentInputs.push({id,text});
   }
   prune(task);
   return id;
 }
 function delivered(task,text) {
-  if(task.unsentInputs)task.unsentInputs=task.unsentInputs.filter(row=>row.attempt || row.text!==text);
+  if(task.unsentInputs)task.unsentInputs=task.unsentInputs.filter(row=>row.possiblyNotDelivered || row.text!==text);
 }
 function begin(task,{id,text,threadId,previousTurnId}) {
   task.inputAttempt={id,threadId,previousTurnId};
@@ -40,15 +40,27 @@ function observedTurn(task,id,turnId) {
   row.attempt.turnId=turnId;
   return true;
 }
-function settle(task,id,unsent=false) {
-  if(!id)return false;
+function takeAttempt(task,id,keepQueued=false) {
+  if(!id)return null;
   const row=task.unsentInputs?.find(row=>row.id===id && row.possiblyNotDelivered);
-  if(!row)return false;
-  task.unsentInputs=unsent
-    ? task.unsentInputs.map(item=>item===row?{id,text:row.text,attempt:true}:item)
-    : task.unsentInputs.filter(item=>item!==row);
+  if(!row)return null;
+  const index=task.unsentInputs.indexOf(row);
+  task.unsentInputs=task.unsentInputs.filter(item=>item!==row);
   expose(task,id);
-  if(task.inputAttempt?.id===id)delete task.inputAttempt;
+  if(task.inputAttempt?.id===id){
+    delete task.inputAttempt;
+    if(!keepQueued && !task.queuedRecoveryInput && task.nextInput===row.text)delete task.nextInput;
+  }
+  return {row,index};
+}
+function requeue(task,id) {return !!takeAttempt(task,id,true);}
+function settle(task,id,unsent=false) {
+  const attempt=takeAttempt(task,id);
+  if(!attempt)return false;
+  const {row,index}=attempt;
+  if(!unsent)delivered(task,row.text);
+  else if(!task.unsentInputs.some(item=>!item.possiblyNotDelivered && item.text===row.text))
+    task.unsentInputs.splice(index,0,{id,text:row.text});
   return true;
 }
 function confirm(task,id) {
@@ -83,4 +95,4 @@ function page(task,after) {
   return {unsentInputs:selected,...counts(task,rows),
     nextUnsentCursor:start+selected.length<rows.length?selected.at(-1).id:null};
 }
-module.exports={remember,delivered,begin,expose,settle,confirm,observedTurn,matchingMessage,visible,counts,page,prune,MAX_ENTRIES,MAX_BYTES};
+module.exports={remember,delivered,begin,expose,requeue,settle,confirm,observedTurn,matchingMessage,visible,counts,page,prune,MAX_ENTRIES,MAX_BYTES};

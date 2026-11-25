@@ -252,7 +252,9 @@ after five idle minutes. Start MCP to connect to the registered version.
 
 Service task storage is capped per launch space. The service archives finished
 tasks last updated more than 14 days ago, whether their chats were closed or
-left open. It can also archive older closed records to make room at the cap.
+left open. The first sweep gives windows five minutes after startup to
+subscribe again. The service can also archive older closed records to make
+room at the cap.
 Automatic archival leaves tasks with unsent input in the task list. The service
 panel's **Clear finished** action works across the selected space and asks for
 confirmation before archiving tasks, including those with unsent input. Both

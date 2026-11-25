@@ -455,8 +455,11 @@ async function lostEmptyThread(){
     }
     const tasks=harness('lost-empty',true,{status});
     try{
+      inputRecovery.begin(row,{id:'synthetic-empty-attempt',text:row.nextInput,threadId:s.id});
+      inputRecovery.expose(row,'synthetic-empty-attempt');
       tasks.tasks.set(row.taskId,row);tasks.save(row);await tasks.observe(row);
       assert.equal(row.state,'queued');assert.equal(row.nextInput,'Synthetic first input');assert.equal(row.deliveryPhase,'preparing');
+      assert.deepEqual(tasks.call('get_task',{taskId:row.taskId}).unsentInputs,[],'Missing-rollout requeue keeps text only in the queue');
       assert.equal(s.id,null);assert.equal(row.chatId,null,'The next send starts a fresh thread');
     }finally{tasks.dispose();}
   }
@@ -556,13 +559,14 @@ async function dispatchRestart(phase){
       assert.equal(restored.state,'queued','Missing rollout preserves the existing re-queue');
       assert.equal(restored.nextInput,checkpoint.nextInput);
       assert.equal(get().unsentInputCount,0,'Re-queued input leaves recovery');
-      const olderId=inputRecovery.remember(restored,checkpoint.nextInput);
+      inputRecovery.remember(restored,checkpoint.nextInput);
       tasks.save(restored);
       tasks.resume();await until(host,()=>restored.state==='completed');
       assert.equal(sends,1);
-      assert.deepEqual(get().unsentInputs,[{id:olderId,text:checkpoint.nextInput}],'ACK preserves an older plain entry with equal text');
+      assert.deepEqual(get().unsentInputs,[],'ACK clears the older plain entry with equal text');
     }else if(beforeAck){
       assert.equal(get().unsentInputCount,0,'A matching item from the recovered rollout proves delivery');
+      assert.equal(restored.nextInput,undefined,'Confirmed rollout delivery clears the dispatched text slot');
       assert.equal(restored.deliveryPhase,'confirmed');
       assert.equal(sends,1);
     }else{
@@ -572,8 +576,8 @@ async function dispatchRestart(phase){
   }finally{release?.();await host?.dispose({force:true});await data.close();}
 }
 
-async function lateAck(){
-  const directory=project('late-input-ack'),gate=path.join(directory,'synthetic-dispatch-gate');
+async function lateAck(afterRestore=false){
+  const directory=project('late-input-ack-'+afterRestore),gate=path.join(directory,'synthetic-dispatch-gate');
   fs.writeFileSync(gate,'late');
   const data=fixture(directory,{cliEnv:{RUNDIX_SYNTHETIC_DISPATCH_GATE:gate}}),makeCli=data.hostOptions.providerOptions.createCli;
   let host,sends=0;
@@ -586,15 +590,33 @@ async function lateAck(){
     return cli;
   };
   try{
-    host=await createHeadlessHost({root:directory,generation:'synthetic-late-ack',...data.hostOptions});
+    host=await createHeadlessHost({root:directory,generation:'synthetic-late-ack',...data.hostOptions,taskOptions:{scope:()=> 'synthetic-space'}});
     const tasks=host.mcp.tasks;
     const {taskId}=await tasks.call('submit_task',{requestId:'synthetic-late-ack',description:'Synthetic late ACK',acceptanceCriteria:'Synthetic check',projectDirectory:directory});
     const get=()=>tasks.call('get_task',{taskId});
     await until(host,()=>get().possiblyNotDeliveredCount===1,false);
     const id=get().unsentInputs[0].id;
+    if(afterRestore){
+      await tasks.idle();tasks.pause();
+      const completed=tasks.get(taskId);
+      // Simulate terminal status without a readable user item, so only the pending ACK can prove delivery.
+      completed.state='error';completed.recoveryRequired=false;delete completed.nextInput;tasks.save(completed);
+      const expected=tasks.clearFinished(completed.space,{dryRun:true});
+      assert.equal(expected.archived,1);
+      tasks.clearFinished(completed.space,{expected});
+      assert(!tasks.tasks.has(taskId));
+      tasks.call('continue_task',{taskId,requestId:'synthetic-after-archive',clarification:'Synthetic restored continuation'});
+    }
     fs.writeFileSync(gate,'release-late-ack');
-    await until(host,()=>get().unsentInputCount===0,false);
-    assert(!tasks.store.read('mcp-task',taskId).unsentInputs.some(row=>row.id===id));
+    await until(host,()=>!tasks.store.read('mcp-task',taskId).unsentInputs.some(row=>row.id===id),false);
+    const persisted=tasks.store.read('mcp-task',taskId);
+    assert(!persisted.unsentInputs.some(row=>row.id===id));
+    if(afterRestore){
+      assert.equal(persisted.state,'queued');
+      assert.equal(persisted.nextInput,'Synthetic restored continuation');
+      assert(persisted.operations.some(op=>op.requestId==='synthetic-after-archive'));
+    }
+    assert.equal(get().unsentInputCount,0);
     assert.equal(sends,1,'A late ACK settles recovery without replaying the turn');
   }finally{await host?.dispose({force:true});await data.close();}
 }
@@ -664,7 +686,7 @@ async function definiteDispatchRefusal(retryable){
     return cli;
   };
   try{
-    host=await createHeadlessHost({root:directory,generation:'synthetic-definite-refusal',...data.hostOptions});
+    host=await createHeadlessHost({root:directory,generation:'synthetic-definite-refusal',...data.hostOptions,taskOptions:{scope:()=> 'synthetic-space'}});
     const tasks=host.mcp.tasks;tasks.schedule=()=>{};
     const {taskId}=await tasks.call('submit_task',{requestId:'synthetic-refused-input',description:'Synthetic refused input',acceptanceCriteria:'Synthetic check',projectDirectory:directory});
     await step(tasks);
@@ -680,13 +702,70 @@ async function definiteDispatchRefusal(retryable){
     }else{
       assert.equal(row.state,'error');
       assert.deepEqual(get().unsentInputs,[{id:attempt.id,text:attempt.text}],'A terminal refusal converts the same entry to ordinary unsent');
+      assert.equal(row.nextInput,undefined);
+      await Promise.all(tasks.cleanup);
+      const estimate=tasks.clearFinished(row.space,{dryRun:true});
+      assert.deepEqual(estimate,{archived:1,skipped:0,withUnsent:1},'A settled refusal is eligible for manual archival');
+      assert.deepEqual(tasks.clearFinished(row.space,{expected:estimate}),estimate);
+      assert(!tasks.tasks.has(taskId));
+      assert.deepEqual(get().unsentInputs,[{id:attempt.id,text:attempt.text}]);
     }
   }finally{await host?.dispose({force:true});await data.close();}
 }
 
-(async()=>{try{await emptyThreadServiceRestart();await restartInterruption();await lostEmptyThread();await queuedInput();await windowsAndSlowRecovery();await lightweightStatus();await repeatedLimit();await historyRecovery();await preparingRestart();await generationAndPredispatchExit(false);await generationAndPredispatchExit(true);await freshThreadGenerationChange();
+function settledInput(){
+  const text='Synthetic repeated input',row={nextInput:text,queuedRecoveryInput:false};
+  const plainId=inputRecovery.remember(row,text);
+  const begin=id=>inputRecovery.begin(row,{id,text,threadId:'synthetic-input-thread'});
+  begin('synthetic-refused');inputRecovery.settle(row,'synthetic-refused',true);
+  assert.deepEqual(row.unsentInputs,[{id:plainId,text}],'A refusal deduplicates plain text');
+  assert.equal(row.nextInput,undefined,'Settlement clears the current dispatched text');
+  row.nextInput=text;begin('synthetic-older');inputRecovery.expose(row,'synthetic-older');
+  begin('synthetic-current');inputRecovery.expose(row,'synthetic-current');
+  inputRecovery.confirm(row,'synthetic-older');
+  assert.equal(row.nextInput,text,'Older proof cannot clear the newer dispatch slot with equal text');
+  assert.deepEqual(inputRecovery.page(row).unsentInputs,[{id:'synthetic-current',text,possiblyNotDelivered:true}]);
+}
+
+async function resendPlainInput(){
+  const directory=project('explicit-plain-resend'),data=fixture(directory),makeCli=data.hostOptions.providerOptions.createCli;
+  const text='Synthetic explicit repeat';let host,refused=false,sends=0;
+  data.hostOptions.providerOptions.createCli=options=>{
+    const cli=makeCli(options),request=cli.request.bind(cli);
+    cli.request=async(method,params,...args)=>{
+      if(method==='turn/start' && params.input[0].text===text){
+        if(!refused){refused=true;throw Object.assign(Error('Synthetic refusal'),{notSent:true,retryable:false,deliveryUncertain:false});}
+        sends++;
+      }
+      return request(method,params,...args);
+    };
+    return cli;
+  };
+  try{
+    host=await createHeadlessHost({root:directory,generation:'synthetic-repeat',...data.hostOptions});
+    const tasks=host.mcp.tasks;tasks.schedule=()=>{};
+    const {taskId}=await tasks.call('submit_task',{requestId:'synthetic-submit-repeat',description:'Synthetic task',acceptanceCriteria:'Synthetic check',projectDirectory:directory});
+    const row=tasks.get(taskId),get=()=>tasks.call('get_task',{taskId});
+    const send=requestId=>tasks.call('continue_task',{taskId,requestId,clarification:text});
+    await until(host,()=>row.state==='completed');
+    send('synthetic-refused-repeat');await step(tasks);
+    assert.equal(row.state,'error');assert.deepEqual(get().unsentInputs.map(entry=>entry.text),[text]);
+    inputRecovery.begin(row,{id:'synthetic-other-attempt',text,threadId:row.chatId,previousTurnId:row.turnId});
+    inputRecovery.expose(row,'synthetic-other-attempt');tasks.save(row);
+    send('synthetic-accepted-repeat');await until(host,()=>row.state==='completed');
+    assert.equal(sends,1);
+    assert.deepEqual(get().unsentInputs,[{id:'synthetic-other-attempt',text,possiblyNotDelivered:true}],
+      'ACK clears plain unsent text and preserves another attempt’s flagged row');
+    inputRecovery.settle(row,'synthetic-other-attempt',true);tasks.save(row);
+    send('synthetic-accepted-plain');await until(host,()=>row.state==='completed');
+    assert.equal(sends,2);assert.deepEqual(get().unsentInputs,[],'ACK of an explicit resend clears the sole plain entry');
+  }finally{await host?.dispose({force:true});await data.close();}
+}
+
+(async()=>{try{
+  await emptyThreadServiceRestart();await restartInterruption();await lostEmptyThread();await queuedInput();await windowsAndSlowRecovery();await lightweightStatus();await repeatedLimit();await historyRecovery();await preparingRestart();await generationAndPredispatchExit(false);await generationAndPredispatchExit(true);await freshThreadGenerationChange();
   await exitDuringLimit('clarification-at-limit');await exitDuringLimit('automatic-exit-without-limit');await exitDuringLimit('automatic-exit-with-new-limit');await replyWithQueuedInput(false);await replyWithQueuedInput(true);
   for(const phase of ['before-write','before-ack','after-ack'])await dispatchRestart(phase);
-  await lateAck();await attemptAttribution();await definiteDispatchRefusal(true);await definiteDispatchRefusal(false);
-  console.log('PASS review regressions: unchanged window recovery, lossless preparing restart, slow retries/free slots, lightweight status, bounded limits, concurrent history, generation config, dispatch checkpoint rollback, CLI exits at limits and unrelated reply delivery.');
+  await lateAck();await lateAck(true);await attemptAttribution();await definiteDispatchRefusal(true);await definiteDispatchRefusal(false);settledInput();await resendPlainInput();
+  console.log('PASS review regressions: window recovery, restart and reconnect, retry slots, bounded status/limits/history, dispatch checkpoints, late ACK after restore, refusal archival, missing-rollout requeue, plain resend dedup and attempt isolation.');
 }finally{assert.equal(path.dirname(root),os.tmpdir());assert(path.basename(root).startsWith('rundix-review-regression-synthetic-'));fs.rmSync(root,{recursive:true,force:true});}})().catch(error=>{console.error(error);process.exitCode=1;});

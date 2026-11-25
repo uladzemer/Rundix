@@ -77,8 +77,12 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
     row.turnId = turnId; runs.delete(row.threadId); return true;
   }
   function confirmInput(task,id,acknowledged=true) {
-    if(disposed || !(acknowledged?inputRecovery.confirm(task,id):inputRecovery.settle(task,id)))return;
-    try{mcp.tasks.save(task);}catch{logger({code:'host_error'});}
+    if(disposed || !id)return;
+    try {
+      const current=mcp.tasks.tasks.get(task.taskId) || mcp.tasks.archive?.get(task.taskId);
+      if(current && current.space===task.space && (acknowledged?inputRecovery.confirm(current,id):inputRecovery.settle(current,id)))
+        mcp.tasks.save(current);
+    } catch {logger({code:'host_error'});}
   }
   class HeadlessTransport extends EventEmitter {
     constructor(options) { super(); this.options = options; this.executable = options.executable; this.listeners = []; this.handlesTurnAdmission = true; }
@@ -368,10 +372,11 @@ async function createHeadlessHost({root, generation, providerOptions = {}, resol
         item.type==='userMessage' && item.turnId===turnId && !baselineItems.includes(item.id) &&
         item.content?.length===1 && item.content[0]?.type==='text' && item.content[0].text===text);
       if(inChat)void core.save(session).catch(()=>logger({code:'host_error'}));
+      const ownsInput=!task.queuedRecoveryInput && task.nextInput===text && (!id || task.inputAttempt?.id===id);
       if(id)inputRecovery.settle(task,id,!(row.turnId || inChat));
       else if(row.turnId || inChat)inputRecovery.delivered(task,text);
       // A later explicit continuation may already own the queue slot.
-      if(!task.queuedRecoveryInput && task.nextInput===text) {
+      if(ownsInput) {
         if(inChat)task.deliveryPhase='confirmed';
         delete task.nextInput;
         delete task.queuedRecoveryInput;

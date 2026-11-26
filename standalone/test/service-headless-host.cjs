@@ -82,7 +82,12 @@ async function main() {
     assert.throws(() => host.mcp.tasks.call('reload_window', {}), {code:'unsupported'});
     loseAck = true;
     const unknown = await host.mcp.tasks.call('submit_task', {requestId:'synthetic-lost-ack', description:'Synthetic ambiguous send', acceptanceCriteria:'Synthetic terminal', projectDirectory:project});
-    await host.mcp.tasks.tick(); await host.mcp.tasks.idle(); await pause(150); await host.mcp.tasks.tick(); await host.mcp.tasks.idle();
+    await host.mcp.tasks.tick(); await host.mcp.tasks.idle();
+    // Wait for the reconciliation instead of a fixed delay: a loaded machine needs more than 150 ms.
+    for(let i=0;i<60;i++){
+      await pause(50); await host.mcp.tasks.tick(); await host.mcp.tasks.idle();
+      if(i>=2 && !host.provider.activeTurns && !host.mcp.tasks.get(unknown.taskId).recoveryRequired)break;
+    }
     assert.equal(host.provider.activeTurns, 0, 'Typed start+completion release a grant despite a lost ACK');
     assert.equal(host.mcp.tasks.get(unknown.taskId).recoveryRequired, false);
     loseAck = true; lateAck = true;
